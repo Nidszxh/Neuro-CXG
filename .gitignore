@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data (DO NOT COMMIT)
+data/raw/
+data/processed/
+data/splits/
+
+# Models & checkpoints
+models/checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# YOLO outputs
+runs/
+yolo_runs/
+
+# Experiment tracking
+wandb/
+mlruns/
+
+# Results and logs
+results/logs/
+
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/
+
+# Misc
+OPTIONAL.md

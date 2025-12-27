@@ -1,0 +1,29 @@
+# Core ML
+torch>=2.8
+torchvision
+torchaudio
+
+# GNN
+torch-geometric
+
+# Neuroimaging
+nibabel
+nilearn
+
+# YOLO
+ultralytics
+
+# ML utilities
+scikit-learn
+numpy
+pandas
+scipy
+
+# Visualization
+matplotlib
+seaborn
+networkx
+
+# Experiment & notebooks
+jupyter
+ipykernel
