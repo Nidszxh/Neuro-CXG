@@ -1,0 +1,12 @@
+# Train/Val/Test Sets
+path: ./yolo_dataset
+train: train/images
+val: val/images
+test: test/images
+
+# Classes (AAL Groups which is defined)
+names:
+  0: Frontal
+  1: Temporal
+  2: Parietal
+  3: Occipital
