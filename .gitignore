@@ -1,41 +1,70 @@
-# Python
+# Python envs
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
 .env
 .venv/
 venv/
+build/
+dist/
 
-# Jupyter
+# Jupyter Notebooks
 .ipynb_checkpoints/
+*/.ipynb_checkpoints/*
 
-# Data (DO NOT COMMIT)
-data/raw/
-data/processed/
-data/splits/
+# Data & Atlases 
+data/raw/*
+data/processed/*
+data/splits/*
+data/yolo/*
+data/atlases/AAL3/*.nii
+data/atlases/AAL3/*.nii.gz
+data/atlases/AAL3/*.pdf
+data/atlases/AAL3/*.mat
 
-# Models & checkpoints
-models/checkpoints/
+# Ignore specific large data formats globally
+*.nii
+*.nii.gz
+*.mat
+
+# Models & Weights
+models/checkpoints/*
+models/zoo/*
 *.pt
 *.pth
 *.ckpt
 *.onnx
+*.weights
+*.nii
+*.gz
+*.mat
+*.pt
 
-# YOLO outputs
+# Logs & Outputs
 runs/
-yolo_runs/
-
-# Experiment tracking
-wandb/
 mlruns/
-
-# Results and logs
+.mlflow/
 results/logs/
+results/figures/
 
-# OS / Editor
+
+# Editor
 .DS_Store
 .idea/
 .vscode/
+*.swp
+*.swo
 
 # Misc
-OPTIONAL.md
+tree.sh
+tree.md
+*.log
+clutter/
+check_gpu.py
+data/atlases/
+tests/
+docs/
+models/
+
+*.zip
