@@ -26,10 +26,7 @@ N_WORKERS = 10
 S3_CLIENT = boto3.client('s3', config=Config(signature_version=UNSIGNED))
 
 def process_subject(sub_id):
-    """
-    Downloads a NIfTI file, extracts specific slices, normalizes intensity, 
-    resizes for YOLO, and saves as PNG.
-    """
+    """ Downloads a NIfTI file, extracts specific slices, normalizes intensity, resizes for YOLO, and saves as PNG."""
     status = {"subject_id": sub_id, "status": "Pending", "message": ""}
     
     # 1. Pre-check: Skip if all 5 slices already exist
@@ -44,7 +41,7 @@ def process_subject(sub_id):
         with tempfile.TemporaryDirectory() as tmpdir:
             local_path = os.path.join(tmpdir, fname)
             
-            # 2. Download from S3 (Public bucket)
+            # 2. If not then lets download from S3 (Public bucket)
             S3_CLIENT.download_file(BUCKET_NAME, s_key, local_path)
 
             # 3. Load Image and fix Orientation
@@ -110,7 +107,7 @@ if __name__ == "__main__":
     os.makedirs(PNG_OUTPUT, exist_ok=True)
     os.makedirs(os.path.dirname(LOG_OUTPUT), exist_ok=True)
 
-    print(f"ABIDE Preprocessing convert to YOLO (640x640)")       
+    print(f"ABIDE convert to YOLO (640x640)")       
     
     if not os.path.exists(PHENO_PATH):
         print(f"Error: Phenotypic file not found at {PHENO_PATH}")

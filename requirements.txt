@@ -10,6 +10,10 @@ torch-geometric
 nibabel
 nilearn
 
+#AWS S3
+boto3
+botocore
+
 # YOLO
 ultralytics
 
@@ -18,6 +22,7 @@ scikit-learn
 numpy
 pandas
 scipy
+tqdm
 
 # Visualization
 matplotlib
