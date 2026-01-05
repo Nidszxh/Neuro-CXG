@@ -1,81 +1,66 @@
-import os
-import shutil
-import random
+import os, shutil, random, pandas as pd
+from pathlib import Path
 
-SOURCE_IMG = "./data/images"
-SOURCE_LBL = "./data/labels"
-TARGET_ROOT = "./data/processed"
+# --- PATHS ---
+PROJECT_ROOT = Path("./data")
+SOURCE_IMG   = PROJECT_ROOT / "images"
+SOURCE_TS    = PROJECT_ROOT / "processed"  # Where .npy files are
+SOURCE_LBL   = PROJECT_ROOT / "labels"
+TARGET_ROOT  = PROJECT_ROOT / "final"
+PHENO_PATH   = PROJECT_ROOT / "processed" / "Phenotypic_V1_0b_preprocessed1.csv"
 
-# Ratios for Train, Validation, and Test
-TRAIN_RATIO, VAL_RATIO = 0.70, 0.15 # Remaining 0.15 goes to Test
+# --- CONFIG ---
+TRAIN_RATIO, VAL_RATIO = 0.70, 0.15 
+random.seed(42)
 
-def run_split():
-    # 1. Check if source folders exist
-    if not os.path.exists(SOURCE_IMG):
-        print(f"Error: Source image directory {SOURCE_IMG} not found.")
-        return
-
-    # 2. Identify unique subjects to ensure subject-level splitting
+def run_stratified_split():
+    # 1. Load labels to ensure stratification (Phase 2.2)
+    df = pd.read_csv(PHENO_PATH)
+    # Only include subjects we actually have files for
     all_images = [f for f in os.listdir(SOURCE_IMG) if f.endswith('.png')]
-    # Use rsplit to handle ABIDE IDs with underscores
-    subject_ids = list(set([f.rsplit('_z', 1)[0] for f in all_images]))
-    
-    if not subject_ids:
-        print("No subjects found to split. Check your data/images folder.")
-        return
+    valid_ids = set([f.rsplit('_z', 1)[0] for f in all_images])
+    df = df[df['FILE_ID'].isin(valid_ids)]
 
-    # 3. Shuffle and Calculate Split Sizes
-    random.seed(42) 
-    random.shuffle(subject_ids)
+    # 2. Group by Site and Diagnosis for stratification
+    # This ensures a 'site-balanced' split, which is a Q1 Journal requirement
+    from sklearn.model_selection import train_test_split
     
-    total_subs = len(subject_ids)
-    n_train = int(total_subs * TRAIN_RATIO)
-    n_val = int(total_subs * VAL_RATIO)
+    train_df, rem_df = train_test_split(
+        df, train_size=TRAIN_RATIO, stratify=df[['DX_GROUP', 'SITE_ID']], random_state=42
+    )
     
-    splits = {
-        'train': subject_ids[:n_train],
-        'val': subject_ids[n_train:n_train + n_val],
-        'test': subject_ids[n_train + n_val:]
-    }
+    # Split the remaining 30% into half (15% Val, 15% Test)
+    val_df, test_df = train_test_split(
+        rem_df, train_size=0.5, stratify=rem_df[['DX_GROUP', 'SITE_ID']], random_state=42
+    )
 
-    # 4. Execute the move
-    print(f"Total Subjects: {total_subs}")
-    for name, subs in splits.items():
-        img_dst = os.path.join(TARGET_ROOT, name, 'images')
-        lbl_dst = os.path.join(TARGET_ROOT, name, 'labels')
+    splits = {'train': train_df, 'val': val_df, 'test': test_df}
+
+    # 3. Execute Move
+    for name, split_df in splits.items():
+        print(f"📦 Organizing {name} set ({len(split_df)} subjects)...")
         
-        os.makedirs(img_dst, exist_ok=True)
-        os.makedirs(lbl_dst, exist_ok=True)
-
-        # Remove old YOLO label caches to prevent training errors
-        cache_file = os.path.join(TARGET_ROOT, name, 'labels.cache')
-        if os.path.exists(cache_file):
-            os.remove(cache_file)
-
-        print(f" Processing {name}: {len(subs)} subjects...")
+        img_dst = TARGET_ROOT / name / 'images'
+        lbl_dst = TARGET_ROOT / name / 'labels'
+        ts_dst  = TARGET_ROOT / name / 'time_series'
         
-        for sub_id in subs:
-            # Match all slices for this specific subject
-            # We use sub_id + "_z" to avoid matching 'sub-10' when looking for 'sub-1'
-            subject_files = [f for f in all_images if f.startswith(sub_id + "_z")]
-            
-            for f in subject_files:
-                # 1. Move Image
-                src_img_path = os.path.join(SOURCE_IMG, f)
-                shutil.move(src_img_path, os.path.join(img_dst, f))
-                
-                # 2. Move Corresponding Label
+        for d in [img_dst, lbl_dst, ts_dst]: d.mkdir(parents=True, exist_ok=True)
+
+        for sub_id in split_df['FILE_ID']:
+            # Move all slices
+            for f in [img for img in all_images if img.startswith(sub_id + "_z")]:
+                shutil.move(SOURCE_IMG / f, img_dst / f)
+                # Move label if it exists (Phase 3.2)
                 lbl_f = f.replace('.png', '.txt')
-                src_lbl_path = os.path.join(SOURCE_LBL, lbl_f)
-                
-                if os.path.exists(src_lbl_path):
-                    shutil.move(src_lbl_path, os.path.join(lbl_dst, lbl_f))
-                else:
-                    # For Causal Graphs, every image MUST have a label (the nodes)
-                    print(f" [!] Warning: Missing label for {f}")
+                if (SOURCE_LBL / lbl_f).exists():
+                    shutil.move(SOURCE_LBL / lbl_f, lbl_dst / lbl_f)
+            
+            # Move Time Series (Phase 4.1)
+            ts_f = f"{sub_id}_ts.npy"
+            if (SOURCE_TS / ts_f).exists():
+                shutil.move(SOURCE_TS / ts_f, ts_dst / ts_f)
 
-    print("\n[SUCCESS] Dataset split into Subject-level Train/Val/Test.")
-    print(f"Results located in: {TARGET_ROOT}")
+    print(f"\n✅ SUCCESS: Stratified split complete. Saved to {TARGET_ROOT}")
 
 if __name__ == "__main__":
-    run_split()
+    run_stratified_split()

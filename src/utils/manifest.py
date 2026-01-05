@@ -1,72 +1,69 @@
 import os
 import pandas as pd
+from pathlib import Path
 
 # --- CONFIG ---
-PHENO_PATH = "./data/processed/Phenotypic_V1_0b_preprocessed1.csv"
-# Updated to match the TARGET_ROOT in your split.py
-DATASET_ROOT = "./data/processed" 
-OUTPUT_PATH = "./data/metadata/manifest_v1.csv"
+PROJECT_ROOT = Path("./data")
+PHENO_PATH   = PROJECT_ROOT / "processed" / "Phenotypic_V1_0b_preprocessed1.csv"
+DATASET_ROOT = PROJECT_ROOT / "final" # Matches the split.py output
+OUTPUT_PATH  = PROJECT_ROOT / "metadata" / "master_manifest.csv"
 
 def create_manifest():
-    # 1. Load labels and clean column names
-    if not os.path.exists(PHENO_PATH):
-        print(f"Error: Phenotypic file not found at {PHENO_PATH}")
+    if not PHENO_PATH.exists():
+        print(f"❌ Error: Phenotypic file not found at {PHENO_PATH}")
         return
         
+    # 1. Load and clean phenotypic data (Phase 2.1)
     df = pd.read_csv(PHENO_PATH)
     df.columns = df.columns.str.strip() 
     
-    # Ensure FILE_ID is treated as a string for merging
-    id_col = 'FILE_ID'
-    if id_col not in df.columns:
-        print(f"Error: {id_col} column missing in CSV.")
-        return
-    df[id_col] = df[id_col].astype(str)
-
-    # 2. Map subjects in each split
+    # 2. Map processed files to their specific splits (Phase 2.2)
     manifest_data = []
     splits = ['train', 'val', 'test']
     
-    print("Indexing processed splits...")
     for split in splits:
-        img_path = os.path.join(DATASET_ROOT, split, 'images')
+        # Check time_series folder specifically as it's the core for the GNN
+        ts_path = DATASET_ROOT / split / 'time_series'
         
-        if os.path.exists(img_path):
-            # Get unique subject IDs from the filenames
-            files = [f for f in os.listdir(img_path) if f.endswith('.png')]
-            subs = set([f.rsplit('_z', 1)[0] for f in files])
-            
-            for s in subs:
-                manifest_data.append({'ID_MATCH': str(s), 'Split': split})
+        if ts_path.exists():
+            # Extract subject IDs from .npy files
+            subjects = [f.replace('_ts.npy', '') for f in os.listdir(ts_path) if f.endswith('.npy')]
+            for s in subjects:
+                manifest_data.append({'subject_id': s, 'split': split})
     
     if not manifest_data:
-        print("Error: No images found in data/processed/. Did you run split.py?")
+        print("❌ Error: No processed data found. Ensure split.py was successful.")
         return
 
     manifest_df = pd.DataFrame(manifest_data)
     
-    # 3. Merge with clinical/causal metadata
-    # We include DX_GROUP (Target), AGE, SEX, and SITE_ID (Causal Confounders)
+    # 3. Select Causal & Clinical variables (Phase 7.1 & 8.4)
+    # We include IQ and Handedness as they are major confounders in ASD research
+    required_cols = [
+        'FILE_ID', 'DX_GROUP', 'AGE_AT_SCAN', 'SEX', 
+        'SITE_ID', 'FIQ', 'HANDEDNESS_CATEGORY'
+    ]
+    
+    # Filter only available columns to avoid merge errors
+    available_cols = [c for c in required_cols if c in df.columns]
+    
+    # 4. Final Merge
     final_df = pd.merge(
         manifest_df, 
-        df[[id_col, 'DX_GROUP', 'AGE_AT_SCAN', 'SEX', 'SITE_ID']], 
-        left_on='ID_MATCH', 
-        right_on=id_col
-    ).drop(columns=[id_col]) # Remove redundant column after merge
+        df[available_cols], 
+        left_on='subject_id', 
+        right_on='FILE_ID',
+        how='inner'
+    ).drop(columns=['FILE_ID'])
     
-    # Ensure output directory exists
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    # 5. Data Integrity Check: Ensure no missing targets
+    final_df = final_df.dropna(subset=['DX_GROUP'])
     
-    # 4. Save the manifest
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     final_df.to_csv(OUTPUT_PATH, index=False)
     
-    print(f"\n" + "="*40)
-    print(f"{'MANIFEST GENERATED':^40}")
-    print("="*40)
-    print(f"Subjects Tracked: {len(final_df)}")
-    print(f"Split Breakdown:\n{final_df['Split'].value_counts()}")
-    print(f"Saved to: {OUTPUT_PATH}")
-    print("="*40)
+    print(f"Manifest successfully synchronized with {len(final_df)} subjects.")
+    print(f"Breakdown:\n{final_df.groupby(['split', 'DX_GROUP']).size().unstack(fill_value=0)}")
 
 if __name__ == "__main__":
     create_manifest()
