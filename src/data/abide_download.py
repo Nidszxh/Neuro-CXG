@@ -1,134 +1,134 @@
-import os
-import pandas as pd
-import nibabel as nib
-import numpy as np
+import os, json, tempfile, numpy as np, pandas as pd, nibabel as nib
+from pathlib import Path
 from PIL import Image
-import tempfile
-from concurrent.futures import ThreadPoolExecutor
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
+from nilearn.maskers import NiftiLabelsMasker
+from nilearn.image import resample_to_img
 
-PHENO_PATH = "./data/processed/Phenotypic_V1_0b_preprocessed1.csv"
-BUCKET_NAME = "fcp-indi"
-S3_PREFIX = "data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/func_preproc/"
-BASE_DIR = os.getcwd()
-PNG_OUTPUT = os.path.join(BASE_DIR, "data", "images")
-LOG_OUTPUT = os.path.join(BASE_DIR, "data", "metadata", "download_log.csv")
+# --- PATHS ---
+PROJECT_ROOT = Path(__file__).resolve().parents[0] # Adjusted for local testing
+PNG_OUTPUT   = PROJECT_ROOT / "data" / "images"
+TS_OUTPUT    = PROJECT_ROOT / "data" / "processed"
+META_DIR     = PROJECT_ROOT / "data" / "metadata"
+ATLAS_PATH   = PROJECT_ROOT / "data" / "atlases" / "AAL3v1.nii"
+PHENO_PATH   = PROJECT_ROOT / "data" / "processed" / "Phenotypic_V1_0b_preprocessed1.csv"
 
-# 5 slices evenly spaced between 20 and 60
-Z_SLICES = [20, 30, 40, 50, 60]
-IMG_SIZE = (640, 640) 
-N_WORKERS = 10      
-
-# Initialize S3 Client once (Thread-safe)
-S3_CLIENT = boto3.client('s3', config=Config(signature_version=UNSIGNED))
-
-def process_subject(sub_id):
-    """ Downloads a NIfTI file, extracts specific slices, normalizes intensity, resizes for YOLO, and saves as PNG."""
-    status = {"subject_id": sub_id, "status": "Pending", "message": ""}
+# --- HELPER: ATLAS PREP ---
+def save_atlas_metadata():
+    """Extracts ROI centroids once to avoid 4D overhead later."""
+    if not ATLAS_PATH.exists():
+        raise FileNotFoundError(f"Atlas not found at {ATLAS_PATH}")
     
-    # 1. Pre-check: Skip if all 5 slices already exist
-    expected_paths = [os.path.join(PNG_OUTPUT, f"{sub_id}_z{z}.png") for z in Z_SLICES]
-    if all(os.path.exists(p) for p in expected_paths):
-        return {"subject_id": sub_id, "status": "Skipped", "message": "All slices exist"}
+    atlas_img = nib.load(str(ATLAS_PATH))
+    data = atlas_img.get_fdata()
+    affine = atlas_img.affine
+    labels = np.unique(data)[1:] 
+    
+    coords = []
+    for label in labels:
+        # Get voxel indices
+        indices = np.argwhere(data == label)
+        # Convert voxel indices to MNI space (mm)
+        mean_vox = indices.mean(axis=0)
+        # Add 1 for the affine transformation math
+        mni_coord = affine @ np.append(mean_vox, 1) 
+        coords.append({
+            "roi_id": int(label), 
+            "x": float(mni_coord[0]), 
+            "y": float(mni_coord[1]), 
+            "z": float(mni_coord[2])
+        })
+    
+    META_DIR.mkdir(parents=True, exist_ok=True)
+    with open(META_DIR / "roi_centroids.json", 'w') as f:
+        json.dump(coords, f)
+    return atlas_img
 
-    fname = f"{sub_id}_func_preproc.nii.gz"
-    s_key = f"{S3_PREFIX}{fname}"
-
+# --- THE CORE PROCESS ---
+def process_subject(sub_id, tr_val):
+    s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            local_path = os.path.join(tmpdir, fname)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            f_p = tmp_path / f"{sub_id}_func.nii.gz"
+            a_p = tmp_path / f"{sub_id}_alff.nii.gz"
             
-            # 2. If not then lets download from S3 (Public bucket)
-            S3_CLIENT.download_file(BUCKET_NAME, s_key, local_path)
+            # Download
+            s3.download_file("fcp-indi", f"data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/func_preproc/{sub_id}_func_preproc.nii.gz", str(f_p))
+            s3.download_file("fcp-indi", f"data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/alff/{sub_id}_alff.nii.gz", str(a_p))
 
-            # 3. Load Image and fix Orientation
-            # nib.as_closest_canonical ensures 'Z' is actually the vertical axis
-            raw_img = nib.load(local_path)
-            img = nib.as_closest_canonical(raw_img)
-            data_shape = img.shape
-            saved_count = 0
+            # 1. Load and Fix Orientation
+            func_img = nib.load(str(f_p))
+            func_img = nib.as_closest_canonical(func_img)
             
-            # 4. Extract and Process Slices
-            for z_idx in Z_SLICES:
-                # Boundary check
-                if z_idx >= data_shape[2]: 
-                    continue
+            # 2. Resample Atlas to Functional Space (Critical Step)
+            # This ensures the masks align with the processed brain
+            resampled_atlas = resample_to_img(str(ATLAS_PATH), func_img, interpolation='nearest')
 
-                # Pull data lazily using dataobj to save RAM
-                if len(data_shape) == 4:
-                    # [x, y, z, time] -> Mean across time
-                    slice_data = np.array(img.dataobj[:, :, z_idx, :])
-                    mean_slice = np.mean(slice_data, axis=-1)
-                else:
-                    # [x, y, z]
-                    mean_slice = np.array(img.dataobj[:, :, z_idx])
-
-                # 5. Signal Filtering (Skip empty/dark slices)
-                if np.percentile(mean_slice, 98) < 1e-3:
-                    continue 
-
-                # 6. Robust Normalization (2nd-98th percentile for contrast)
-                p_min, p_max = np.percentile(mean_slice, [2, 98])
-                if p_max <= p_min: 
-                    continue
-
-                norm_slice = np.clip((mean_slice - p_min) / (p_max - p_min + 1e-8), 0, 1)
-
-                # 7. Convert to Image and Resize
-                # Convert to 8-bit grayscale
-                img_out = Image.fromarray((norm_slice * 255).astype(np.uint8))
-                
-                # Standardize orientation (may need adjustment depending on specific site)
-                img_out = img_out.transpose(Image.ROTATE_90)
-                
-                # High-quality resize to 640x640 for YOLO
-                img_out = img_out.resize(IMG_SIZE, resample=Image.Resampling.LANCZOS)
-                
-                out_path = os.path.join(PNG_OUTPUT, f"{sub_id}_z{z_idx}.png")
-                img_out.save(out_path)
-                saved_count += 1
+            # 3. Time Series Extraction
+            masker = NiftiLabelsMasker(
+                labels_img=resampled_atlas, 
+                t_r=float(tr_val), 
+                standardize='zscore_sample', 
+                detrend=True,
+                low_pass=0.08, 
+                high_pass=0.01,
+                memory_level=0 # Saves RAM by not caching to disk
+            )
             
-            # Explicit cleanup
-            img.uncache()
-            del raw_img, img
+            ts = masker.fit_transform(func_img)
+            np.save(TS_OUTPUT / f"{sub_id}_ts.npy", ts.astype(np.float32))
 
-        status.update({"status": "Success", "message": f"Saved {saved_count}/{len(Z_SLICES)}"})
-        
+            # 4. ALFF Slice Export (YOLO)
+            alff_img = nib.as_closest_canonical(nib.load(str(a_p)))
+            alff_data = alff_img.get_fdata()
+            
+            for p in [0.3, 0.4, 0.5, 0.6, 0.7]:
+                z = int(alff_data.shape[2] * p)
+                slice_arr = np.rot90(alff_data[:, :, z])
+                
+                # Robust Normalization
+                p2, p98 = np.percentile(slice_arr, [2, 98])
+                norm = np.clip((slice_arr - p2) / (p98 - p2 + 1e-8), 0, 1)
+                
+                img = Image.fromarray((norm * 255).astype(np.uint8))
+                img.resize((640, 640)).save(PNG_OUTPUT / f"{sub_id}_z{z}.png")
+            
+            return sub_id, "Success", None
+            
     except Exception as e:
-        status.update({"status": "Failed", "message": str(e)})
-    
-    return status
+        return sub_id, "Failed", str(e)
 
+# --- EXECUTION ---
 if __name__ == "__main__":
-    # Ensure directories exist
-    os.makedirs(PNG_OUTPUT, exist_ok=True)
-    os.makedirs(os.path.dirname(LOG_OUTPUT), exist_ok=True)
-
-    print(f"ABIDE convert to YOLO (640x640)")       
+    # Setup folders
+    for d in [PNG_OUTPUT, TS_OUTPUT, META_DIR]: 
+        d.mkdir(parents=True, exist_ok=True)
     
-    if not os.path.exists(PHENO_PATH):
-        print(f"Error: Phenotypic file not found at {PHENO_PATH}")
-        exit()
-
-    # Load subject list
+    print("Pre-calculating Atlas Metadata...")
+    save_atlas_metadata()
+    
+    # Load Phenotypic data
     df = pd.read_csv(PHENO_PATH)
-    subject_list = df[df['FILE_ID'] != 'no_filename']['FILE_ID'].dropna().unique().tolist()
+    df['TR'] = pd.to_numeric(df['TR'], errors='coerce').fillna(2.0)
     
-    total_subjects = len(subject_list)
-    print(f"Starting processing for {total_subjects} subjects...")
+    # Filter valid subjects
+    subjects_df = df[df["FILE_ID"] != "no_filename"].dropna(subset=["FILE_ID"])
+    tasks = subjects_df[["FILE_ID", "TR"]].drop_duplicates().values
     
-    # Process using a ThreadPool for S3 I/O efficiency
-    with ThreadPoolExecutor(max_workers=N_WORKERS) as executor:
-        # tqdm creates a nice progress bar
-        results = list(tqdm(executor.map(process_subject, subject_list), total=total_subjects))
-
-    # Save execution log
-    log_df = pd.DataFrame(results)
-    log_df.to_csv(LOG_OUTPUT, index=False)
+    print(f"Starting processing for {len(tasks)} subjects...")
     
-    print(f"\nProcessing Complete!")
-    print(f"Log saved to: {LOG_OUTPUT}")
-    print(f"Images saved to: {PNG_OUTPUT}")
+    # Use max_workers=6 or 8 (even if you have 12-16 threads) 
+    # fMRI processing is often RAM-bound, not CPU-bound.
+    results = []
+    with ProcessPoolExecutor(max_workers=8) as exe:
+        futures = [exe.submit(process_subject, row[0], row[1]) for row in tasks]
+        
+        for fut in tqdm(as_completed(futures), total=len(tasks)):
+            sub_id, status, err = fut.result()
+            if status == "Failed":
+                print(f"Error on {sub_id}: {err}")
