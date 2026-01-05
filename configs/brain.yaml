@@ -1,5 +1,5 @@
 # Train/Val/Test Sets
-path: ./data/processed/
+path: ./data/final/
 train: train/images
 val: val/images
 test: test/images
@@ -10,3 +10,4 @@ names:
   1: Temporal
   2: Parietal
   3: Occipital
+  4: Limbic
