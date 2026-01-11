@@ -1,4 +1,4 @@
-# Python envs
+# Python / Virtual Environments
 __pycache__/
 *.py[cod]
 *$py.class
@@ -9,62 +9,74 @@ venv/
 build/
 dist/
 
-# Jupyter Notebooks
+# Jupyter
 .ipynb_checkpoints/
 */.ipynb_checkpoints/*
 
-# Data & Atlases 
-data/raw/*
-data/processed/*
-data/splits/*
-data/yolo/*
-data/atlases/AAL3/*.nii
-data/atlases/AAL3/*.nii.gz
-data/atlases/AAL3/*.pdf
-data/atlases/AAL3/*.mat
+# Data (ignore contents, keep structure)
+data/raw/**
+data/processed/**
+data/splits/**
+data/yolo/**
+data/final/**
 
-# Ignore specific large data formats globally
+# Atlases (ignore heavy binaries, keep metadata)
+data/atlases/**
+!data/atlases/README.md
+!data/atlases/**/*.json
+!data/atlases/**/*.txt
+!data/atlases/**/*.csv
+
+# Neuroimaging / Large Scientific Files
 *.nii
 *.nii.gz
 *.mat
+*.h5
+*.hdf5
 
-# Models & Weights
-models/checkpoints/*
-models/zoo/*
+# Models / Weights (ignore binaries, keep configs)
+models/**
+!models/README.md
+!models/configs/**
+!models/**/*.yaml
+!models/**/*.yml
+!models/**/*.json
+
 *.pt
 *.pth
 *.ckpt
 *.onnx
 *.weights
-*.nii
-*.gz
-*.mat
-*.pt
 
-# Logs & Outputs
+# Training / Experiment Outputs
 runs/
 mlruns/
 .mlflow/
-results/logs/
-results/figures/
+results/**
+!results/README.md
 
+# Logs
+*.log
 
-# Editor
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# Editors / OS
 .DS_Store
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# Misc
+# Project-specific clutter
+clutter/
 tree.sh
 tree.md
-*.log
-clutter/
 check_gpu.py
-data/atlases/
-tests/
-docs/
-models/
 
-*.zip
+# Tests & Docs (keep source, ignore junk)
+tests/__pycache__/
+docs/_build/

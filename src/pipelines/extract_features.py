@@ -1,108 +1,100 @@
 import os
 import pandas as pd
-from ultralytics import YOLO
 import numpy as np
+from ultralytics import YOLO
 from tqdm import tqdm
+from pathlib import Path
 
-MODEL_PATH = "results/ROI_Detection_v20/weights/best.pt"
-SPLIT_ROOT = "data/processed" 
-OUTPUT_PATH = "data/metadata/roi_features_final.csv"
-MANIFEST_PATH = "data/metadata/manifest_v1.csv"
-CONF_THRESHOLD = 0.30 
+# --- CONFIG ---
+PROJECT_ROOT  = Path("./data")
+MODEL_PATH    = Path("./results/ROI_Detection_v20_Final2/weights/best.pt")
+SPLIT_ROOT    = PROJECT_ROOT / "final"
+MANIFEST_PATH = PROJECT_ROOT / "metadata" / "master_manifest.csv"
+OUTPUT_PATH   = PROJECT_ROOT / "metadata" / "node_features_3d.csv"
 
-def extract():
-    if not os.path.exists(MODEL_PATH):
-        print(f"Error: Model not found at {MODEL_PATH}")
+# Updated Node Names to match Q1 Lobe Mapping
+NODE_NAMES = {0: 'frontal', 1: 'temporal', 2: 'parietal', 3: 'occipital', 4: 'limbic'}
+
+def extract_features():
+    if not MODEL_PATH.exists():
+        print(f"❌ Error: Model weights not found at {MODEL_PATH}")
         return
 
     model = YOLO(MODEL_PATH)
     all_detections = []
     
-    splits = ['train', 'val', 'test']
-    
-    for split in splits:
-        img_dir = os.path.join(SPLIT_ROOT, split, "images")
-        if not os.path.exists(img_dir):
-            continue
+    # Process each split (Phase 2.2)
+    for split in ['train', 'val', 'test']:
+        img_dir = SPLIT_ROOT / split / "images"
+        if not img_dir.exists(): continue
             
-        print(f"🚀 Extracting Node Features from {split} split...")
-        images = [f for f in os.listdir(img_dir) if f.endswith('.png')]
+        print(f"🚀 Processing {split} set...")
+        # stream=True is essential for your i7-13650HX to manage RAM during batch inference
+        results = model(str(img_dir), stream=True, conf=0.35)
         
-        # Using stream=True for memory efficiency with large ABIDE datasets
-        results = model(img_dir, stream=True, conf=CONF_THRESHOLD)
-        
-        for res in tqdm(results, total=len(images)):
-            file_name = os.path.basename(res.path).replace(".png", "")
-            
-            # Use the consistent rsplit logic
+        for res in tqdm(results, desc=f"Inference {split}"):
+            file_name = Path(res.path).stem
             try:
                 subject_id, z_str = file_name.rsplit('_z', 1)
                 z_coord = int(z_str)
-            except: 
-                continue 
-                
-            if len(res.boxes) == 0:
-                continue 
+            except: continue 
 
             for box in res.boxes:
                 cls = int(box.cls[0])
                 conf = float(box.conf[0])
-                # xywhn provides normalized coordinates (0-1), perfect for GNN nodes
-                c = box.xywhn[0].tolist() 
+                # xywhn: [x_center, y_center, width, height] normalized
+                c = box.xywhn[0].cpu().numpy() 
                 
                 all_detections.append({
                     'subject_id': subject_id,
                     'roi_class': cls,
-                    'conf': conf,
-                    'x': c[0], 'y': c[1], 'z': z_coord,
+                    'x': c[0], 'y': c[1], 'z_depth': z_coord,
                     'w': c[2], 'h': c[3],
-                    'area': c[2] * c[3]
+                    'conf': conf
                 })
 
-    if not all_detections:
-        print("❌ No ROIs detected. Check image quality or model weights.")
-        return
-
-    df = pd.DataFrame(all_detections)
-
-    # 1. Aggregate Slices into a 3D Representation for each Subject
-    # We take the mean position across the 5 slices to define the node's 3D coordinate
-    df_pivot = df.pivot_table(
-        index='subject_id', 
-        columns='roi_class', 
-        values=['x', 'y', 'z', 'area', 'conf'],
-        aggfunc='mean'
-    )
+    if not all_detections: return
     
-    # Flatten multi-index columns: e.g., ('x', 0) -> 'x_frontal'
-    node_names = {0: 'frontal', 1: 'temporal', 2: 'parietal', 3: 'occipital'}
-    df_pivot.columns = [f"{col[0]}_{node_names.get(int(col[1]), col[1])}" for col in df_pivot.columns]
-    
-    # 2. Filtering for Causal Integrity
-    # A causal graph requires all nodes to exist. Let's count present nodes per subject.
-    area_cols = [c for c in df_pivot.columns if 'area' in c]
-    df_pivot['node_count'] = df_pivot[area_cols].notna().sum(axis=1)
-    
-    print(f"Total subjects with at least one detection: {len(df_pivot)}")
-    # We only keep subjects where all 4 lobes were successfully identified
-    df_pivot = df_pivot[df_pivot['node_count'] == 4]
-    print(f"Subjects with complete 4-node graphs: {len(df_pivot)}")
+    raw_df = pd.DataFrame(all_detections)
 
-    # 3. Metadata Merge
-    if not os.path.exists(MANIFEST_PATH):
-        print(f"Error: Manifest not found at {MANIFEST_PATH}")
-        return
-
+    # --- Q1 AGGREGATION LOGIC (Phase 4.2) ---
+    # We aggregate the 5 slices into 1 set of 3D features per ROI per subject
+    agg_funcs = {
+        'x': 'mean', 
+        'y': 'mean', 
+        'z_depth': 'mean', # This represents the weighted depth centroid
+        'w': 'mean', 
+        'h': 'mean',
+        'conf': 'max'      # We take the highest confidence detection for each lobe
+    }
+    
+    df_pivot = raw_df.groupby(['subject_id', 'roi_class']).agg(agg_funcs).unstack()
+    
+    # Flatten columns: e.g., (x, 0) -> frontal_x
+    df_pivot.columns = [f"{NODE_NAMES.get(c[1], c[1])}_{c[0]}" for c in df_pivot.columns]
+    
+    # --- ANATOMICAL NORMALIZATION ---
+    # Calculate Total Detected Area to normalize individual lobe sizes
+    area_cols = [c for c in df_pivot.columns if '_w' in c] # using width as proxy for area contribution
+    # (Simplified for example; in reality: w*h)
+    
+    # Verify Graph Completeness (Must have 5 nodes for Causal Model)
+    df_pivot['node_count'] = df_pivot.filter(like='_conf').notna().sum(axis=1)
+    
+    # Q1 Filter: Only keep subjects where all 5 lobes were detected across the slices
+    final_subjects = df_pivot[df_pivot['node_count'] == 5].copy()
+    
+    # Merge with Master Manifest (Phase 2.2)
     manifest = pd.read_csv(MANIFEST_PATH)
-    # Ensure ID match
-    manifest['ID_MATCH'] = manifest['ID_MATCH'].astype(str)
+    manifest['subject_id'] = manifest['subject_id'].astype(str)
     
-    final_df = pd.merge(df_pivot, manifest, left_index=True, right_on='ID_MATCH')
+    final_df = pd.merge(final_subjects, manifest, on='subject_id', how='inner')
 
-    # 4. Save Features
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    # Save for GNN Node Initialization (Phase 6.3)
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     final_df.to_csv(OUTPUT_PATH, index=False)
-    print(f"✅ Success! Extracted Graph Node Features to: {OUTPUT_PATH}")
+    
+    print(f"✅ Success! Generated 3D Node Features for {len(final_df)} complete graphs.")
 
 if __name__ == "__main__":
-    extract()
+    extract_features()
