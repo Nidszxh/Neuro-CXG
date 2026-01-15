@@ -1,9 +1,21 @@
+"""
+Central Configuration for Neuro-CXG Project
+
+Single source of truth for all paths, parameters, and constants.
+"""
+
 from pathlib import Path
 import torch
+import logging
+
+# Setup logging for config validation
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # PROJECT STRUCTURE
+
 # Root directory of the project
-PROJECT_ROOT = Path(__file__).resolve().parents[2]  # Goes up to project root from src/config.py
+PROJECT_ROOT = Path(__file__).resolve().parents[1]  # Up from src/ to project root
 
 # Data directories
 DATA_ROOT       = PROJECT_ROOT / "data"
@@ -31,6 +43,7 @@ ATLAS_METADATA  = DATA_METADATA / "roi_centroids.json"
 
 # Phenotypic data
 PHENO_PATH      = DATA_PROCESSED / "Phenotypic_V1_0b_preprocessed1.csv"
+
 # Manifests and metadata
 MASTER_MANIFEST              = DATA_METADATA / "master_manifest.csv"
 NODE_ATTRIBUTES_TEMPORAL     = DATA_METADATA / "node_attributes_temporal.csv"
@@ -43,7 +56,8 @@ CAUSAL_GRAPHS_DIR   = DATA_PROCESSED / "causal_graphs"
 # YOLO config
 YOLO_CONFIG         = CONFIG_DIR / "brain.yaml"
 
-# AAL3 TO LOBE MAPPING (CRITICAL: Keep consistent across all scripts!)
+# AAL3 TO LOBE MAPPING
+# CRITICAL: This is the ONLY definition - import from here everywhere else!
 
 LOBE_MAPPING = {
     0: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26],  # Frontal
@@ -69,17 +83,17 @@ NUM_LOBES = 5
 # ABIDE download
 TARGET_SLICES = 5  # Number of z-slices to extract per subject
 SLICE_POSITIONS = [0.3, 0.4, 0.5, 0.6, 0.7]  # Relative positions along z-axis
-DEFAULT_TR = 2.0  # Default repetition time for fMRI
+DEFAULT_TR = 2.0  # Default repetition time for fMRI (seconds)
 
 # Time series extraction
-BANDPASS_LOW = 0.01  # Hz
-BANDPASS_HIGH = 0.08  # Hz
+BANDPASS_LOW = 0.01   # Hz - Low frequency cutoff
+BANDPASS_HIGH = 0.08  # Hz - High frequency cutoff
 
 # Feature extraction
 NUM_TEMPORAL_FEATURES = 6  # mean, std, skew, kurt, psd, mssd
 
 # Causal graph construction
-CAUSAL_LAG = 1  # Time lag for causal inference
+CAUSAL_LAG = 1  # Time lag for temporal precedence (TRs)
 SPARSITY_QUANTILE = 0.80  # Keep top 20% of connections
 
 # TRAIN/VAL/TEST SPLIT
@@ -100,9 +114,9 @@ YOLO_CONF_THRESHOLD = 0.35
 YOLO_WORKERS = 8
 
 # Augmentation parameters (medical-specific)
-YOLO_HSV_H = 0.0  # No hue variation for medical images
-YOLO_HSV_S = 0.0  # No saturation variation
-YOLO_HSV_V = 0.2  # Slight brightness variation
+YOLO_HSV_H = 0.0   # No hue variation for medical images
+YOLO_HSV_S = 0.0   # No saturation variation
+YOLO_HSV_V = 0.2   # Slight brightness variation
 YOLO_DEGREES = 10  # Subtle rotation for head tilt
 YOLO_FLIPLR = 0.5  # Left-right symmetry
 YOLO_FLIPUD = 0.0  # No up-down flip (anatomically incorrect)
@@ -135,15 +149,160 @@ LOG_INTERVAL = 10  # Log every N epochs
 SAVE_PLOTS = True
 PLOT_DPI = 300
 
-# HELPER FUNCTIONS
+# VALIDATION FUNCTIONS
+
+def validate_lobe_mapping():
+    """
+    Validate LOBE_MAPPING for consistency.
+    
+    Checks:
+    - All lobes (0-4) have entries
+    - No duplicate ROI assignments
+    - All ROIs are positive integers
+    - ROIs are within expected range (1-170 for AAL3)
+    
+    Raises:
+        ValueError: If validation fails
+        
+    Returns:
+        True if validation passes
+    """
+    all_rois = []
+    
+    # Check all lobes exist
+    for lobe_id in range(NUM_LOBES):
+        if lobe_id not in LOBE_MAPPING:
+            raise ValueError(f"Lobe {lobe_id} missing from LOBE_MAPPING")
+        
+        roi_list = LOBE_MAPPING[lobe_id]
+        
+        if not roi_list:
+            raise ValueError(f"Lobe {lobe_id} has no ROIs assigned")
+        
+        for roi in roi_list:
+            # Check ROI is valid integer
+            if not isinstance(roi, int) or roi < 1:
+                raise ValueError(f"Invalid ROI {roi} in lobe {lobe_id}")
+            
+            # Check ROI range (AAL3 has 170 regions)
+            if roi > 170:
+                raise ValueError(f"ROI {roi} in lobe {lobe_id} exceeds AAL3 range [1, 170]")
+            
+            # Check for duplicates
+            if roi in all_rois:
+                raise ValueError(f"ROI {roi} is assigned to multiple lobes")
+            
+            all_rois.append(roi)
+    
+    logger.info(f"✓ LOBE_MAPPING validated: {len(all_rois)} ROIs across {NUM_LOBES} lobes")
+    return True
+
+
+def validate_paths():
+    """
+    Validate that critical files and directories exist.
+    
+    Returns:
+        bool: True if all critical paths exist, False otherwise
+    """
+    issues = []
+    
+    # Critical files
+    critical_files = [
+        (ATLAS_PATH, "AAL3 Atlas"),
+        (PHENO_PATH, "Phenotypic Data"),
+        (YOLO_CONFIG, "YOLO Configuration")
+    ]
+    
+    for path, name in critical_files:
+        if not path.exists():
+            issues.append(f"Missing: {name} at {path}")
+    
+    if issues:
+        logger.warning("⚠️  Path validation issues:")
+        for issue in issues:
+            logger.warning(f"   - {issue}")
+        return False
+    
+    logger.info("✓ All critical paths exist")
+    return True
+
+
+def validate_environment():
+    """
+    Comprehensive environment validation.
+    
+    Checks:
+    - Critical files exist
+    - Directories are writable
+    - LOBE_MAPPING is consistent
+    - Hardware availability (CUDA)
+    
+    Returns:
+        bool: True if all checks pass
+    """
+    logger.info("="*60)
+    logger.info("Validating Neuro-CXG environment...")
+    logger.info("="*60)
+    
+    issues = []
+    
+    # 1. Validate paths
+    try:
+        validate_paths()
+    except Exception as e:
+        issues.append(f"Path validation failed: {e}")
+    
+    # 2. Validate LOBE_MAPPING
+    try:
+        validate_lobe_mapping()
+    except ValueError as e:
+        issues.append(f"LOBE_MAPPING validation failed: {e}")
+    
+    # 3. Check directory permissions
+    test_dirs = [DATA_ROOT, MODEL_ROOT, RESULTS_DIR]
+    for directory in test_dirs:
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            test_file = directory / ".write_test"
+            test_file.touch()
+            test_file.unlink()
+        except Exception as e:
+            issues.append(f"Cannot write to {directory}: {e}")
+    
+    # 4. Check CUDA availability
+    if DEVICE.type == 'cuda':
+        logger.info(f"✓ CUDA available: {torch.cuda.get_device_name(0)}")
+        logger.info(f"  Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+    else:
+        logger.warning("⚠️  CUDA not available, using CPU (training will be slow)")
+    
+    # 5. Report results
+    if issues:
+        logger.error("❌ Environment validation FAILED:")
+        for issue in issues:
+            logger.error(f"   - {issue}")
+        logger.info("="*60)
+        return False
+    
+    logger.info("✅ Environment validation PASSED")
+    logger.info(f"Project root: {PROJECT_ROOT}")
+    logger.info(f"Device: {DEVICE}")
+    logger.info("="*60)
+    return True
+
 
 def ensure_directories():
+    """
+    Create all required directories if they don't exist.
+    """
     directories = [
         DATA_RAW, DATA_PROCESSED, DATA_FINAL, DATA_IMAGES, DATA_LABELS,
         DATA_ATLASES, DATA_METADATA, MODEL_ROOT, CHECKPOINT_DIR, RESULTS_DIR,
         CAUSAL_GRAPHS_DIR
     ]
     
+    # Create split-specific directories
     for split in ['train', 'val', 'test']:
         directories.extend([
             DATA_FINAL / split / 'images',
@@ -154,31 +313,16 @@ def ensure_directories():
     for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)
     
-    print("✓ All required directories created/verified")
+    logger.info("✓ All required directories created/verified")
 
 
-def validate_paths():
-    """Validate that critical files exist."""
-    critical_files = [
-        (ATLAS_PATH, "AAL3 Atlas"),
-        (PHENO_PATH, "Phenotypic Data"),
-        (YOLO_CONFIG, "YOLO Configuration")
-    ]
-    
-    missing = []
-    for path, name in critical_files:
-        if not path.exists():
-            missing.append(f"{name} at {path}")
-    
-    if missing:
-        print("⚠️  Missing critical files:")
-        for item in missing:
-            print(f"   - {item}")
-        return False
-    
-    print("✓ All critical files present")
-    return True
+# AUTO-VALIDATION (Optional - can be disabled for faster imports)
 
+# Uncomment to automatically validate environment on import
+# validate_environment()
+
+
+# MAIN (For testing configuration)
 
 if __name__ == "__main__":
     print("="*60)
@@ -187,7 +331,11 @@ if __name__ == "__main__":
     print(f"Project Root: {PROJECT_ROOT}")
     print(f"Device: {DEVICE}")
     print(f"Number of Workers: {NUM_WORKERS}")
+    print(f"Number of Lobes: {NUM_LOBES}")
     print("="*60)
     
+    # Ensure directories exist
     ensure_directories()
-    validate_paths()
+    
+    # Run validation
+    validate_environment()

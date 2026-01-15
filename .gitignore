@@ -8,10 +8,23 @@ __pycache__/
 venv/
 build/
 dist/
+*.egg
 
 # Jupyter
 .ipynb_checkpoints/
 */.ipynb_checkpoints/*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logging
+logs/
+*.log
 
 # Data (ignore contents, keep structure)
 data/raw/**
@@ -33,6 +46,7 @@ data/atlases/**
 *.mat
 *.h5
 *.hdf5
+*.dcm
 
 # Models / Weights (ignore binaries, keep configs)
 models/**
@@ -48,7 +62,26 @@ models/**
 *.onnx
 *.weights
 
-# Training / Experiment Outputs
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Results (keep outputs, but not large intermediate files)
+results/*
+!results/.gitkeep
+!results/figures/
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+
+# System files
+Thumbs.db
+.AppleDouble
+.LSOverride# Training / Experiment Outputs
 runs/
 mlruns/
 .mlflow/

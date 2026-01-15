@@ -3,6 +3,68 @@
 
 ---
 
+## IMPLEMENTATION STATUS (January 15, 2026)
+
+### COMPLETED PHASES (100%)
+
+#### Phase 1-2: Project Setup & Data Acquisition
+- [x] Environment configuration with pinned versions
+- [x] ABIDE data download pipeline
+- [x] Time series extraction (5 z-slices per subject)
+- [x] Data organization and stratified splitting
+
+#### Phase 3: ROI Detection with YOLO
+- [x] YOLO11s training on brain slices (640x640)
+- [x] 5-lobe anatomical classification
+- [x] Model evaluation and optimization
+- [x] Outputs: results/ROI_Detection_v20_Final4/weights/best.pt
+
+#### Phase 4: Feature Extraction & Harmonization
+- [x] Temporal feature computation (6 per ROI: mean, std, skew, kurtosis, PSD, MSSD)
+- [x] Spatial coordinate extraction from YOLO detections
+- [x] Site harmonization with neuroCombat (DX_GROUP protected)
+- [x] Outputs: data/processed/metadata/node_attributes_harmonized.csv
+
+#### Phase 5: Graph Construction
+- [x] Functional connectivity matrices from 170 AAL ROIs
+- [x] Aggregation to 5 anatomical lobes
+- [x] Causal graph construction (lagged partial correlation, t-1 -> t)
+- [x] Sparsification to top 20% connections
+- [x] PyTorch Geometric Data objects
+- [x] Outputs: data/processed/causal_graphs/{subject_id}_graph.pt
+
+#### Phase 6: GNN Development
+- [x] CausalBrainGNN architecture (GATv2Conv, 4 heads, skip connections)
+- [x] 5-fold stratified cross-validation (by DX_GROUP + SITE_ID)
+- [x] Training loop with early stopping and gradient clipping
+- [x] Metric computation (Accuracy, F1, ROC-AUC, Confusion Matrix)
+- [x] Model checkpointing (best AUC per fold)
+- [x] Outputs: models/checkpoints/best_model_fold{0-4}.pt
+
+### CURRENT SPRINT: CODE REFINEMENT (January 15-16, 2026)
+
+#### Day 1: Critical Fixes and Consistency (Complete)
+- [x] Task 1: Fix LOBE_MAPPING duplication (already clean in code)
+- [x] Task 2: Standardize path handling (extract_features.py, gnn_model.py)
+- [x] Task 3: Replace print statements with logging (key modules updated)
+- [x] Task 4: Add error handling to I/O (data pipeline hardened)
+- [x] Task 5: Fix graph_factory.py ROI detection (validated robust)
+- [x] Task 6: Improve construct_causal.py robustness (validated checks)
+- [x] Task 7: Clean up gnn_model.py training loop (early stopping, logging)
+- [x] Task 8: Code style consistency pass (imports, formatting)
+
+#### Day 2: Testing and Documentation (In Progress)
+- [x] Task 9: Create validation test suite (src/test_suite.py with 8 test classes)
+- [x] Task 10: Update README.md (installation, usage, troubleshooting)
+ - [x] Task 11: Update ROADMAP.md (this update)
+- [ ] Task 12: Code review and cleanup (final style polish pending)
+- [x] Task 13: Update .gitignore (data/logs/models patterns)
+- [x] Task 14: Create requirements.txt with pinned versions (all packages pinned)
+- [ ] Task 15: Final integration test (full pipeline validation pending)
+- [ ] Task 16: Documentation polish (docstring standardization pending)
+
+---
+
 ## PHASE 1: PROJECT SETUP & ENVIRONMENT CONFIGURATION
 
 ### 1.1 Development Environment Setup
