@@ -113,4 +113,5 @@ check_gpu.py
 # Tests & Docs (keep source, ignore junk)
 tests/__pycache__/
 docs/_build/
-/reorganize.py
+/scripts
+/TODO.md
