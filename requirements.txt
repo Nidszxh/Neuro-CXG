@@ -9,8 +9,9 @@ torch-geometric
 # Neuroimaging
 nibabel
 nilearn
+neuroCombat
 
-#AWS S3
+# AWS S3
 boto3
 botocore
 
@@ -28,7 +29,12 @@ tqdm
 matplotlib
 seaborn
 networkx
+pillow
 
 # Experiment & notebooks
 jupyter
 ipykernel
+
+# Optional but recommended
+# mlflow>=2.8.0  # For experiment tracking
+# wandb>=0.15.0  # Alternative experiment tracking
