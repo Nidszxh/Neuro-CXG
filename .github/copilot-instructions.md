@@ -10,10 +10,9 @@
 
 ## Quick Start for Agents
 **Most common tasks:**
-- **Run full pipeline**: `python run_pipeline.py --run-diagnostics --run-safe-harmonize` (orchestrates all stages)
+- **Run full pipeline**: `python src/run_pipeline.py --run-diagnostics --run-safe-harmonize` (orchestrates all stages)
 - **Validate environment**: `python -c "from src.config import validate_environment; validate_environment()"` (pre-flight check)
 - **Debug data issues**: Use [src/pipeline_diagnostics.py] — comprehensive health check for all pipeline stages
-- **Check test suite**: `pytest src/test_suite.py -v` (validate config, data integrity, tensor shapes)
 - **Find config values**: ALL constants live in [src/config.py]—never hardcode paths or parameters
 - **Add new code**: Follow imports from config pattern (see extract_features.py, gnn_model.py for correct examples)
 
@@ -60,9 +59,10 @@ Train GNN with 5-fold stratified cross-validation
 
 4. **Graph Construction** → [src/data/construct_causal.py]
    - Aggregates 170 AAL ROIs → 5 lobes using `LOBE_MAPPING` from config
-   - Computes **lagged partial correlation** (t-1 → t with lag=1 TR)
-   - Sparsifies to top 20% correlations (`SPARSITY_QUANTILE=0.8`)
-   - Output: PyTorch Geometric `Data` objects saved as `.pt` files
+   - Computes **lagged Pearson correlation** (t-1 → t with lag=1 TR for temporal precedence)
+   - Creates 5×5 directed adjacency matrix (matrix[i,j] = correlation between lobe i at t-1 and lobe j at t)
+   - Sparsifies to top 20% correlations (`SPARSITY_QUANTILE=0.8`; keeps ~5 edges per graph)
+   - Output: Dictionary with 'adj' (5×5 tensor), 'subject_id', 'lobe_order' saved as `.pt` files
 
 5. **GNN Training** → [src/models/gnn_model.py] + [src/models/causal_gnn.py]
    - Loads graphs via `ABIDECausalDataset` (handles file paths, label lookups)
@@ -139,12 +139,13 @@ Train GNN with 5-fold stratified cross-validation
 
 ### 7. GNN Architecture & Training
 - **Model**: `CausalBrainGNN` (class in [src/models/causal_gnn.py])
-  - Input embedding: LayerNorm (not BatchNorm—graphs are small)
-  - Layer 1: GATv2Conv with 4 heads, edge_dim=1 (causal weights)
-  - Layer 2: GATv2Conv with 4 heads, edge_dim=1
+  - Input embedding: LayerNorm (not BatchNorm—graphs are small; stabilizes 9 features with varying scales)
+  - Layer 1: GATv2Conv with **2 heads**, edge_dim=1 (causal weights; sufficient for 5-node graphs)
+  - Layer 2: GATv2Conv with **2 heads**, edge_dim=1 (concat=True; output is hidden_channels * 2)
   - Skip connections: Residual links prevent over-smoothing in 5-node graphs
-  - Readout: Concat mean-pooling + max-pooling (captures global + peak local activity)
+  - Readout: Concat mean-pooling (global brain state) + max-pooling (pathological lobe hub)
   - Output: 2-class softmax (Control vs ASD)
+  - Weight initialization: Kaiming normal for Linear layers, zeros for biases
 
 - **Training details**:
   - Optimizer: AdamW with `lr=0.001, weight_decay=1e-3`
@@ -154,6 +155,14 @@ Train GNN with 5-fold stratified cross-validation
   - K-fold: 5-fold stratified by DX_GROUP
   - Metrics: Accuracy, F1, ROC-AUC (from probs[:,1]), confusion matrix per fold
   - Checkpointing: Save best model per fold (top validation AUC)
+  - Dropout: 0.5 (high dropout to prevent memorizing site-specific noise)
+
+- **Current Results** (5-fold CV on full training set):
+  - Mean AUC: **0.5354 ± 0.0562** (range: 0.4584-0.6056)
+  - Mean F1: **0.6586 ± 0.0164** (range: 0.6479-0.6911)
+  - Mean Accuracy: **0.5193 ± 0.0454**
+  - Mean Optimal Threshold: **0.588**
+  - Note: AUC near random (0.5) suggests need for architecture tuning, class rebalancing, or feature engineering
 
 ## Development Workflows
 
@@ -254,18 +263,6 @@ python src/run_pipeline.py --run-download --run-manifest --run-safe-harmonize --
 ```bash
 # Run comprehensive pipeline diagnostics (health check)
 python src/pipeline_diagnostics.py
-
-# Run comprehensive test suite
-pytest src/test_suite.py -v
-
-# Run config validation tests only
-pytest src/test_suite.py::TestConfiguration -v
-
-# Run data integrity tests
-pytest src/test_suite.py::TestDataIntegrity -v
-
-# Run with coverage report
-pytest src/test_suite.py --cov=src --cov-report=html
 
 # Check dataset loading (verify labels, shapes, sample counts)
 python -c "from src.data.graph_factory import ABIDECausalDataset; \
@@ -444,7 +441,29 @@ In [src/data/harmonize.py] and [src/safe_harmonization.py], `DX_GROUP` (diagnosi
 ## Medical/Scientific Context
 
 - **Diagnosis label**: 0=Control (healthy), 1=ASD (autism spectrum disorder)
-- **Data source**: ABIDE initiative (public fMRI dataset, multi-site)
-- **Causal inference goal**: Identify ROI→ROI influence patterns distinctive to ASD using lagged correlations
+- **Data source**: ABIDE initiative (public fMRI dataset, multi-site, ~1000 subjects)
+- **Causal inference goal**: Identify lobe→lobe influence patterns distinctive to ASD using lagged correlations
 - **Explainability**: Edge weights in causal graph provide subject-specific feature importance (gradient-based saliency in `causal_gnn.py::get_node_importance()`)
-- **Medical tuning**: YOLO augmentation disabled for grayscale medical images; left-right flips only (preserve anatomy)
+- **Medical tuning**: YOLO augmentation disabled for grayscale medical images; preserves anatomical alignment
+- **Graph construction**: Lagged Pearson correlation (not partial correlation as initially documented) between lobe i at t-1 and lobe j at t
+- **Key metric**: AUC is primary metric for imbalanced classification; current results (~0.535) indicate baseline performance
+
+### Why These Design Choices?
+
+**5-Lobe Aggregation:**
+- Reduces 170×170=28,900 edges to 5×5=25 edges (computational efficiency)
+- Anatomically interpretable for clinical validation
+- Reduces scanner-specific noise through within-lobe averaging
+- Better statistical power with limited samples (n~1000)
+
+**2-Head GAT (not 4-head):**
+- Sufficient attention capacity for 5-node graphs
+- 4+ heads cause redundancy on small graphs
+- Maintains edge_attr (causal weights) integration
+- Skip connections prevent over-smoothing
+
+**Lagged Correlation (not Granger):**
+- Scalable to 170 ROIs before aggregation
+- Temporal precedence via lag=1 TR enforces directionality
+- Robust and interpretable compared to VAR models
+- Sparsification (top 20%) keeps strongest connections only
