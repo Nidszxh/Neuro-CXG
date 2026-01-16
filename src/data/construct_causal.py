@@ -8,7 +8,7 @@ import sys
 
 # Setup paths
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.config import (
+from config import (
     LOBE_MAPPING, NUM_LOBES, CAUSAL_LAG, SPARSITY_QUANTILE,
     DATA_FINAL, MASTER_MANIFEST, CAUSAL_GRAPHS_DIR, DEVICE
 )

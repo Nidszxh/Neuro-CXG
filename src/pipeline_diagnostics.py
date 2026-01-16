@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from src.config import (
+from config import (
     ATLAS_PATH, PHENO_PATH, MASTER_MANIFEST,
     NODE_ATTRIBUTES_TEMPORAL, NODE_FEATURES_3D,
     NODE_ATTRIBUTES_HARMONIZED, CAUSAL_GRAPHS_DIR,

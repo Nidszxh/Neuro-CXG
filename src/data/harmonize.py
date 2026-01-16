@@ -7,7 +7,7 @@ import sys
 
 # Setup paths and config
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.config import (
+from config import (
     DATA_PROCESSED, NODE_ATTRIBUTES_TEMPORAL, 
     MASTER_MANIFEST, NODE_ATTRIBUTES_HARMONIZED
 )

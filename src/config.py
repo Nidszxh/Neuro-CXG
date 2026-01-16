@@ -89,6 +89,124 @@ K_FOLDS = 5
 # --- HARDWARE ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
+"""
+Updated Configuration with Class Imbalance Handling
+
+Add these parameters to src/config.py to enable the class balance fixes.
+"""
+
+# ============================================================
+# CLASS IMBALANCE HANDLING (ADD TO src/config.py)
+# ============================================================
+
+# Focal Loss Parameters
+FOCAL_LOSS_ALPHA = 0.75  # Weight for minority class (ASD)
+FOCAL_LOSS_GAMMA = 2.0   # Focusing parameter (higher = more focus on hard examples)
+
+# Classification Threshold
+DEFAULT_THRESHOLD = 0.5  # Default classification threshold
+OPTIMIZE_THRESHOLD = True  # Find optimal threshold per fold
+
+# Training Strategy
+USE_FOCAL_LOSS = True  # Use Focal Loss instead of CrossEntropy
+USE_CLASS_WEIGHTS = False  # Use class weights (alternative to Focal Loss)
+USE_BALANCED_SAMPLING = False  # Oversample minority class in batches
+
+# Early Stopping
+PATIENCE = 25  # Epochs without improvement before stopping
+EVAL_FREQUENCY = 10  # Evaluate and check threshold every N epochs
+
+# ============================================================
+# DIAGNOSTIC THRESHOLDS
+# ============================================================
+
+# AUC Thresholds for Health Checks
+AUC_RANDOM_THRESHOLD = 0.52  # Below this is essentially random
+AUC_WEAK_THRESHOLD = 0.60    # Weak but useful signal
+AUC_GOOD_THRESHOLD = 0.70    # Clinical utility threshold
+AUC_EXCELLENT_THRESHOLD = 0.80  # Publication-ready
+
+# F1 Thresholds
+F1_BROKEN_THRESHOLD = 0.01   # Below this indicates complete class collapse
+F1_WEAK_THRESHOLD = 0.30     # Weak but learning
+F1_GOOD_THRESHOLD = 0.50     # Balanced performance
+F1_EXCELLENT_THRESHOLD = 0.70  # Strong performance
+
+# Loss Thresholds
+LOSS_RANDOM_THRESHOLD = 0.693  # log(2) - random guessing
+LOSS_LEARNING_THRESHOLD = 0.65  # Model is learning
+LOSS_CONVERGED_THRESHOLD = 0.50  # Model has converged
+
+# ============================================================
+# VALIDATION FUNCTION UPDATES
+# ============================================================
+
+def validate_training_health(metrics: dict) -> str:
+    """
+    Diagnose training health from metrics.
+    
+    Args:
+        metrics: Dictionary with 'auc', 'f1', 'loss'
+    
+    Returns:
+        Health status string
+    """
+    auc = metrics.get('auc', 0.5)
+    f1 = metrics.get('f1', 0.0)
+    loss = metrics.get('loss', 0.693)
+    
+    # Critical failures
+    if auc < AUC_RANDOM_THRESHOLD:
+        return "CRITICAL: Random guessing (AUC < 0.52)"
+    
+    if f1 < F1_BROKEN_THRESHOLD and loss > LOSS_RANDOM_THRESHOLD:
+        return "CRITICAL: Class collapse (F1 ≈ 0, Loss ≈ 0.693)"
+    
+    # Weak signal
+    if auc < AUC_WEAK_THRESHOLD:
+        if f1 < F1_WEAK_THRESHOLD:
+            return "WARNING: Weak signal, class imbalance likely"
+        else:
+            return "OK: Learning but needs improvement"
+    
+    # Good performance
+    if auc >= AUC_GOOD_THRESHOLD and f1 >= F1_GOOD_THRESHOLD:
+        return "EXCELLENT: Clinical utility achieved"
+    
+    return "OK: Model learning"
+
+
+def log_training_diagnostics(fold: int, epoch: int, metrics: dict):
+    """
+    Log detailed diagnostics for training monitoring.
+    
+    Args:
+        fold: Current fold number
+        epoch: Current epoch
+        metrics: Dictionary with all metrics
+    """
+    health = validate_training_health(metrics)
+    
+    logger.info(f"\nFold {fold}, Epoch {epoch} Diagnostics:")
+    logger.info(f"  Health: {health}")
+    logger.info(f"  AUC: {metrics['auc']:.4f} (random=0.50, good≥0.70)")
+    logger.info(f"  F1: {metrics['f1']:.4f} (broken<0.01, good≥0.50)")
+    logger.info(f"  Loss: {metrics['loss']:.4f} (random=0.693, good<0.50)")
+    
+    if 'cm' in metrics:
+        tn, fp, fn, tp = metrics['cm'].ravel()
+        logger.info(f"  Confusion Matrix: TN={tn}, FP={fp}, FN={fn}, TP={tp}")
+        
+        if tp == 0:
+            logger.warning("  ⚠️  No true positives! Model predicting all Control.")
+        
+        if fp + tn == 0:
+            logger.warning("  ⚠️  No negative predictions! Model predicting all ASD.")
+    
+    logger.info("")
+    
+    
 # --- VALIDATION LOGIC ---
 def validate_environment():
     """Checks if the 5-node architecture is ready for execution."""

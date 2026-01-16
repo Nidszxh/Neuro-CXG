@@ -299,7 +299,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(project_root))
 
     try:
-        from src.config import ATLAS_PATH, ATLAS_METADATA
+        from config import ATLAS_PATH, ATLAS_METADATA
 
         if ensure_atlas(ATLAS_PATH, auto_download=True):
             generate_atlas_metadata(ATLAS_PATH, ATLAS_METADATA)

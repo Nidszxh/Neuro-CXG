@@ -13,7 +13,7 @@ from typing import Tuple, Dict
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from src.config import (
+from config import (
     NODE_ATTRIBUTES_TEMPORAL, MASTER_MANIFEST,
     NODE_ATTRIBUTES_HARMONIZED, NUM_TEMPORAL_FEATURES
 )

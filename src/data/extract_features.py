@@ -9,7 +9,7 @@ import sys
 
 # Setup paths and config
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.config import (
+from config import (
     DATA_FINAL,
     MASTER_MANIFEST,
     LOBE_NAMES,
