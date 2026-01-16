@@ -6,8 +6,8 @@ from pathlib import Path
 import sys
 
 # Setup paths and config
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-from config import (
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.config import (
     DATA_PROCESSED, NODE_ATTRIBUTES_TEMPORAL, 
     MASTER_MANIFEST, NODE_ATTRIBUTES_HARMONIZED
 )

@@ -1,257 +1,377 @@
-"""
-Unified entry point to validate and execute the full Neuro-CXG pipeline end to end.
-
-Stages (in order):
-1) Environment validation (paths, lobe mapping, hardware)
-2) Optional YOLO training (skipped if weights already present unless forced)
-3) Stratified split (DX_GROUP + SITE_ID)
-4) ROI feature extraction (YOLO inference → spatial coords, 5-lobe filter)
-5) Temporal feature harmonization (neuroCombat with protected DX_GROUP)
-6) Causal graph construction (lagged partial correlation, sparsity)
-7) GNN training (5-fold stratified CV with checkpointing)
-
-The script performs lightweight pre-checks before each stage and stops on failure.
-Run from project root: `python -m src.run_pipeline` or `python src/run_pipeline.py`.
-"""
-
 import argparse
 import logging
 import os
 import subprocess
 import sys
+import shutil
 from pathlib import Path
 
-# Ensure local imports work regardless of launch location
-CURRENT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = CURRENT_DIR.parent
-sys.path.append(str(PROJECT_ROOT))
+# Setup Pathing
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from config import (
-    PROJECT_ROOT as CFG_PROJECT_ROOT,
-    DATA_FINAL,
-    DATA_IMAGES,
-    DATA_PROCESSED,
-    MASTER_MANIFEST,
-    NODE_ATTRIBUTES_TEMPORAL,
-    NODE_FEATURES_3D,
-    NODE_ATTRIBUTES_HARMONIZED,
-    CAUSAL_GRAPHS_DIR,
-    CHECKPOINT_DIR,
-    RESULTS_DIR,
+from src.config import (
     validate_environment,
-    validate_lobe_mapping,
-    validate_paths,
+    PROJECT_ROOT,
+    DATA_METADATA,
+    CAUSAL_GRAPHS_DIR,
+    NODE_FEATURES_3D,
+    NODE_ATTRIBUTES_TEMPORAL,
+    NODE_ATTRIBUTES_HARMONIZED,
+    CHECKPOINT_DIR,
+    NUM_LOBES,
+    YOLO_MODEL_SIZE
 )
 
-# Stage modules
-from data.extract_features import extract_features, MODEL_PATH as YOLO_BEST_PATH
-from data.harmonize import run_harmonization
-from data.construct_causal import main as run_construct_causal
-from data.split import run_stratified_split
-from models.gnn_model import run_kfold_training
-from pipelines.roi_detection import main as run_yolo_training
-from data.check_progress import check_health
-from utils.manifest import create_manifest
-from utils.integrity_check import check_dataset_integrity
-from utils.compute_roi import main as run_compute_roi
-
+# Standard logging
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - [PIPELINE] - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger("pipeline")
 
+# Path constants for new stages
+DOWNLOAD_LOG = DATA_METADATA / "download_log.csv"
+FINAL_TRAIN = PROJECT_ROOT / "data" / "final" / "train"
+FINAL_VAL = PROJECT_ROOT / "data" / "final" / "val"
+FINAL_TEST = PROJECT_ROOT / "data" / "final" / "test"
+MASTER_MANIFEST = DATA_METADATA / "master_manifest.csv"
+ATLAS_DIR = PROJECT_ROOT / "data" / "atlases"
 
-def run_step(name: str, func, check=None):
-    """Helper to run a stage with logging and optional post-check."""
-    logger.info("==> %s", name)
-    func()
-    if check:
-        check()
-    logger.info("✓ %s complete", name)
+def prompt_user(message, default=True):
+    """
+    Interactive yes/no prompt.
+    
+    Args:
+        message: Question to ask user
+        default: Default value if user just hits Enter
+    
+    Returns:
+        bool: True for yes, False for no
+    """
+    suffix = "[Y/n]" if default else "[y/N]"
+    while True:
+        response = input(f"\n{message} {suffix}: ").strip().lower()
+        
+        if response == "":
+            return default
+        elif response in ["y", "yes"]:
+            return True
+        elif response in ["n", "no"]:
+            return False
+        else:
+            print("Please enter 'y' or 'n'")
 
+def clear_old_state():
+    """
+    Prevents 'Shape Mismatches' by clearing old 164/170 ROI data.
+    This ensures the new 5-node architecture has a clean environment.
+    """
+    logger.info("🧹 Cleaning legacy pipeline state for 5-node alignment...")
+    
+    # Files to remove to force regeneration
+    to_delete = [
+        NODE_FEATURES_3D,
+        NODE_ATTRIBUTES_TEMPORAL,
+        NODE_ATTRIBUTES_HARMONIZED
+    ]
+    for f in to_delete:
+        if f.exists():
+            f.unlink()
+            logger.debug(f"Removed stale metadata: {f.name}")
 
-def ensure_workdir():
-    """Switch to project root so relative paths inside legacy modules stay correct."""
-    if Path.cwd() != CFG_PROJECT_ROOT:
-        os.chdir(CFG_PROJECT_ROOT)
-        logger.info("Working directory set to %s", CFG_PROJECT_ROOT)
+    # Remove old causal graphs (they are the wrong shape)
+    if CAUSAL_GRAPHS_DIR.exists():
+        shutil.rmtree(CAUSAL_GRAPHS_DIR)
+        CAUSAL_GRAPHS_DIR.mkdir(parents=True)
+        logger.info("Reset Causal Graph directory (cleared old 170x170 matrices)")
 
+def run_module(module_path, args_list=None, description=""):
+    """
+    Executes a submodule as a separate process to avoid ArgParse conflicts.
+    
+    Args:
+        module_path: Python module path (e.g., 'src.data.split')
+        args_list: Optional command-line arguments
+        description: Human-readable description for logging
+    """
+    # Use the same Python executable that's running this script
+    python_exe = sys.executable
+    cmd = [python_exe, "-m", module_path]
+    if args_list:
+        cmd.extend(args_list)
+    
+    log_msg = description if description else f"Module: {module_path}"
+    logger.info(f"▶️  Running: {log_msg}")
+    logger.debug(f"Command: {' '.join(cmd)}")
+    
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT)
+    
+    if result.returncode != 0:
+        logger.error(f"❌ Module {module_path} failed with exit code {result.returncode}")
+        sys.exit(1)
+    
+    logger.info(f"✅ Completed: {log_msg}")
 
-def check_manifest():
-    if not MASTER_MANIFEST.exists():
-        raise FileNotFoundError(
-            f"Master manifest missing at {MASTER_MANIFEST}. Run manifest generation before pipeline."
-        )
+def check_download_status():
+    """Check if ABIDE data has been downloaded."""
+    if not DOWNLOAD_LOG.exists():
+        logger.warning("⚠️  Download log not found. Data may not be downloaded.")
+        return False
+    
+    # Count downloaded subjects
+    import pandas as pd
+    try:
+        log_df = pd.read_csv(DOWNLOAD_LOG)
+        total = len(log_df)
+        successful = len(log_df[log_df.get('status', '') == 'success'])
+        logger.info(f"📊 Download status: {successful}/{total} subjects successful")
+        return successful > 0
+    except Exception as e:
+        logger.warning(f"Could not parse download log: {e}")
+        return False
 
+def check_split_status():
+    """Check if train/val/test splits exist."""
+    splits_exist = all([
+        FINAL_TRAIN.exists(),
+        FINAL_VAL.exists(),
+        FINAL_TEST.exists()
+    ])
+    
+    if splits_exist:
+        train_count = len(list((FINAL_TRAIN / "images").glob("*.png"))) if (FINAL_TRAIN / "images").exists() else 0
+        val_count = len(list((FINAL_VAL / "images").glob("*.png"))) if (FINAL_VAL / "images").exists() else 0
+        test_count = len(list((FINAL_TEST / "images").glob("*.png"))) if (FINAL_TEST / "images").exists() else 0
+        logger.info(f"📊 Split status: Train={train_count}, Val={val_count}, Test={test_count}")
+        return True
+    
+    logger.warning("⚠️  Train/val/test splits not found.")
+    return False
 
-def check_split_outputs():
-    expected = [DATA_FINAL / split / sub for split in ["train", "val", "test"] for sub in ["images", "labels", "time_series"]]
-    missing = [p for p in expected if not p.exists()]
-    if missing:
-        raise FileNotFoundError(f"Split step missing outputs: {missing}")
-
-
-def check_split_inputs():
-    pngs = list(DATA_IMAGES.glob("*.png"))
-    if not pngs:
-        raise FileNotFoundError(
-            "No source PNGs found in data/images. If you already split the data, rerun with --skip-split, or restore images before splitting."
-        )
-
-
-def check_extract_outputs():
-    if NODE_FEATURES_3D.exists():
-        return
-
-    # Fallback: legacy path used by extract_features before alignment
-    legacy_path = DATA_PROCESSED / "metadata" / "node_features_3d.csv"
-    if legacy_path.exists():
-        logger.info("Relocating node_features_3d.csv from legacy path %s to %s", legacy_path, NODE_FEATURES_3D)
-        NODE_FEATURES_3D.parent.mkdir(parents=True, exist_ok=True)
-        legacy_path.replace(NODE_FEATURES_3D)
-        return
-
-    raise FileNotFoundError(f"Expected node features at {NODE_FEATURES_3D}")
-
-
-def check_temporal_outputs():
-    if NODE_ATTRIBUTES_TEMPORAL.exists():
-        return
-    logger.info("Temporal attributes not found at %s; generating via compute_roi", NODE_ATTRIBUTES_TEMPORAL)
-    run_compute_roi()
-    if not NODE_ATTRIBUTES_TEMPORAL.exists():
-        raise FileNotFoundError(f"Failed to generate temporal attributes at {NODE_ATTRIBUTES_TEMPORAL}")
-
-
-def check_harmonize_outputs():
-    if not NODE_ATTRIBUTES_HARMONIZED.exists():
-        raise FileNotFoundError(f"Expected harmonized features at {NODE_ATTRIBUTES_HARMONIZED}")
-
-
-def check_graph_outputs():
-    if not CAUSAL_GRAPHS_DIR.exists() or not any(CAUSAL_GRAPHS_DIR.glob("*_graph.pt")):
-        raise FileNotFoundError(f"No causal graphs found in {CAUSAL_GRAPHS_DIR}")
-
-
-def check_gnn_outputs():
-    missing = [p for p in [CHECKPOINT_DIR / f"best_model_fold{i}.pt" for i in range(5)] if not p.exists()]
-    if missing:
-        raise FileNotFoundError(f"Missing GNN checkpoints: {missing}")
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Run full Neuro-CXG pipeline end to end.")
-    parser.add_argument("--force-yolo-train", action="store_true", help="Train YOLO even if weights already exist.")
-    parser.add_argument("--skip-yolo-train", action="store_true", help="Skip YOLO training stage.")
-    parser.add_argument("--skip-split", action="store_true", help="Skip stratified split stage.")
-    parser.add_argument("--skip-gnn", action="store_true", help="Skip GNN training stage.")
-    parser.add_argument("--run-download", action="store_true", help="Run ABIDE download + extraction (src/data/abide_download.py).")
-    parser.add_argument("--run-health", action="store_true", help="Run dataset health report (src/data/check_progress.py).")
-    parser.add_argument("--run-manifest", action="store_true", help="Regenerate master manifest (src/utils/manifest.py).")
-    parser.add_argument("--run-integrity", action="store_true", help="Run integrity check (src/utils/integrity_check.py) in non-interactive mode (auto exit).")
-    parser.add_argument("--log-file", type=str, help="Path to write pipeline logs (in addition to console).")
-    return parser.parse_args()
-
-
-def add_file_logging(path: Path):
-    """Attach a file handler to root logger to capture all module logs."""
-    fmt = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    handler = logging.FileHandler(path)
-    handler.setFormatter(fmt)
-    handler.setLevel(logging.INFO)
-    root_logger = logging.getLogger()
-    # Avoid duplicate handlers for the same file
-    if all(not (isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", None) == handler.baseFilename) for h in root_logger.handlers):
-        root_logger.addHandler(handler)
-    return handler
-
+def show_execution_plan(stages):
+    """Display what will be executed."""
+    print("\n" + "="*70)
+    print("EXECUTION PLAN")
+    print("="*70)
+    for i, (stage_name, will_run, reason) in enumerate(stages, 1):
+        status = "✓ WILL RUN" if will_run else "○ SKIP"
+        print(f"{i}. {stage_name:40} {status:15} {reason}")
+    print("="*70 + "\n")
 
 def main():
-    args = parse_args()
-    ensure_workdir()
-
-    # Optional file logging
-    if args.log_file:
-        log_path = Path(args.log_file)
-        if not log_path.is_absolute():
-            log_path = CFG_PROJECT_ROOT / log_path
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        add_file_logging(log_path)
-        logger.info("File logging enabled at %s", log_path)
-
-    # Stage 0: Environment validation
-    logger.info("Validating configuration and environment")
-    validate_lobe_mapping()
-    validate_paths()
-    validate_environment()
-
-    # Optional Stage: ABIDE download and preprocessing
-    if args.run_download:
-        logger.info("Running ABIDE download and slice/TS extraction (non-interactive)")
-        subprocess.run([sys.executable, "-m", "src.data.abide_download"], check=True)
-
-    # Optional Stage: Dataset health report (class/site balance, slice counts)
-    if args.run_health:
-        logger.info("Running dataset health report (check_progress)")
-        check_health()
-
-    # Stage: Stratified split (DX_GROUP + SITE_ID)
-    if not args.skip_split:
-        check_split_inputs()
-        run_step("Stratified split", run_stratified_split, check_split_outputs)
-    else:
-        logger.info("Stratified split explicitly skipped")
-        check_split_outputs()
-
-    # Stage: Manifest generation (required for downstream steps)
-    if args.run_manifest or not MASTER_MANIFEST.exists():
-        run_step("Manifest generation", create_manifest, check_manifest)
-    else:
-        check_manifest()
-
-    # Optional Stage: Integrity check (auto-select exit to avoid interactive prompt)
-    if args.run_integrity:
-        logger.info("Running integrity check (non-interactive exit after report)")
-        # integrity_check prompts; send "3" to exit after report
-        subprocess.run([sys.executable, "-m", "src.utils.integrity_check"], input="3\n", text=True, check=True)
-
-    # Stage 1: YOLO training (optional)
-    if not args.skip_yolo_train:
-        # Prefer newer ROI_Detection_v20_Final4 weights if present
-        alt_yolo = RESULTS_DIR / "ROI_Detection_v20_Final4" / "weights" / "best.pt"
-        if not YOLO_BEST_PATH.exists() and alt_yolo.exists():
-            logger.info("Updating YOLO weight path to %s", alt_yolo)
-            # Monkey-patch extract_features MODEL_PATH for this session
-            import data.extract_features as ef
-            ef.MODEL_PATH = alt_yolo
-        if args.force_yolo_train or not YOLO_BEST_PATH.exists():
-            run_step("YOLO training", run_yolo_training)
+    parser = argparse.ArgumentParser(
+        description="Neuro-CXG: 5-Node Causal GNN Pipeline",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python run_pipeline.py --interactive                    # Prompt for each stage (default)
+  python run_pipeline.py --auto                           # Run all missing stages automatically
+  python run_pipeline.py --skip-download --skip-split     # Skip data prep stages
+  python run_pipeline.py --force-reset                    # Clean state and rebuild everything
+  python run_pipeline.py --dry-run                        # Show what would run without executing
+        """
+    )
+    
+    # Execution modes
+    parser.add_argument("--interactive", action="store_true", default=True,
+                        help="Prompt user before each stage (default)")
+    parser.add_argument("--auto", action="store_true",
+                        help="Run all missing stages without prompts")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Show execution plan without running")
+    
+    # Stage control - Skip flags
+    parser.add_argument("--skip-download", action="store_true",
+                        help="Skip ABIDE download (use existing data)")
+    parser.add_argument("--skip-split", action="store_true",
+                        help="Skip train/val/test split (use existing splits)")
+    parser.add_argument("--skip-manifest", action="store_true",
+                        help="Skip manifest generation")
+    parser.add_argument("--skip-annotate", action="store_true",
+                        help="Skip atlas-based annotation (use existing labels)")
+    parser.add_argument("--skip-yolo", action="store_true",
+                        help="Skip YOLO training (use existing weights)")
+    parser.add_argument("--skip-integrity", action="store_true",
+                        help="Skip all integrity checks")
+    parser.add_argument("--skip-atlas-validation", action="store_true",
+                        help="Skip atlas validation")
+    
+    # Force/Diagnostics
+    parser.add_argument("--force-reset", action="store_true",
+                        help="Wipe all intermediate CSVs and Graphs")
+    parser.add_argument("--run-diagnostics", action="store_true",
+                        help="Run comprehensive health check")
+    
+    args = parser.parse_args()
+    
+    # Override interactive mode if --auto is set
+    interactive = args.interactive and not args.auto
+    
+    print("\n" + "="*70)
+    print("NEURO-CXG PIPELINE RUNNER")
+    print("5-Node Causal GNN for fMRI Analysis")
+    print("="*70)
+    
+    # STAGE 0: PRE-FLIGHT VALIDATION
+    logger.info("\n🔍 Stage 0: Pre-Flight Validation")
+    
+    if not validate_environment():
+        logger.error("❌ Environment validation failed. Check config.py and data paths.")
+        sys.exit(1)
+    
+    logger.info("✅ Environment validation passed")
+    
+    # DETERMINE STAGE EXECUTION BASED ON FLAGS
+    
+    yolo_weights = PROJECT_ROOT / "results" / "ROI_Detection_v21_Final" / "weights" / "best.pt"
+    data_downloaded = check_download_status() if not args.skip_download else True
+    data_split = check_split_status() if not args.skip_split else True
+    
+    # Build stages dictionary for better maintainability
+    stages = {
+        "download": {
+            "name": "ABIDE Download",
+            "should_run": not args.skip_download and not data_downloaded,
+            "reason": "Missing ABIDE data",
+            "module": "src.data.abide_download"
+        },
+        "split": {
+            "name": "Train/Val/Test Split (2D Stratified)",
+            "should_run": not args.skip_split and not data_split,
+            "reason": "Missing train/val/test splits",
+            "module": "src.data.split"
+        },
+        "manifest": {
+            "name": "Generate Master Manifest",
+            "should_run": not args.skip_manifest and (not MASTER_MANIFEST.exists() or args.force_reset),
+            "reason": "Missing manifest" if not MASTER_MANIFEST.exists() else "Force reset",
+            "module": "src.utils.manifest"
+        },
+        "atlas_validation": {
+            "name": "Atlas Validation",
+            "should_run": not args.skip_atlas_validation and ATLAS_DIR.exists(),
+            "reason": "Verify atlas files",
+            "module": "src.atlas_validator"
+        },
+        "diagnostics": {
+            "name": "Diagnostics",
+            "should_run": args.run_diagnostics,
+            "reason": "Health check",
+            "module": "src.pipeline_diagnostics"
+        },
+        "post_download_integrity": {
+            "name": "Post-Download Integrity Check",
+            "should_run": not args.skip_integrity and data_downloaded,
+            "reason": "Validate downloaded images",
+            "module": "src.utils.integrity_check"
+        },
+        "annotate": {
+            "name": "Atlas-Based Label Annotation",
+            "should_run": not args.skip_annotate and data_split,
+            "reason": "Generate YOLO training labels",
+            "module": "src.utils.annotate"
+        },
+        "yolo": {
+            "name": "YOLO Training (ROI Detection)",
+            "should_run": (not yolo_weights.exists() or args.force_reset) and not args.skip_yolo,
+            "reason": "Missing weights" if not yolo_weights.exists() else "Force reset",
+            "module": "src.pipelines.roi_detection"
+        },
+        "spatial_features": {
+            "name": "Spatial Feature Extraction (5-lobe)",
+            "should_run": not NODE_FEATURES_3D.exists() or args.force_reset,
+            "reason": "Missing features" if not NODE_FEATURES_3D.exists() else "Force reset",
+            "module": "src.data.extract_features"
+        },
+        "temporal_features": {
+            "name": "Temporal Feature Extraction",
+            "should_run": not NODE_ATTRIBUTES_TEMPORAL.exists() or args.force_reset,
+            "reason": "Missing features" if not NODE_ATTRIBUTES_TEMPORAL.exists() else "Force reset",
+            "module": "src.utils.compute_roi"
+        },
+        "harmonization": {
+            "name": "Feature Harmonization",
+            "should_run": not NODE_ATTRIBUTES_HARMONIZED.exists() or args.force_reset,
+            "reason": "Missing harmonized data" if not NODE_ATTRIBUTES_HARMONIZED.exists() else "Force reset",
+            "module": "src.safe_harmonization"
+        },
+        "pre_gnn_integrity": {
+            "name": "Pre-GNN Integrity Check",
+            "should_run": not args.skip_integrity,
+            "reason": "Validate intermediate outputs",
+            "module": "src.utils.integrity_check2"
+        },
+        "causal_graphs": {
+            "name": "Causal Graph Construction (5×5)",
+            "should_run": (not any(CAUSAL_GRAPHS_DIR.iterdir()) if CAUSAL_GRAPHS_DIR.exists() else True) or args.force_reset,
+            "reason": "Missing graphs" if (not any(CAUSAL_GRAPHS_DIR.iterdir()) if CAUSAL_GRAPHS_DIR.exists() else True) else "Force reset",
+            "module": "src.data.construct_causal"
+        },
+        "gnn_training": {
+            "name": "GNN Training (5-Fold CV)",
+            "should_run": True,  # Always offer to run
+            "reason": "Main training phase",
+            "module": "src.models.gnn_model"
+        }
+    }
+    
+    # Show execution plan
+    stage_list = [(stage_info["name"], stage_info["should_run"], stage_info["reason"]) 
+                  for stage_info in stages.values()]
+    show_execution_plan(stage_list)
+    
+    if args.dry_run:
+        logger.info("🔍 Dry-run mode: Exiting without execution")
+        return
+    
+    # Reset state if requested
+    if args.force_reset:
+        if interactive and not prompt_user("⚠️  This will delete intermediate files. Continue?", default=False):
+            logger.info("Aborted by user")
+            sys.exit(0)
+        clear_old_state()
+    
+    # STAGE EXECUTION
+    # Execute stages in order
+    
+    for stage_key in ["download", "split", "manifest", "atlas_validation", "diagnostics",
+                      "post_download_integrity", "annotate", "yolo", "spatial_features",
+                      "temporal_features", "harmonization", "pre_gnn_integrity",
+                      "causal_graphs", "gnn_training"]:
+        
+        stage = stages[stage_key]
+        
+        if not stage["should_run"]:
+            logger.info(f"⏭️  Skipping: {stage['name']}")
+            continue
+        
+        # Special handling for long-running stages
+        skip_prompt = False
+        if stage_key == "yolo":
+            msg = f"Run {stage['name']}? (This may take 1-2 hours)"
+        elif stage_key == "download":
+            msg = f"Run {stage['name']}? (This may take 2-4 hours)"
+        elif stage_key == "gnn_training":
+            msg = f"🚀 Start {stage['name']}? (Main training phase)"
         else:
-            logger.info("Skipping YOLO training: weights already present at %s", YOLO_BEST_PATH)
-    else:
-        logger.info("YOLO training explicitly skipped")
-
-    # Stage 3: ROI feature extraction (YOLO inference)
-    if not YOLO_BEST_PATH.exists():
-        raise FileNotFoundError(f"YOLO weights not found at {YOLO_BEST_PATH}. Provide weights or enable --force-yolo-train.")
-    run_step("ROI feature extraction", extract_features, check_extract_outputs)
-
-    # Stage 4: Temporal harmonization (neuroCombat)
-    check_temporal_outputs()
-    run_step("Feature harmonization", run_harmonization, check_harmonize_outputs)
-
-    # Stage 5: Causal graph construction
-    run_step("Causal graph construction", run_construct_causal, check_graph_outputs)
-
-    # Stage 6: GNN training (5-fold CV)
-    if not args.skip_gnn:
-        run_step("GNN training", run_kfold_training, check_gnn_outputs)
-    else:
-        logger.info("GNN training explicitly skipped")
-
-    logger.info("Pipeline execution complete. All outputs written to configured directories.")
-
+            msg = f"Run {stage['name']}?"
+        
+        if interactive:
+            if not prompt_user(msg, default=True):
+                logger.info(f"⏭️  User skipped: {stage['name']}")
+                continue
+        
+        run_module(stage["module"], description=stage["name"])
+    
+    # COMPLETION
+    
+    logger.info("\n" + "="*70)
+    logger.info("✅ NEURO-CXG PIPELINE EXECUTION COMPLETE")
+    logger.info("="*70)
+    logger.info(f"📁 Checkpoints saved to: {CHECKPOINT_DIR}")
+    logger.info(f"📁 Causal graphs in: {CAUSAL_GRAPHS_DIR}")
+    logger.info(f"📁 Features in: {DATA_METADATA}")
+    logger.info("="*70 + "\n")
 
 if __name__ == "__main__":
     main()

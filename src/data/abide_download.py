@@ -10,7 +10,7 @@ from nilearn.maskers import NiftiLabelsMasker
 from nilearn.image import resample_to_img
 
 # --- PATHS ---
-PROJECT_ROOT = Path(__file__).resolve().parents[0] # Adjusted for local testing
+PROJECT_ROOT = Path(__file__).resolve().parents[2] 
 PNG_OUTPUT   = PROJECT_ROOT / "data" / "images"
 TS_OUTPUT    = PROJECT_ROOT / "data" / "processed"
 META_DIR     = PROJECT_ROOT / "data" / "metadata"

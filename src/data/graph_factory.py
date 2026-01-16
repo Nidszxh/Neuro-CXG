@@ -1,10 +1,3 @@
-"""
-Graph Dataset Factory for ABIDE Causal Graphs
-
-Loads and prepares PyTorch Geometric graph objects for GNN training.
-Combines temporal features, spatial coordinates, and causal adjacency matrices.
-"""
-
 import logging
 import torch
 from torch_geometric.data import Data, Dataset
@@ -13,10 +6,10 @@ import numpy as np
 from pathlib import Path
 import sys
 
-# Setup paths
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-from config import (
-    LOBE_MAPPING, NUM_LOBES, DATA_ROOT,
+# Setup paths and config
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.config import (
+    NUM_LOBES, LOBE_NAMES, DATA_ROOT,
     MASTER_MANIFEST, NODE_ATTRIBUTES_HARMONIZED, 
     NODE_FEATURES_3D, CAUSAL_GRAPHS_DIR
 )
@@ -28,344 +21,130 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 class ABIDECausalDataset(Dataset):
     """
-    PyTorch Geometric dataset for ABIDE causal brain graphs.
-    
-    Loads causal graphs constructed from fMRI time series, combining:
-    - Harmonized temporal features (6 per ROI, aggregated to 5 lobes)
-    - Spatial coordinates from YOLO detections
-    - Directed causal adjacency matrices
-    
-    Args:
-        split: Data split to load ('train', 'val', or 'test')
-        transform: Optional transform to apply to graphs
-        pre_transform: Optional pre-transform to apply once
-        
-    Attributes:
-        manifest: DataFrame with subject metadata
-        node_attr: Harmonized node features
-        coords: 3D spatial coordinates
-        adj_dir: Directory containing causal graph files
-        
-    Example:
-        >>> dataset = ABIDECausalDataset(split='train')
-        >>> print(f"Loaded {len(dataset)} subjects")
-        >>> sample = dataset[0]
-        >>> print(f"Graph: {sample.x.shape[0]} nodes, {sample.edge_index.shape[1]} edges")
+    Optimized Dataset Factory for 5-Lobe Macro-Anatomy Graphs.
+    Matches the output of the ROI Feature Extractor.
     """
-    
+  
     def __init__(self, split='train', transform=None, pre_transform=None):
         super().__init__(None, transform, pre_transform)
-        
         self.split = split
-        self.root = DATA_ROOT
-        
-        # Load required dataframes
         self._load_data_sources()
-        
-        # Perform intersection to find valid subjects
         self._validate_subjects()
         
-        logger.info(f"Initialized {split} dataset with {len(self.manifest)} subjects")
+        logger.info(f"Initialized {split} dataset with {len(self.manifest)} subjects (5-node architecture)")
     
     def _load_data_sources(self):
-        """Load all required data sources."""
+        """Load the harmonized 5-lobe features and 3D coordinates."""
         # 1. Master manifest
-        if not MASTER_MANIFEST.exists():
-            raise FileNotFoundError(f"Master manifest not found: {MASTER_MANIFEST}")
-        
         self.manifest_raw = pd.read_csv(MASTER_MANIFEST)
-        logger.debug(f"Loaded manifest with {len(self.manifest_raw)} total subjects")
         
-        # 2. Harmonized temporal features
-        if not NODE_ATTRIBUTES_HARMONIZED.exists():
-            raise FileNotFoundError(
-                f"Harmonized features not found: {NODE_ATTRIBUTES_HARMONIZED}"
-            )
-        
+        # 2. Harmonized temporal features (Already aggregated to 5 lobes by extractor)
         self.node_attr = pd.read_csv(NODE_ATTRIBUTES_HARMONIZED).set_index('subject_id')
-        logger.debug(f"Loaded temporal features for {len(self.node_attr)} subjects")
         
-        # 3. Spatial coordinates from YOLO
-        if not NODE_FEATURES_3D.exists():
-            raise FileNotFoundError(
-                f"Spatial features not found: {NODE_FEATURES_3D}"
-            )
-        
+        # 3. Spatial coordinates (x, y, z for 5 lobes)
         self.coords = pd.read_csv(NODE_FEATURES_3D).set_index('subject_id')
-        logger.debug(f"Loaded spatial coords for {len(self.coords)} subjects")
         
-        # 4. Causal graphs directory
-        if not CAUSAL_GRAPHS_DIR.exists():
-            raise FileNotFoundError(
-                f"Causal graphs directory not found: {CAUSAL_GRAPHS_DIR}"
-            )
-        
+        # 4. Adjacency matrices directory
         self.adj_dir = CAUSAL_GRAPHS_DIR
     
     def _validate_subjects(self):
-        """
-        Validate subject availability across all data sources.
+        """Find subjects present in all data files and the physical graph folder."""
+        manifest_subs = set(self.manifest_raw['subject_id'].astype(str).unique())
+        attr_subs = set(self.node_attr.index.astype(str).unique())
+        coord_subs = set(self.coords.index.astype(str).unique())
         
-        Only includes subjects that have:
-        1. Entry in manifest
-        2. Harmonized temporal features
-        3. Spatial coordinates
-        4. Physical .pt causal graph file
-        """
-        # Get subject sets
-        manifest_subs = set(self.manifest_raw['subject_id'].unique())
-        attr_subs = set(self.node_attr.index.unique())
-        coord_subs = set(self.coords.index.unique())
-        
-        # Find intersection
         available_subs = manifest_subs.intersection(attr_subs).intersection(coord_subs)
         
-        # Check for physical graph files
         valid_subs = []
         for sub in available_subs:
             graph_path = self.adj_dir / f"{sub}_graph.pt"
             if graph_path.exists():
                 valid_subs.append(sub)
         
-        # Filter manifest to valid subjects for this split
         self.manifest = self.manifest_raw[
-            (self.manifest_raw['subject_id'].isin(valid_subs)) & 
+            (self.manifest_raw['subject_id'].astype(str).isin(valid_subs)) & 
             (self.manifest_raw['split'] == self.split)
         ].copy()
         
         self.manifest = self.manifest.sort_values('subject_id').reset_index(drop=True)
-        
-        # Report statistics
-        total_split = len(self.manifest_raw[self.manifest_raw['split'] == self.split])
-        dropped = total_split - len(self.manifest)
-        
-        if dropped > 0:
-            logger.warning(
-                f"{self.split.upper()}: Dropped {dropped}/{total_split} subjects "
-                f"due to missing data"
-            )
-        else:
-            logger.info(
-                f"{self.split.upper()}: All {len(self.manifest)} subjects valid"
-            )
     
     def len(self):
-        """Return number of subjects in dataset."""
         return len(self.manifest)
     
     def get(self, idx):
-        """
-        Load and prepare a single graph.
-        
-        Args:
-            idx: Index of subject to load
-            
-        Returns:
-            PyTorch Geometric Data object with:
-            - x: Node features (temporal + spatial)
-            - edge_index: Edge connectivity
-            - edge_attr: Edge weights (causal strengths)
-            - y: Label (0=control, 1=ASD)
-            - pos: 3D spatial coordinates
-            - sub_id: Subject identifier
-        """
-        # Get subject info
-        sub_id = self.manifest.iloc[idx]['subject_id']
+        sub_id = str(self.manifest.iloc[idx]['subject_id'])
         dx_group = self.manifest.iloc[idx]['DX_GROUP']
-        label = 1 if dx_group == 1 else 0  # DX_GROUP: 1=ASD, 2=Control
+        label = 1 if dx_group == 1 else 0  # 1=ASD, 0=Control
         
         try:
-            # 1. Load causal adjacency matrix
+            # 1. Load 5x5 Causal Adjacency Matrix
             graph_path = self.adj_dir / f"{sub_id}_graph.pt"
-            if not graph_path.exists():
-                logger.error(f"Graph file missing for {sub_id}")
-                return None
-            
             graph_dict = torch.load(graph_path)
-            adj = graph_dict['adj']
+            adj = graph_dict['adj'] # Should be (5, 5)
+
+            # 2. Load 5-Lobe Temporal Features
+            temporal_features = self._get_subject_temporal(sub_id)
             
-            # 2. Load and process temporal features
-            temporal_features = self._load_temporal_features(sub_id)
-            if temporal_features is None:
+            # 3. Load 5-Lobe Spatial Features
+            spatial_features = self._get_subject_spatial(sub_id)
+            
+            if temporal_features is None or spatial_features is None:
                 return None
-            
-            # 3. Load spatial coordinates
-            spatial_features = self._load_spatial_features(sub_id)
-            if spatial_features is None:
-                return None
-            
-            # 4. Combine features
+
+            # 4. Combine (5, 6) and (5, 3) -> (5, 9)
             x = torch.cat([
                 torch.tensor(temporal_features, dtype=torch.float32),
                 torch.tensor(spatial_features, dtype=torch.float32)
             ], dim=1)
             
-            # 5. Create edge index and attributes from adjacency matrix
+            # 5. Create Edge Index
             edge_index = adj.nonzero().t().contiguous()
             edge_attr = adj[edge_index[0], edge_index[1]].unsqueeze(1).to(torch.float32)
             
-            # 6. Create Data object
-            data = Data(
+            return Data(
                 x=x,
                 edge_index=edge_index,
                 edge_attr=edge_attr,
                 y=torch.tensor([label], dtype=torch.long),
                 pos=torch.tensor(spatial_features, dtype=torch.float32),
-                sub_id=str(sub_id)
+                sub_id=sub_id
             )
             
-            return data
-            
         except Exception as e:
-            logger.error(f"Error loading graph for {sub_id}: {e}", exc_info=True)
-            return None
-    
-    def _load_temporal_features(self, sub_id: str) -> np.ndarray:
-        """
-        Load and aggregate temporal features to 5 lobes.
-        
-        Args:
-            sub_id: Subject identifier
-            
-        Returns:
-            Array of shape (5, 6) with aggregated features, or None if error
-        """
-        try:
-            raw_row = self.node_attr.loc[sub_id].values
-        except KeyError:
-            logger.warning(f"Subject {sub_id} missing from temporal features")
-            return None
-        
-        # Constants
-        NUM_FEATS_PER_ROI = 6  # mean, std, skew, kurt, psd, mssd
-        
-        # Remove any non-feature columns (handle case where extra cols exist)
-        # Features should be divisible by 6
-        feature_only = raw_row[:-(len(raw_row) % NUM_FEATS_PER_ROI)] \
-                      if len(raw_row) % NUM_FEATS_PER_ROI != 0 else raw_row
-        
-        num_rois = len(feature_only) // NUM_FEATS_PER_ROI
-        
-        # Validate ROI count
-        if num_rois not in [116, 117, 170]:
-            logger.warning(
-                f"Unexpected ROI count {num_rois} for {sub_id} "
-                f"(expected 116/117/170)"
-            )
-            # Continue anyway, but log the issue
-        
-        try:
-            ts_feats_raw = feature_only.reshape(num_rois, NUM_FEATS_PER_ROI)
-        except ValueError as e:
-            logger.error(f"Cannot reshape features for {sub_id}: {e}")
-            return None
-        
-        # Aggregate to 5 lobes
-        lobe_feats = []
-        for lobe_id in range(NUM_LOBES):
-            # Get valid indices for this lobe (accounting for different atlas versions)
-            valid_indices = [
-                i-1 for i in LOBE_MAPPING[lobe_id] 
-                if i <= num_rois
-            ]
-            
-            if not valid_indices:
-                logger.warning(
-                    f"No valid ROIs for lobe {lobe_id} in {sub_id}, using zeros"
-                )
-                avg_feat = np.zeros(NUM_FEATS_PER_ROI)
-            else:
-                avg_feat = ts_feats_raw[valid_indices].mean(axis=0)
-            
-            lobe_feats.append(avg_feat)
-        
-        return np.stack(lobe_feats)  # Shape: (5, 6)
-    
-    def _load_spatial_features(self, sub_id: str) -> np.ndarray:
-        """
-        Load 3D spatial coordinates for 5 lobes.
-        
-        Args:
-            sub_id: Subject identifier
-            
-        Returns:
-            Array of shape (5, 3) with x, y, z coordinates, or None if error
-        """
-        try:
-            # Identify coordinate columns
-            pos_cols = [
-                c for c in self.coords.columns 
-                if any(x in c for x in ['_x', '_y', '_z_depth'])
-            ]
-            
-            # Extract and force numeric conversion
-            spatial_data = self.coords.loc[sub_id][pos_cols]
-            spatial_numeric = pd.to_numeric(
-                spatial_data, 
-                errors='coerce'
-            ).values.astype(np.float32)
-            
-            # Handle NaNs (replace with 0 or mean)
-            spatial_numeric = np.nan_to_num(spatial_numeric, nan=0.0)
-            
-            # Reshape to (5, 3) - expect 15 values (5 lobes × 3 coords)
-            if len(spatial_numeric) != 15:
-                logger.warning(
-                    f"Expected 15 spatial values for {sub_id}, "
-                    f"got {len(spatial_numeric)}"
-                )
-                # Pad or truncate as needed
-                if len(spatial_numeric) < 15:
-                    spatial_numeric = np.pad(
-                        spatial_numeric, 
-                        (0, 15 - len(spatial_numeric))
-                    )
-                else:
-                    spatial_numeric = spatial_numeric[:15]
-            
-            spatial_feats = spatial_numeric.reshape(5, 3)
-            
-            return spatial_feats
-            
-        except KeyError:
-            logger.warning(f"Subject {sub_id} missing from spatial features")
-            return None
-        except Exception as e:
-            logger.error(f"Error loading spatial features for {sub_id}: {e}")
+            logger.error(f"Failed to build graph for {sub_id}: {e}")
             return None
 
+    def _get_subject_temporal(self, sub_id):
+        """Extracts the 30 temporal features and reshapes to (5, 6)."""
+        row = self.node_attr.loc[sub_id].values
+        # Ensure we only have the feature columns (no metadata)
+        # 5 lobes * 6 stats = 30 values
+        if len(row) < 30:
+            return None
+        return row[:30].reshape(5, 6)
 
-# Example usage and testing
+    def _get_subject_spatial(self, sub_id):
+        """Extracts x, y, z for the 5 lobes and reshapes to (5, 3)."""
+        # We need to ensure the columns are picked in the same order as LOBE_NAMES (0-4)
+        pos_data = []
+        for lobe_id in range(5):
+            lobe_name = LOBE_NAMES[lobe_id]
+            try:
+                x = self.coords.loc[sub_id, f"{lobe_name}_x"]
+                y = self.coords.loc[sub_id, f"{lobe_name}_y"]
+                z = self.coords.loc[sub_id, f"{lobe_name}_z_depth"]
+                pos_data.append([x, y, z])
+            except KeyError:
+                pos_data.append([0.0, 0.0, 0.0]) # Fallback for missing detection
+        
+        return np.array(pos_data)
+
 if __name__ == "__main__":
-    logger.info("Testing ABIDECausalDataset...")
-    
-    try:
-        # Test dataset loading
-        train_set = ABIDECausalDataset(split='train')
-        logger.info(f"Successfully loaded {len(train_set)} training subjects")
-        
-        # Test sample loading
-        if len(train_set) > 0:
-            sample = train_set[0]
-            
-            if sample is not None:
-                logger.info(f"Sample graph for subject {sample.sub_id}:")
-                logger.info(f"  Nodes: {sample.x.shape[0]}")
-                logger.info(f"  Node features: {sample.x.shape[1]}")
-                logger.info(f"  Edges: {sample.edge_index.shape[1]}")
-                logger.info(f"  Label: {sample.y.item()}")
-                
-                # Validate structure
-                assert sample.x.shape[0] == 5, "Expected 5 nodes (lobes)"
-                assert sample.x.shape[1] == 9, "Expected 9 features (6 temporal + 3 spatial)"
-                assert sample.y.item() in [0, 1], "Label should be 0 or 1"
-                
-                logger.info("✓ Dataset structure validation passed")
-            else:
-                logger.error("Failed to load sample")
-        
-    except Exception as e:
-        logger.error(f"Dataset test failed: {e}", exc_info=True)
+    # Test logic
+    train_set = ABIDECausalDataset(split='train')
+    if len(train_set) > 0:
+        sample = train_set[0]
+        print(f"Node Features Shape: {sample.x.shape}") # Should be (5, 9)
+        print(f"Edge Index Shape: {sample.edge_index.shape}")

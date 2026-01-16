@@ -294,10 +294,12 @@ def generate_atlas_metadata(atlas_path: Path, output_path: Path):
 
 if __name__ == "__main__":
     import sys
-    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    # Add project root to path for module imports
+    project_root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(project_root))
 
     try:
-        from config import ATLAS_PATH, ATLAS_METADATA
+        from src.config import ATLAS_PATH, ATLAS_METADATA
 
         if ensure_atlas(ATLAS_PATH, auto_download=True):
             generate_atlas_metadata(ATLAS_PATH, ATLAS_METADATA)
@@ -305,7 +307,7 @@ if __name__ == "__main__":
         else:
             print("❌ Atlas setup failed")
             sys.exit(1)
-
-    except ImportError:
+    except ImportError as e:
+        print(f"Import error: {e}")
         print("Run from project root or ensure config.py is available")
         sys.exit(1)

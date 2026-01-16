@@ -1,16 +1,3 @@
-"""
-Causal Graph Construction Module
-
-Constructs directed causal graphs from fMRI time series using lagged partial 
-correlation to enforce temporal precedence.
-
-Pipeline:
-1. Aggregate 170 AAL ROIs → 5 anatomical lobes
-2. Compute directed edges using lagged correlation (t-1 → t)
-3. Sparsify to top 20% of connections
-4. Save as PyTorch graph objects
-"""
-
 import logging
 import torch
 import numpy as np
@@ -20,8 +7,8 @@ from tqdm import tqdm
 import sys
 
 # Setup paths
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-from config import (
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.config import (
     LOBE_MAPPING, NUM_LOBES, CAUSAL_LAG, SPARSITY_QUANTILE,
     DATA_FINAL, MASTER_MANIFEST, CAUSAL_GRAPHS_DIR, DEVICE
 )
@@ -33,212 +20,107 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-def aggregate_to_lobes(ts_170: torch.Tensor) -> torch.Tensor:
+def aggregate_to_lobes(ts_raw: torch.Tensor) -> torch.Tensor:
     """
-    Aggregate 170 AAL ROI signals into 5 high-level lobe signals.
-    
-    Uses anatomical mapping defined in config.LOBE_MAPPING to average
-    time series across ROIs within each lobe.
-    
-    Args:
-        ts_170: Time series tensor of shape (timepoints, n_rois)
-                where n_rois should be 170 (or compatible AAL version)
-    
-    Returns:
-        Tensor of shape (timepoints, 5) with aggregated lobe signals
-        
-    Raises:
-        ValueError: If input shape is invalid
+    Strictly aggregates AAL time series (116, 164, or 170) into 5 lobe signals.
+    Ensures Node 0 = Frontal, Node 1 = Temporal, etc.
     """
-    if ts_170.ndim != 2:
-        raise ValueError(f"Expected 2D tensor, got shape {ts_170.shape}")
-    
-    if ts_170.shape[1] not in [116, 117, 170]:
-        logger.warning(f"Unusual ROI count: {ts_170.shape[1]} (expected 116/117/170)")
-    
+    num_rois = ts_raw.shape[1]
     lobe_signals = []
-    num_rois = ts_170.shape[1]
     
     for lobe_id in range(NUM_LOBES):
-        # AAL indices are 1-based, adjust for 0-based numpy indexing
+        # Convert AAL 1-based indices to 0-based Python indices
+        # Filter indices to ensure they exist in the current time-series file
         indices = [i-1 for i in LOBE_MAPPING[lobe_id] if i <= num_rois]
         
         if not indices:
-            logger.warning(f"No valid ROIs for lobe {lobe_id}")
-            # Use zeros as fallback
-            lobe_ts = torch.zeros(ts_170.shape[0], device=ts_170.device)
+            logger.warning(f"Lobe {lobe_id} has no matching ROIs in this atlas. Using zero-signal.")
+            lobe_ts = torch.zeros(ts_raw.shape[0], device=ts_raw.device)
         else:
-            lobe_ts = ts_170[:, indices].mean(dim=1)
+            # Average the BOLD signals of all ROIs in this lobe
+            lobe_ts = ts_raw[:, indices].mean(dim=1)
         
         lobe_signals.append(lobe_ts)
     
-    return torch.stack(lobe_signals, dim=1)  # Shape: (Time, 5)
+    return torch.stack(lobe_signals, dim=1)  # Output Shape: (Timepoints, 5)
 
-
-def compute_causal_edges(ts_lobe: torch.Tensor) -> torch.Tensor:
+def compute_lagged_causality(ts_lobe: torch.Tensor) -> torch.Tensor:
     """
-    Compute directed edges using lagged partial correlation.
-    
-    Implements temporal precedence by computing correlation between
-    signals at time t-1 and t. Entry [i, j] in output represents
-    influence from lobe i at t-1 to lobe j at t.
-    
-    Args:
-        ts_lobe: Lobe time series of shape (timepoints, 5)
-    
-    Returns:
-        Directed adjacency matrix of shape (5, 5)
-        
-    Raises:
-        ValueError: If time series is too short for lagged analysis
+    Computes Directed Causal Influence using Lagged Pearson Correlation.
+    Matrix[i, j] = Correlation between Lobe i (t-1) and Lobe j (t).
     """
-    if ts_lobe.shape[0] < 10:
-        raise ValueError(f"Time series too short: {ts_lobe.shape[0]} timepoints")
+    # 1. Standardize (Z-Score) signals for valid correlation
+    ts_std = (ts_lobe - ts_lobe.mean(dim=0)) / (ts_lobe.std(dim=0) + 1e-6)
     
-    # 1. Standardize signals
-    ts_standardized = (ts_lobe - ts_lobe.mean(dim=0)) / (ts_lobe.std(dim=0) + 1e-6)
+    # 2. Slice for Lag (t-1 -> t)
+    # ts_prev: signals from 0 to T-1
+    # ts_curr: signals from 1 to T
+    ts_prev = ts_std[:-CAUSAL_LAG]
+    ts_curr = ts_std[CAUSAL_LAG:]
     
-    # 2. Create lagged matrices
-    ts_curr = ts_standardized[CAUSAL_LAG:]
-    ts_prev = ts_standardized[:-CAUSAL_LAG]
-    
-    # 3. Compute directed correlation
-    # (prev.T @ curr) creates 5x5 matrix where entry [i, j] is 
-    # correlation of lobe i at t-1 with lobe j at t
-    directed_adj = (ts_prev.T @ ts_curr) / (ts_standardized.shape[0] - CAUSAL_LAG)
-    
-    # 4. Validate output
-    if torch.isnan(directed_adj).any() or torch.isinf(directed_adj).any():
-        raise ValueError("Invalid values in causal adjacency matrix")
+    # 3. Compute Adjacency Matrix (5x5)
+    # The dot product of standardized shifted signals is the correlation coefficient
+    directed_adj = (ts_prev.T @ ts_curr) / (ts_std.shape[0] - CAUSAL_LAG)
     
     return directed_adj
 
-
 def construct_graph(subject_id: str, split: str) -> bool:
-    """
-    Construct and save causal graph for a single subject.
-    
-    Args:
-        subject_id: Subject identifier
-        split: Data split ('train', 'val', or 'test')
-        
-    Returns:
-        True if successful, False otherwise
-    """
+    """Processes a single subject and saves the 5x5 causal matrix."""
     ts_path = DATA_FINAL / split / "time_series" / f"{subject_id}_ts.npy"
     output_path = CAUSAL_GRAPHS_DIR / f"{subject_id}_graph.pt"
     
-    # Check if already processed
-    if output_path.exists():
-        logger.debug(f"Graph already exists for {subject_id}")
-        return True
-    
-    # Load time series
     if not ts_path.exists():
-        logger.warning(f"Missing time series for {subject_id}")
         return False
     
     try:
+        # Load and move to GPU for fast matrix math
         ts_data = torch.from_numpy(np.load(ts_path)).float().to(DEVICE)
-    except Exception as e:
-        logger.error(f"Error loading time series for {subject_id}: {e}")
-        return False
-    
-    # Validate data quality
-    if torch.isnan(ts_data).any() or torch.isinf(ts_data).any():
-        logger.warning(f"Invalid values in time series for {subject_id}")
-        return False
-    
-    if ts_data.shape[0] < 50:
-        logger.warning(
-            f"Insufficient timepoints ({ts_data.shape[0]}) for {subject_id}"
-        )
-        return False
-    
-    try:
-        # 1. Aggregate to lobes
+        
+        # 1. Aggregate to 5 Lobes
         ts_lobes = aggregate_to_lobes(ts_data)
         
-        # 2. Compute causal edges
-        causal_matrix = compute_causal_edges(ts_lobes)
+        # 2. Compute 5x5 Causal Matrix
+        causal_matrix = compute_lagged_causality(ts_lobes)
         
-        # 3. Sparsify: Keep top 20% of connections
-        thresh = torch.quantile(torch.abs(causal_matrix), SPARSITY_QUANTILE)
+        # 3. Sparsification (Keep strongest 20% of directed edges)
+        # Note: In 5x5 (25 edges), this keeps exactly 5 edges.
+        abs_matrix = torch.abs(causal_matrix)
+        thresh = torch.quantile(abs_matrix, SPARSITY_QUANTILE)
+        
+        # Zero out weak connections
         adj_matrix = torch.where(
-            torch.abs(causal_matrix) > thresh, 
+            abs_matrix >= thresh, 
             causal_matrix, 
-            torch.tensor(0.0, device=causal_matrix.device)
+            torch.tensor(0.0, device=DEVICE)
         )
         
-        # 4. Prepare graph data
-        graph_data = {
+        # 4. Save structured data for Graph Factory
+        # We save as a dict to keep it flexible for the Factory
+        graph_package = {
             'adj': adj_matrix.cpu(),
-            'node_features': ts_lobes.mean(dim=0).cpu(),  # Mean signal as feature
-            'metadata': {
-                'subject_id': subject_id,
-                'n_timepoints': ts_data.shape[0],
-                'n_edges': (adj_matrix != 0).sum().item()
-            }
+            'subject_id': subject_id,
+            'lobe_order': ['Frontal', 'Temporal', 'Parietal', 'Occipital', 'Limbic']
         }
         
-        # 5. Save
-        torch.save(graph_data, output_path)
-        
-        logger.debug(
-            f"Created graph for {subject_id}: "
-            f"{graph_data['metadata']['n_edges']} edges"
-        )
+        torch.save(graph_package, output_path)
         return True
         
     except Exception as e:
-        logger.error(f"Failed to process {subject_id}: {e}", exc_info=True)
+        logger.error(f"Causal error for {subject_id}: {e}")
         return False
 
-
 def main():
-    """Main execution function."""
-    # Validate configuration
-    logger.info("Starting causal graph construction")
-    logger.info(f"Using device: {DEVICE}")
-    logger.info(f"Causal lag: {CAUSAL_LAG}")
-    logger.info(f"Sparsity quantile: {SPARSITY_QUANTILE}")
-    
-    # Create output directory
+    logger.info(f"🚀 Constructing 5x5 Causal Graphs (Lag={CAUSAL_LAG})")
     CAUSAL_GRAPHS_DIR.mkdir(parents=True, exist_ok=True)
     
-    # Load manifest
-    if not MASTER_MANIFEST.exists():
-        logger.error(f"Master manifest not found: {MASTER_MANIFEST}")
-        logger.error("Run manifest.py first!")
-        return
-    
     manifest = pd.read_csv(MASTER_MANIFEST)
-    logger.info(f"Loaded manifest with {len(manifest)} subjects")
+    success = 0
     
-    # Process all subjects
-    success_count = 0
-    fail_count = 0
-    
-    for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Processing"):
-        sub_id = row['subject_id']
-        split = row['split']
-        
-        success = construct_graph(sub_id, split)
-        
-        if success:
-            success_count += 1
-        else:
-            fail_count += 1
-    
-    # Summary
-    logger.info("="*60)
-    logger.info("CAUSAL GRAPH CONSTRUCTION COMPLETE")
-    logger.info(f"Successfully processed: {success_count}/{len(manifest)}")
-    logger.info(f"Failed: {fail_count}/{len(manifest)}")
-    logger.info(f"Output directory: {CAUSAL_GRAPHS_DIR}")
-    logger.info("="*60)
-
+    for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Building Graphs"):
+        if construct_graph(row['subject_id'], row['split']):
+            success += 1
+            
+    logger.info(f"✓ Successfully generated {success} causal graphs in {CAUSAL_GRAPHS_DIR}")
 
 if __name__ == "__main__":
     main()

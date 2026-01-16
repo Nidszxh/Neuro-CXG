@@ -13,13 +13,12 @@ import pandas as pd
 import numpy as np
 import torch
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-from config import (
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from src.config import (
     ATLAS_PATH, PHENO_PATH, MASTER_MANIFEST,
     NODE_ATTRIBUTES_TEMPORAL, NODE_FEATURES_3D,
     NODE_ATTRIBUTES_HARMONIZED, CAUSAL_GRAPHS_DIR,
-    DATA_FINAL, LOBE_MAPPING, NUM_LOBES,
-    validate_lobe_mapping
+    DATA_FINAL, LOBE_MAPPING, NUM_LOBES
 )
 
 logging.basicConfig(
@@ -101,7 +100,28 @@ class PipelineHealthCheck:
         logger.info("Checking LOBE_MAPPING...")
         
         try:
-            validate_lobe_mapping()
+            # Validate LOBE_MAPPING structure
+            if len(LOBE_MAPPING) != NUM_LOBES:
+                raise ValueError(f"Expected {NUM_LOBES} lobes, got {len(LOBE_MAPPING)}")
+            
+            # Check for completeness (no duplicates, covers 1-170 AAL ROIs)
+            all_rois = set()
+            for lobe_id, roi_list in LOBE_MAPPING.items():
+                for roi in roi_list:
+                    if roi in all_rois:
+                        raise ValueError(f"Duplicate ROI {roi} in lobe {lobe_id}")
+                    all_rois.add(roi)
+            
+            # Verify range
+            expected_rois = set(range(1, 171))  # AAL3 has 170 ROIs (1-indexed)
+            if all_rois != expected_rois:
+                missing = expected_rois - all_rois
+                extra = all_rois - expected_rois
+                if missing:
+                    logger.warning(f"Missing ROIs: {missing}")
+                if extra:
+                    logger.warning(f"Extra ROIs: {extra}")
+            
             self.add_pass("Config", "✓ LOBE_MAPPING valid")
             return True
         except ValueError as e:

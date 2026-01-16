@@ -2,46 +2,59 @@ from ultralytics import YOLO
 import os
 
 def main():
-    # 1. Load YOLO11 - Using 's' (Small) cause its better than nano
-    # The 's' model has more parameters to capture the subtle curvature of brain lobes
+    # 1. Load YOLO11s 
+    # Small is the correct choice for capturing the boundaries of the 5 lobe groups.
     model = YOLO("yolo11s.pt") 
 
     os.makedirs("./results", exist_ok=True)
 
-    print("🚀 Initiating Q1-Standard ROI Training...")
+    print("🚀 Initiating Anatomically-Preserving ROI Training...")
 
-    # 3. Optimized Training Parameters (Phase 3.3)
+    # 3. Corrected Training Parameters
     results = model.train(
         data="./configs/brain.yaml",      
         epochs=100,             
         imgsz=640,              
-        batch=24,               # RTX 4060 8GB can handle batch 24 at 640px (note:b24 5.94 GB mem_use, b32 dies ie OOM)
+        batch=24,                   # RTX 4060 8GB can handle batch 24 at 640px (note:b24 5.94 GB mem_use, b32 dies ie OOM)
         device=0,               
         project="./results",    
-        name="ROI_Detection_v20_Final", 
-        seed=42,                # Mandatory for Scientific Reproducibility
-        deterministic=True,      # Forces consistent results across runs
+        name="ROI_Detection_v22", 
+        seed=42,                
+        deterministic=True,     
         plots=True,             
         save=True,              
         val=True,               
         patience=25,            
         workers=8,              
         optimizer='AdamW',      
-        lr0=0.001,              # Slightly lower LR for medical stability
-        lrf=0.01,               
-        cos_lr=True,            
-        label_smoothing=0.1,    # Handles 'fuzzy' brain boundaries (Q1 standard)
-        box=10.0,               # Higher weight on BOX accuracy for Graph Node stability
-        cls=1.0,                
-        hsv_h=0.0,              # Medical images don't have color variation; disable HSV
+        
+        # --- CRITICAL CORRECTIONS START HERE ---
+        
+        lr0=0.001,              
+        label_smoothing=0.0,    # Disable for 5 broad classes; boundaries are distinct enough.
+        
+        # Balance Box vs Class: 
+        # Previously, box=10.0 caused the model to ignore WHAT the lobe was.
+        box=7.5,                
+        cls=2.0,                # Increase Class weight to ensure 'Frontal' isn't confused with 'Parietal'
+        
+        # Spatial Augmentation - ANATOMICAL PROTECTION:
+        hsv_h=0.0,              
         hsv_s=0.0,
-        hsv_v=0.2,              # Only vary brightness (simulates scan intensity)
-        degrees=10,             # Subtle rotation for head-tilt simulation
-        fliplr=0.5,             # Symmetrical augmentation (Left/Right)
-        flipud=0.0              # Anatomical protection (Superior/Inferior)
+        hsv_v=0.1,              # Minimal brightness variation
+        
+        degrees=0.0,            # CRITICAL: Set to 0. Rotation ruins 3D Z-axis alignment.
+        
+        fliplr=0.0,             # CRITICAL: Set to 0. Flipping the brain makes Left = Right.
+                                # This is why your model cannot learn connectivity patterns.
+        
+        flipud=0.0,             # Keep superior/inferior orientation constant.
+        
+        mosaic=0.0,             # Disable Mosaic for medical images; it breaks global spatial context.
+        mixup=0.0               # Disable Mixup; biological features should not be blended.
     )
 
-    print(f"\n[SUCCESS] Training Complete. Model ready for Phase 3.5.")
+    print(f"\n[SUCCESS] Training Complete. Model aligned for consistent lobe detection.")
 
 if __name__ == "__main__":
     main()
