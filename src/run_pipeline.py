@@ -9,7 +9,7 @@ from pathlib import Path
 # Setup Pathing
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from src.config import (
+from src.core.config import (
     validate_environment,
     PROJECT_ROOT,
     DATA_METADATA,
@@ -245,25 +245,25 @@ Examples:
             "name": "Generate Master Manifest",
             "should_run": not args.skip_manifest and (not MASTER_MANIFEST.exists() or args.force_reset),
             "reason": "Missing manifest" if not MASTER_MANIFEST.exists() else "Force reset",
-            "module": "src.utils.manifest"
+            "module": "src.utils.manifestor"
         },
         "atlas_validation": {
             "name": "Atlas Validation",
             "should_run": not args.skip_atlas_validation and ATLAS_DIR.exists(),
             "reason": "Verify atlas files",
-            "module": "src.atlas_validator"
+            "module": "src.validation.atlas_validator"
         },
         "diagnostics": {
             "name": "Diagnostics",
             "should_run": args.run_diagnostics,
             "reason": "Health check",
-            "module": "src.pipeline_diagnostics"
+            "module": "src.validation.pipeline_diagnostics"
         },
         "post_download_integrity": {
             "name": "Post-Download Integrity Check",
             "should_run": not args.skip_integrity and data_downloaded,
             "reason": "Validate downloaded images",
-            "module": "src.utils.integrity_check"
+            "module": "src.validation.integrity_check"
         },
         "annotate": {
             "name": "Atlas-Based Label Annotation",
@@ -281,7 +281,7 @@ Examples:
             "name": "Spatial Feature Extraction (5-lobe)",
             "should_run": not NODE_FEATURES_3D.exists() or args.force_reset,
             "reason": "Missing features" if not NODE_FEATURES_3D.exists() else "Force reset",
-            "module": "src.data.extract_features"
+            "module": "src.features.extract_features"
         },
         "temporal_features": {
             "name": "Temporal Feature Extraction",
@@ -293,19 +293,19 @@ Examples:
             "name": "Feature Harmonization",
             "should_run": not NODE_ATTRIBUTES_HARMONIZED.exists() or args.force_reset,
             "reason": "Missing harmonized data" if not NODE_ATTRIBUTES_HARMONIZED.exists() else "Force reset",
-            "module": "src.safe_harmonization"
+            "module": "src.features.safe_harmonization"
         },
         "pre_gnn_integrity": {
             "name": "Pre-GNN Integrity Check",
             "should_run": not args.skip_integrity,
             "reason": "Validate intermediate outputs",
-            "module": "src.utils.integrity_check2"
+            "module": "src.validation.integrity_check2"
         },
         "causal_graphs": {
             "name": "Causal Graph Construction (5×5)",
             "should_run": (not any(CAUSAL_GRAPHS_DIR.iterdir()) if CAUSAL_GRAPHS_DIR.exists() else True) or args.force_reset,
             "reason": "Missing graphs" if (not any(CAUSAL_GRAPHS_DIR.iterdir()) if CAUSAL_GRAPHS_DIR.exists() else True) else "Force reset",
-            "module": "src.data.construct_causal"
+            "module": "src.features.construct_causal"
         },
         "gnn_training": {
             "name": "GNN Training (5-Fold CV)",

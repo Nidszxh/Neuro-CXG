@@ -11,7 +11,7 @@
 ## Quick Start for Agents
 **Most common tasks:**
 - **Run full pipeline**: `python src/run_pipeline.py --run-diagnostics --run-safe-harmonize` (orchestrates all stages)
-- **Validate environment**: `python -c "from src.config import validate_environment; validate_environment()"` (pre-flight check)
+- **Validate environment**: `python -c "from src.core.config import validate_environment; validate_environment()"` (pre-flight check)
 - **Debug data issues**: Use [src/pipeline_diagnostics.py] — comprehensive health check for all pipeline stages
 - **Find config values**: ALL constants live in [src/config.py]—never hardcode paths or parameters
 - **Add new code**: Follow imports from config pattern (see extract_features.py, gnn_model.py for correct examples)
@@ -73,20 +73,28 @@ Train GNN with 5-fold stratified cross-validation
 
 ## Critical Patterns & Conventions
 
-### 1. Configuration as Single Source of Truth
+### 1. Configuration as Single Source of Truth ✅ (Refactored January 2026)
 - **ALL** hardcoded constants must live in [src/config.py]
-- Import from config everywhere else (e.g., `from config import LOBE_MAPPING, NUM_LOBES`)
-- TODO.md notes this is currently half-complete (duplicates exist in construct_causal.py, graph_factory.py)
+- Import from config everywhere else (e.g., `from src.core.config import LOBE_MAPPING, NUM_LOBES`)
 - AAL3 → Lobe mapping: 5 lobes, 1-indexed ROIs (AAL standard), convert to 0-indexed internally
-- Config provides validation functions: `validate_lobe_mapping()`, `validate_paths()`, `validate_environment()`
+- Config provides comprehensive validation functions:
+  - `validate_environment()`: Pre-flight checks (paths, CUDA, lobe mapping)
+  - `validate_graph_construction_inputs()`: Pre-checks before causal graph building
+  - `validate_gnn_training_inputs()`: Pre-checks before GNN training
+  - `validate_lobe_mapping()`: Checks completeness, no duplicates, range [1-170]
+- **Status**: ✅ All path references centralized (100% imported from config)
 
-### 2. Path Handling
-- **Always import paths from config**: `from config import DATA_ROOT, CHECKPOINT_DIR, CAUSAL_GRAPHS_DIR`
+### 2. Path Handling ✅ (Refactored January 2026)
+- **Always import paths from config**: `from src.core.config import DATA_ROOT, CHECKPOINT_DIR, CAUSAL_GRAPHS_DIR`
 - Pattern in config: `PROJECT_ROOT = Path(__file__).resolve().parents[1]` (from src/config.py to project root)
-- Pattern in submodules: `sys.path.append(str(Path(__file__).resolve().parents[1]))` then import from config
-- Never hardcode relative paths like `./data` or `../..` (found in split.py, manifest.py, annotate.py—needs refactoring)
+- Pattern in submodules: 
+  ```python
+  sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+  from src.core.config import DATA_ROOT, DATA_FINAL, DATA_PROCESSED
+  ```
+- **Status**: ✅ ALL modules centralized (split.py, manifest.py, annotate.py, check_progress.py, integrity_check.py)
+- Never hardcode relative paths like `./data` or `../..`
 - Use Path().exists() for validation before loading
-- **Current state**: extract_features.py and gnn_model.py correctly import from config; split.py/manifest.py/annotate.py still use hardcoded `Path("./data")`
 
 ### 3. Tensor/Data Shapes (Critical for Graph Construction)
 - **Input time series**: `(timepoints, num_rois)` where num_rois ∈ {116, 117, 170} depending on atlas
@@ -163,6 +171,30 @@ Train GNN with 5-fold stratified cross-validation
   - Mean Accuracy: **0.5193 ± 0.0454**
   - Mean Optimal Threshold: **0.588**
   - Note: AUC near random (0.5) suggests need for architecture tuning, class rebalancing, or feature engineering
+
+### 8. Error Handling & Logging ✅ (Refactored January 2026)
+- **Logging**: All modules use Python `logging` instead of `print()` statements
+  - Setup in each module: 
+    ```python
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+    ```
+  - Usage: `logger.info()`, `logger.warning()`, `logger.error()`, `logger.debug()`
+  - **Status**: ✅ All core modules updated (split.py, manifest.py, annotate.py, check_progress.py, etc.)
+
+- **Try-Catch Error Handling**: All I/O operations wrapped with specific error types
+  - **CSV Loading**: `FileNotFoundError`, `pd.errors.ParserError` caught separately
+  - **File Operations**: `FileNotFoundError`, `ValueError` for invalid arrays
+  - **Graph Construction**: `torch.isnan()`, `torch.isinf()` checks before use
+  - **DataLoader**: Null-safety for graphs with zero edges (returns `None`, skipped in training loop)
+  - **Status**: ✅ All data utilities updated (extract_features.py, harmonize.py, compute_roi.py)
+
+- **Graph Edge Cases**: 
+  - Empty edge_index handled gracefully (validated in `graph_factory.py` line ~145)
+  - Zero-edge graphs detected after sparsification (validated in `construct_causal.py` line ~110)
+  - Subjects with insufficient edges skipped with warning logs
+  - Training loop skips null graphs: `if data is None: continue` in `train_one_epoch()` and `evaluate()`
 
 ## Development Workflows
 
@@ -265,11 +297,11 @@ python src/run_pipeline.py --run-download --run-manifest --run-safe-harmonize --
 python src/pipeline_diagnostics.py
 
 # Check dataset loading (verify labels, shapes, sample counts)
-python -c "from src.data.graph_factory import ABIDECausalDataset; \
+python -c "from src.features.graph_factory import ABIDECausalDataset; \
 ds = ABIDECausalDataset('train'); print(f'Loaded {len(ds)} subjects, first graph has {ds[0].x.shape[0]} nodes')"
 
 # Validate lobe mapping before graph construction
-python -c "from src.config import validate_lobe_mapping; validate_lobe_mapping(); print('✓ LOBE_MAPPING valid')"
+python -c "from src.core.config import validate_lobe_mapping; validate_lobe_mapping(); print('✓ LOBE_MAPPING valid')"
 
 # Validate entire environment
 python -c "from src.config import validate_environment; validate_environment()"
@@ -333,7 +365,7 @@ python src/safe_harmonization.py
 
 **Path Handling:**
 - ❌ **Bad**: `Path("./data")` or `Path("../../../data")` (relative paths break across modules)
-- ✅ **Good**: Import from config: `from config import DATA_ROOT, DATA_METADATA`
+- ✅ **Good**: Import from config: `from src.core.config import DATA_ROOT, DATA_METADATA`
 - **Status**: split.py, manifest.py, annotate.py still use hardcoded paths—refactor when touching these files
 
 **Graph Construction:**

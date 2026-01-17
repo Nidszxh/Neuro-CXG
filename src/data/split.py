@@ -1,17 +1,24 @@
-import os, shutil, random, pandas as pd
+import os, shutil, random, pandas as pd, logging, sys
 from pathlib import Path
 
-# --- PATHS ---
-PROJECT_ROOT = Path("./data")
-SOURCE_IMG   = PROJECT_ROOT / "images"
-SOURCE_TS    = PROJECT_ROOT / "processed"  # Where .npy files are
-SOURCE_LBL   = PROJECT_ROOT / "labels"
-TARGET_ROOT  = PROJECT_ROOT / "final"
-PHENO_PATH   = PROJECT_ROOT / "processed" / "Phenotypic_V1_0b_preprocessed1.csv"
+# Setup paths from config
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.core.config import DATA_ROOT, DATA_PROCESSED, DATA_FINAL
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
 TRAIN_RATIO, VAL_RATIO = 0.70, 0.15 
 random.seed(42)
+SOURCE_IMG   = DATA_ROOT / "images"
+SOURCE_TS    = DATA_PROCESSED  # Where .npy files are
+SOURCE_LBL   = DATA_ROOT / "labels"
+PHENO_PATH = DATA_PROCESSED / "Phenotypic_V1_0b_preprocessed1.csv"
 
 def run_stratified_split():
     # 1. Load labels to ensure stratification (Phase 2.2)
@@ -38,11 +45,11 @@ def run_stratified_split():
 
     # 3. Execute Move
     for name, split_df in splits.items():
-        print(f"📦 Organizing {name} set ({len(split_df)} subjects)...")
+        logger.info(f"📦 Organizing {name} set ({len(split_df)} subjects)...")
         
-        img_dst = TARGET_ROOT / name / 'images'
-        lbl_dst = TARGET_ROOT / name / 'labels'
-        ts_dst  = TARGET_ROOT / name / 'time_series'
+        img_dst = DATA_FINAL / name / 'images'
+        lbl_dst = DATA_FINAL / name / 'labels'
+        ts_dst  = DATA_FINAL / name / 'time_series'
         
         for d in [img_dst, lbl_dst, ts_dst]: d.mkdir(parents=True, exist_ok=True)
 
@@ -60,7 +67,7 @@ def run_stratified_split():
             if (SOURCE_TS / ts_f).exists():
                 shutil.move(SOURCE_TS / ts_f, ts_dst / ts_f)
 
-    print(f"\n✅ SUCCESS: Stratified split complete. Saved to {TARGET_ROOT}")
+    logger.info(f"\n✅ SUCCESS: Stratified split complete. Saved to {DATA_FINAL}")
 
 if __name__ == "__main__":
     run_stratified_split()

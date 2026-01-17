@@ -293,13 +293,13 @@ python src/pipeline_diagnostics.py
 
 ```bash
 # Validate environment and config
-python -c "from src.config import validate_environment; validate_environment()"
+python -c "from src.core.config import validate_environment; validate_environment()"
 
 # Check lobe mapping integrity
-python -c "from src.config import validate_lobe_mapping; validate_lobe_mapping()"
+python -c "from src.core.config import validate_lobe_mapping; validate_lobe_mapping()"
 
 # Test dataset loading
-python -c "from src.data.graph_factory import ABIDECausalDataset; \
+python -c "from src.features.graph_factory import ABIDECausalDataset; \
 ds = ABIDECausalDataset('train'); \
 print(f'Loaded {len(ds)} graphs, node features: {ds[0].x.shape}')"
 

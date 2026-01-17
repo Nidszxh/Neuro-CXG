@@ -18,7 +18,7 @@ def main():
         batch=24,                   # RTX 4060 8GB can handle batch 24 at 640px (note:b24 5.94 GB mem_use, b32 dies ie OOM)
         device=0,               
         project="./results",    
-        name="ROI_Detection_v22", 
+        name="ROI_Detection_v20", 
         seed=42,                
         deterministic=True,     
         plots=True,             

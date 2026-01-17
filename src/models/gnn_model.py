@@ -15,7 +15,7 @@ warnings.filterwarnings('ignore', message='.*torch-scatter.*')
 
 # Setup paths and config
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import (
+from src.core.config import (
     K_FOLDS, GNN_BATCH_SIZE, GNN_LEARNING_RATE,
     GNN_EPOCHS, CHECKPOINT_DIR, DEVICE, GNN_IN_CHANNELS
 )
@@ -181,6 +181,10 @@ def train_one_epoch(model, loader, optimizer, criterion, use_class_weights=False
     total_loss = 0
     
     for data in loader:
+        # CRITICAL FIX: Skip null graphs that have no edges
+        if data is None:
+            continue
+            
         data = data.to(DEVICE)
         optimizer.zero_grad()
         
@@ -216,6 +220,10 @@ def evaluate(model, loader, threshold=0.5):
     all_labels = []
     
     for data in loader:
+        # CRITICAL FIX: Skip null graphs that have no edges
+        if data is None:
+            continue
+            
         data = data.to(DEVICE)
         out = model(data.x, data.edge_index, data.edge_attr, data.batch)
         probs = torch.softmax(out, dim=1)
@@ -248,8 +256,8 @@ def run_kfold_training_balanced():
     """Main training loop with class imbalance fixes."""
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     
-    from data.graph_factory import ABIDECausalDataset
-    from models.causal_gnn import CausalBrainGNN
+    from src.features.graph_factory import ABIDECausalDataset
+    from src.models.causal_gnn import CausalBrainGNN
     
     # Load dataset
     dataset = ABIDECausalDataset(split='train')
