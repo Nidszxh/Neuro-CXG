@@ -103,16 +103,22 @@ def extract_features():
             lobe_name = LOBE_NAMES[lobe_id]
             lobe_data = sub_group[sub_group['roi_class'] == lobe_id]
             
-            # 3D Centroid calculation
+            # 3D Centroid calculation (SPATIAL FEATURES 1-3)
             subject_row[f"{lobe_name}_x"] = lobe_data['x'].mean()
             subject_row[f"{lobe_name}_y"] = lobe_data['y'].mean()
             subject_row[f"{lobe_name}_z_depth"] = lobe_data['z'].mean()
             
-            # Physical dimension averages
-            subject_row[f"{lobe_name}_w"] = lobe_data['w'].mean()
-            subject_row[f"{lobe_name}_h"] = lobe_data['h'].mean()
+            # NEW: Geometric size features (SPATIAL FEATURES 4-6)
+            # Bounding box area (normalized by image size)
+            subject_row[f"{lobe_name}_size"] = lobe_data['w'].mean() * lobe_data['h'].mean()
             
-            # Confidence metric
+            # Confidence consistency (how stable detections are across slices)
+            subject_row[f"{lobe_name}_conf_std"] = lobe_data['conf'].std() if len(lobe_data) > 1 else 0.0
+            
+            # Detection frequency (how many z-slices detected this lobe)
+            subject_row[f"{lobe_name}_detection_count"] = len(lobe_data)
+            
+            # Original confidence metric
             subject_row[f"{lobe_name}_conf"] = lobe_data['conf'].max()
 
         processed_subjects.append(subject_row)

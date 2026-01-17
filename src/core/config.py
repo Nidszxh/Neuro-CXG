@@ -50,6 +50,7 @@ LOBE_MAPPING = {
 LOBE_NAMES = {0: 'Frontal', 1: 'Temporal', 2: 'Parietal', 3: 'Occipital', 4: 'Limbic'}
 NUM_LOBES = 5
 NUM_TEMPORAL_FEATURES = 8  # Mean, Std, Skew, Kurtosis, PSD, MSSD, Range, Autocorr per ROI
+NUM_SPATIAL_FEATURES = 6   # x, y, z_depth, size, conf_std, detection_count per lobe
 
 # --- TEMPORAL FEATURE EXTRACTION PARAMETERS ---
 DEFAULT_TR = 2.0  # Default TR (seconds) for fMRI—fallback if not in phenotype CSV
@@ -76,7 +77,7 @@ CAUSAL_LAG = 1           # 1 TR lag for temporal precedence
 SPARSITY_QUANTILE = 0.60 # Keep top 40% strongest causal edges
 
 # --- GNN MODEL PARAMETERS ---
-GNN_IN_CHANNELS = 11     # 8 Temporal stats + 3 Spatial (x,y,z)
+GNN_IN_CHANNELS = 14     # 8 Temporal + 6 Spatial features per node
 GNN_HIDDEN_CHANNELS = 64
 GNN_NUM_HEADS = 4
 GNN_NUM_CLASSES = 2      # 0: Control, 1: ASD
