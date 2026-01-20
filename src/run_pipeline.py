@@ -201,6 +201,8 @@ Examples:
                         help="Wipe all intermediate CSVs and Graphs")
     parser.add_argument("--run-diagnostics", action="store_true",
                         help="Run comprehensive health check")
+    parser.add_argument("--run-comprehensive-validation", action="store_true",
+                        help="Run comprehensive validation & tuning suite (YOLO quality, sparsity, stratification)")
     
     args = parser.parse_args()
     
@@ -249,8 +251,8 @@ Examples:
         },
         "atlas_validation": {
             "name": "Atlas Validation",
-            "should_run": not args.skip_atlas_validation and ATLAS_DIR.exists(),
-            "reason": "Verify atlas files",
+            "should_run": not args.skip_atlas_validation,
+            "reason": "Verify atlas files exist and are valid",
             "module": "src.validation.atlas_validator"
         },
         "diagnostics": {
@@ -259,11 +261,18 @@ Examples:
             "reason": "Health check",
             "module": "src.validation.pipeline_diagnostics"
         },
+        "comprehensive_validation": {
+            "name": "Comprehensive Validation & Tuning",
+            "should_run": args.run_diagnostics or args.run_comprehensive_validation,
+            "reason": "Detailed quality checks (YOLO, graphs, features, stratification)",
+            "module": "src.validation.validator"
+        },
         "post_download_integrity": {
             "name": "Post-Download Integrity Check",
             "should_run": not args.skip_integrity and data_downloaded,
             "reason": "Validate downloaded images",
-            "module": "src.validation.integrity_check"
+            "module": "src.validation.integrity",
+            "function": "check_dataset_integrity"
         },
         "annotate": {
             "name": "Atlas-Based Label Annotation",
@@ -299,7 +308,8 @@ Examples:
             "name": "Pre-GNN Integrity Check",
             "should_run": not args.skip_integrity,
             "reason": "Validate intermediate outputs",
-            "module": "src.validation.integrity_check2"
+            "module": "src.validation.integrity",
+            "function": "check_distribution"
         },
         "causal_graphs": {
             "name": "Causal Graph Construction (5×5)",
@@ -337,7 +347,7 @@ Examples:
     for stage_key in ["download", "split", "manifest", "atlas_validation", "diagnostics",
                       "post_download_integrity", "annotate", "yolo", "spatial_features",
                       "temporal_features", "harmonization", "pre_gnn_integrity",
-                      "causal_graphs", "gnn_training"]:
+                      "comprehensive_validation", "causal_graphs", "gnn_training"]:
         
         stage = stages[stage_key]
         

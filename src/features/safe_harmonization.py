@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Tuple, Dict
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     NODE_ATTRIBUTES_TEMPORAL, MASTER_MANIFEST,
     NODE_ATTRIBUTES_HARMONIZED, NUM_TEMPORAL_FEATURES

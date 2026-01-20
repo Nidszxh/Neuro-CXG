@@ -3,7 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.loader import DataLoader
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import roc_auc_score, f1_score, confusion_matrix, accuracy_score, precision_recall_curve
+from sklearn.metrics import (
+    roc_auc_score, f1_score, confusion_matrix, 
+    accuracy_score, precision_recall_curve
+)
 import numpy as np
 import logging
 from pathlib import Path
@@ -11,13 +14,13 @@ from tqdm import tqdm
 import sys
 import warnings
 
-warnings.filterwarnings('ignore', message='.*torch-scatter.*')
+warnings.filterwarnings('ignore')
 
 # Setup paths and config
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
-    K_FOLDS, GNN_BATCH_SIZE, GNN_LEARNING_RATE,
-    GNN_EPOCHS, CHECKPOINT_DIR, DEVICE, GNN_IN_CHANNELS
+    K_FOLDS, GNN_BATCH_SIZE, GNN_EPOCHS, 
+    CHECKPOINT_DIR, DEVICE, GNN_IN_CHANNELS
 )
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -26,17 +29,9 @@ logger = logging.getLogger(__name__)
 
 class FocalLoss(nn.Module):
     """
-    Focal Loss for addressing class imbalance.
+    Focal Loss for class imbalance.
     
-    Focuses training on hard-to-classify examples by down-weighting
-    easy examples. Prevents the model from being "lazy" and always
-    predicting the majority class.
-    
-    Formula: FL(p_t) = -α(1-p_t)^γ * log(p_t)
-    
-    Args:
-        alpha: Weighting factor for minority class (default: 0.75 for ~25% minority)
-        gamma: Focusing parameter (default: 2.0, standard value)
+    Automatically focuses on hard-to-classify examples.
     """
     def __init__(self, alpha=0.75, gamma=2.0):
         super().__init__()
@@ -44,51 +39,82 @@ class FocalLoss(nn.Module):
         self.gamma = gamma
     
     def forward(self, inputs, targets):
-        """
-        Args:
-            inputs: Model logits (batch_size, 2)
-            targets: Ground truth labels (batch_size,)
-        """
-        # Get probabilities
         probs = F.softmax(inputs, dim=1)
-        
-        # Get probability of correct class
         targets_one_hot = F.one_hot(targets, num_classes=2).float()
         pt = (probs * targets_one_hot).sum(dim=1)
         
-        # Focal term: (1 - pt)^gamma
         focal_weight = (1 - pt) ** self.gamma
-        
-        # Alpha weighting (higher for minority class)
         alpha_weight = targets_one_hot[:, 1] * self.alpha + targets_one_hot[:, 0] * (1 - self.alpha)
         
-        # Cross entropy
         ce_loss = F.cross_entropy(inputs, targets, reduction='none')
-        
-        # Focal loss
         focal_loss = alpha_weight * focal_weight * ce_loss
         
         return focal_loss.mean()
 
 
+class EarlyStopping:
+    """
+    Early stopping to prevent overfitting.
+    
+    Stops training when validation metric doesn't improve for `patience` epochs.
+    """
+    def __init__(self, patience=25, min_delta=0.001, mode='max'):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.mode = mode
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+        
+    def __call__(self, score):
+        if self.best_score is None:
+            self.best_score = score
+            return False
+        
+        if self.mode == 'max':
+            improved = score > self.best_score + self.min_delta
+        else:
+            improved = score < self.best_score - self.min_delta
+        
+        if improved:
+            self.best_score = score
+            self.counter = 0
+            return False
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+                return True
+            return False
+
+
+class WarmupScheduler:
+    """
+    Learning rate warmup for stable training start.
+    
+    Gradually increases LR from 0 to base_lr over warmup_epochs.
+    """
+    def __init__(self, optimizer, warmup_epochs, base_lr):
+        self.optimizer = optimizer
+        self.warmup_epochs = warmup_epochs
+        self.base_lr = base_lr
+        self.current_epoch = 0
+    
+    def step(self):
+        if self.current_epoch < self.warmup_epochs:
+            lr = self.base_lr * (self.current_epoch + 1) / self.warmup_epochs
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = lr
+        self.current_epoch += 1
+
+
 def compute_class_weights(labels):
-    """
-    Compute class weights for imbalanced dataset.
-    
-    Args:
-        labels: List of binary labels (0 or 1)
-    
-    Returns:
-        Tensor of class weights [weight_control, weight_asd]
-    """
+    """Compute inverse frequency class weights."""
     labels_array = np.array(labels)
-    
-    # Count each class
     n_control = (labels_array == 0).sum()
     n_asd = (labels_array == 1).sum()
     total = len(labels_array)
     
-    # Inverse frequency weighting
     weight_control = total / (2 * n_control) if n_control > 0 else 1.0
     weight_asd = total / (2 * n_asd) if n_asd > 0 else 1.0
     
@@ -99,25 +125,10 @@ def compute_class_weights(labels):
 
 
 def find_optimal_threshold(y_true, y_probs):
-    """
-    Find optimal classification threshold by maximizing F1 score.
-    
-    Instead of using default 0.5 threshold, find the threshold that
-    maximizes F1 score on validation data.
-    
-    Args:
-        y_true: Ground truth labels
-        y_probs: Predicted probabilities for positive class
-    
-    Returns:
-        Tuple of (optimal_threshold, best_f1)
-    """
+    """Find threshold that maximizes F1 score."""
     precision, recall, thresholds = precision_recall_curve(y_true, y_probs)
-    
-    # F1 = 2 * (precision * recall) / (precision + recall)
     f1_scores = 2 * (precision * recall) / (precision + recall + 1e-10)
     
-    # Find threshold that maximizes F1
     best_idx = np.argmax(f1_scores)
     best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
     best_f1 = f1_scores[best_idx]
@@ -125,102 +136,57 @@ def find_optimal_threshold(y_true, y_probs):
     return best_threshold, best_f1
 
 
-def balanced_batch_sampler(dataset, batch_size):
+def train_one_epoch(model, loader, optimizer, criterion, gradient_accumulation_steps=1):
     """
-    Create balanced batches with equal Control and ASD samples.
+    Train for one epoch with gradient accumulation.
     
     Args:
-        dataset: PyTorch Geometric dataset
-        batch_size: Target batch size
-    
-    Returns:
-        List of balanced batch indices
+        gradient_accumulation_steps: Accumulate gradients over N batches
+                                      (effective batch size = batch_size * N)
     """
-    # Separate indices by class
-    control_indices = []
-    asd_indices = []
-    
-    for i in range(len(dataset)):
-        data = dataset[i]
-        if data is not None:
-            label = data.y.item()
-            if label == 0:
-                control_indices.append(i)
-            else:
-                asd_indices.append(i)
-    
-    # Create balanced batches
-    balanced_batches = []
-    samples_per_class = batch_size // 2
-    
-    # Shuffle
-    np.random.shuffle(control_indices)
-    np.random.shuffle(asd_indices)
-    
-    # Oversample minority class if needed
-    if len(asd_indices) < len(control_indices):
-        # Repeat ASD indices to match Control
-        asd_indices = asd_indices * (len(control_indices) // len(asd_indices) + 1)
-        asd_indices = asd_indices[:len(control_indices)]
-    
-    # Create batches
-    for i in range(0, len(control_indices), samples_per_class):
-        batch = []
-        batch.extend(control_indices[i:i + samples_per_class])
-        batch.extend(asd_indices[i:i + samples_per_class])
-        
-        if len(batch) >= 4:  # Minimum batch size
-            balanced_batches.append(batch)
-    
-    return balanced_batches
-
-
-def train_one_epoch(model, loader, optimizer, criterion, use_class_weights=False, class_weights=None):
-    """Train for one epoch with optional class weighting."""
     model.train()
     total_loss = 0
+    optimizer.zero_grad()
     
-    for data in loader:
-        # CRITICAL FIX: Skip null graphs that have no edges
+    for i, data in enumerate(loader):
         if data is None:
             continue
             
         data = data.to(DEVICE)
-        optimizer.zero_grad()
         
+        # Forward pass
         out = model(data.x, data.edge_index, data.edge_attr, data.batch)
+        loss = criterion(out, data.y)
         
-        # Use class-weighted loss if specified
-        if use_class_weights and class_weights is not None:
-            weights = class_weights.to(DEVICE)
-            loss = F.cross_entropy(out, data.y, weight=weights)
-        else:
-            loss = criterion(out, data.y)
-        
+        # Normalize loss for gradient accumulation
+        loss = loss / gradient_accumulation_steps
         loss.backward()
+        
+        # Update weights every N steps
+        if (i + 1) % gradient_accumulation_steps == 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            optimizer.zero_grad()
+        
+        total_loss += loss.item() * gradient_accumulation_steps
+    
+    # Final update if not divisible
+    if (i + 1) % gradient_accumulation_steps != 0:
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
-        total_loss += loss.item()
+        optimizer.zero_grad()
     
     return total_loss / len(loader)
 
 
 @torch.no_grad()
 def evaluate(model, loader, threshold=0.5):
-    """
-    Evaluate model with custom threshold.
-    
-    Args:
-        model: GNN model
-        loader: Data loader
-        threshold: Classification threshold (default 0.5)
-    """
+    """Evaluate model with custom threshold."""
     model.eval()
     all_probs = []
     all_labels = []
     
     for data in loader:
-        # CRITICAL FIX: Skip null graphs that have no edges
         if data is None:
             continue
             
@@ -232,11 +198,8 @@ def evaluate(model, loader, threshold=0.5):
     
     probs_array = np.concatenate(all_probs)
     labels_array = np.concatenate(all_labels)
-    
-    # Apply custom threshold
     preds_array = (probs_array > threshold).astype(int)
     
-    # Calculate metrics
     auc = roc_auc_score(labels_array, probs_array)
     f1 = f1_score(labels_array, preds_array, zero_division=0)
     acc = accuracy_score(labels_array, preds_array)
@@ -252,12 +215,12 @@ def evaluate(model, loader, threshold=0.5):
     }
 
 
-def run_kfold_training_balanced():
-    """Main training loop with class imbalance fixes."""
+def run_enhanced_training():
+    """Main training loop with all PART 3 optimizations."""
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     
     from src.features.graph_factory import ABIDECausalDataset
-    from src.models.causal_gnn import CausalBrainGNN
+    from src.models.enhanced_gnn import EnhancedCausalBrainGNN
     
     # Load dataset
     dataset = ABIDECausalDataset(split='train')
@@ -273,11 +236,13 @@ def run_kfold_training_balanced():
     class_weights = compute_class_weights(labels)
     
     logger.info(f"\n{'='*70}")
-    logger.info("BALANCED 5-FOLD CV WITH CLASS IMBALANCE FIXES")
+    logger.info("ENHANCED 5-FOLD CV WITH OPTIMIZATIONS")
     logger.info(f"{'='*70}")
     logger.info(f"Total subjects: {len(labels)}")
-    logger.info(f"Using Focal Loss (α={0.75}, γ={2.0})")
-    logger.info(f"Class weights: {class_weights.numpy()}")
+    logger.info(f"Learning rate: 0.0005 (reduced from 0.001)")
+    logger.info(f"Early stopping: patience=25")
+    logger.info(f"Focal Loss: α=0.75, γ=2.0")
+    logger.info(f"Gradient accumulation: 2 steps (effective batch=64)")
     logger.info(f"{'='*70}\n")
     
     skf = StratifiedKFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
@@ -285,7 +250,8 @@ def run_kfold_training_balanced():
         'auc': [],
         'f1': [],
         'acc': [],
-        'threshold': []
+        'threshold': [],
+        'best_epoch': []
     }
     
     for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(labels)), labels)):
@@ -293,88 +259,104 @@ def run_kfold_training_balanced():
         logger.info(f"FOLD {fold+1}/{K_FOLDS}")
         logger.info(f"{'='*70}")
         
-        # Create balanced training batches
+        # Create data loaders
         train_data = [dataset[i] for i in train_idx if dataset[i] is not None]
         val_data = [dataset[i] for i in val_idx if dataset[i] is not None]
         
-        # Check class distribution in fold
         train_labels = [d.y.item() for d in train_data]
         val_labels = [d.y.item() for d in val_data]
         
         logger.info(f"Train: Control={train_labels.count(0)}, ASD={train_labels.count(1)}")
         logger.info(f"Val: Control={val_labels.count(0)}, ASD={val_labels.count(1)}")
         
-        # Standard loaders (will use Focal Loss to handle imbalance)
         train_loader = DataLoader(train_data, batch_size=GNN_BATCH_SIZE, shuffle=True)
         val_loader = DataLoader(val_data, batch_size=GNN_BATCH_SIZE)
         
         # Initialize model
-        model = CausalBrainGNN(
+        model = EnhancedCausalBrainGNN(
             num_node_features=GNN_IN_CHANNELS,
-            hidden_channels=64
+            hidden_channels=64,
+            num_classes=2,
+            dropout=0.5,
+            num_heads=2
         ).to(DEVICE)
         
+        # Optimizer with REDUCED learning rate
         optimizer = torch.optim.AdamW(
             model.parameters(),
-            lr=GNN_LEARNING_RATE,
+            lr=0.0005,  # Reduced from 0.001
             weight_decay=1e-3
         )
         
+        # Learning rate warmup
+        warmup = WarmupScheduler(optimizer, warmup_epochs=5, base_lr=0.0005)
+        
+        # Cosine annealing after warmup
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            T_max=GNN_EPOCHS
+            T_max=GNN_EPOCHS - 5
         )
         
-        # Use Focal Loss instead of CrossEntropy
+        # Focal Loss
         criterion = FocalLoss(alpha=0.75, gamma=2.0)
+        
+        # Early stopping
+        early_stopping = EarlyStopping(patience=25, min_delta=0.001, mode='max')
         
         best_auc = 0.0
         best_f1 = 0.0
         best_threshold = 0.5
-        patience = 25
-        no_improve = 0
+        best_epoch = 0
         
         for epoch in range(1, GNN_EPOCHS + 1):
-            # Train
+            # Warmup for first 5 epochs
+            if epoch <= 5:
+                warmup.step()
+            
+            # Train with gradient accumulation (effective batch size = 64)
             loss = train_one_epoch(
                 model, train_loader, optimizer, criterion,
-                use_class_weights=False  # Focal Loss handles this
+                gradient_accumulation_steps=2
             )
-            scheduler.step()
             
-            # Evaluate with default threshold
-            metrics = evaluate(model, val_loader, threshold=0.5)
+            # Step scheduler after warmup
+            if epoch > 5:
+                scheduler.step()
             
-            # Find optimal threshold every 10 epochs
-            if epoch % 10 == 0:
+            # Evaluate every 5 epochs
+            if epoch % 5 == 0:
+                metrics = evaluate(model, val_loader, threshold=0.5)
+                
+                # Find optimal threshold
                 opt_threshold, opt_f1 = find_optimal_threshold(
                     metrics['labels'],
                     metrics['probs']
                 )
                 
-                # Re-evaluate with optimal threshold
                 metrics_opt = evaluate(model, val_loader, threshold=opt_threshold)
                 
+                current_lr = optimizer.param_groups[0]['lr']
+                
                 logger.info(
-                    f"Epoch {epoch:03d} | Loss: {loss:.4f} | "
+                    f"Epoch {epoch:03d} | LR: {current_lr:.6f} | Loss: {loss:.4f} | "
                     f"AUC: {metrics['auc']:.4f} | "
-                    f"F1@0.5: {metrics['f1']:.4f} | "
                     f"F1@{opt_threshold:.2f}: {metrics_opt['f1']:.4f}"
                 )
                 
-                # Save if AUC improves (primary metric)
+                # Save best model
                 if metrics['auc'] > best_auc:
                     best_auc = metrics['auc']
                     best_f1 = metrics_opt['f1']
                     best_threshold = opt_threshold
-                    no_improve = 0
+                    best_epoch = epoch
                     
-                    # Save model
                     torch.save(
                         {
                             'model_state': model.state_dict(),
                             'threshold': opt_threshold,
-                            'epoch': epoch
+                            'epoch': epoch,
+                            'auc': best_auc,
+                            'f1': best_f1
                         },
                         CHECKPOINT_DIR / f"best_model_fold{fold}.pt"
                     )
@@ -383,21 +365,21 @@ def run_kfold_training_balanced():
                         f"✓ New best: AUC={best_auc:.4f}, "
                         f"F1={best_f1:.4f} @ threshold={best_threshold:.3f}"
                     )
-                else:
-                    no_improve += 1
-            
-            if no_improve >= patience // 10:  # Adjusted for 10-epoch eval
-                logger.info(f"Early stop at epoch {epoch}")
-                break
+                
+                # Early stopping check
+                if early_stopping(metrics['auc']):
+                    logger.info(f"Early stopping at epoch {epoch}")
+                    break
         
-        # Final evaluation with best threshold
-        checkpoint = torch.load(CHECKPOINT_DIR / f"best_model_fold{fold}.pt", weights_only=False)
+        # Final evaluation
+        checkpoint = torch.load(CHECKPOINT_DIR / f"best_model_fold{fold}.pt")
         model.load_state_dict(checkpoint['model_state'])
         final_threshold = checkpoint['threshold']
         
         final_metrics = evaluate(model, val_loader, threshold=final_threshold)
         
         logger.info(f"\nFold {fold+1} Final Results:")
+        logger.info(f"  Best epoch: {best_epoch}")
         logger.info(f"  AUC: {final_metrics['auc']:.4f}")
         logger.info(f"  F1: {final_metrics['f1']:.4f} (threshold={final_threshold:.3f})")
         logger.info(f"  Accuracy: {final_metrics['acc']:.4f}")
@@ -408,19 +390,22 @@ def run_kfold_training_balanced():
         fold_results['f1'].append(final_metrics['f1'])
         fold_results['acc'].append(final_metrics['acc'])
         fold_results['threshold'].append(final_threshold)
+        fold_results['best_epoch'].append(best_epoch)
     
     # Summary
     logger.info(f"\n{'='*70}")
-    logger.info("FINAL CROSS-VALIDATION RESULTS")
+    logger.info("FINAL ENHANCED CROSS-VALIDATION RESULTS")
     logger.info(f"{'='*70}")
     logger.info(f"Mean AUC: {np.mean(fold_results['auc']):.4f} ± {np.std(fold_results['auc']):.4f}")
     logger.info(f"Mean F1: {np.mean(fold_results['f1']):.4f} ± {np.std(fold_results['f1']):.4f}")
     logger.info(f"Mean Accuracy: {np.mean(fold_results['acc']):.4f} ± {np.std(fold_results['acc']):.4f}")
     logger.info(f"Mean Threshold: {np.mean(fold_results['threshold']):.3f}")
+    logger.info(f"Mean Best Epoch: {np.mean(fold_results['best_epoch']):.1f}")
     logger.info(f"\nPer-fold AUCs: {[f'{x:.4f}' for x in fold_results['auc']]}")
     logger.info(f"Per-fold F1s: {[f'{x:.4f}' for x in fold_results['f1']]}")
+    logger.info(f"Per-fold Best Epochs: {fold_results['best_epoch']}")
     logger.info(f"{'='*70}\n")
 
 
 if __name__ == "__main__":
-    run_kfold_training_balanced()
+    run_enhanced_training()

@@ -4,7 +4,7 @@ from tqdm import tqdm
 from pathlib import Path
 
 # Setup paths from config
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import DATA_FINAL, DATA_ATLASES, LOBE_MAPPING, NUM_LOBES
 
 # Setup logging

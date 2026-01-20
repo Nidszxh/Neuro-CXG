@@ -1,82 +1,243 @@
 import torch
 import torch.nn.functional as F
-from torch_geometric.nn import GATv2Conv, global_max_pool, global_mean_pool
-from torch.nn import Linear, Sequential, ReLU, Dropout, LayerNorm
+from torch_geometric.nn import GATv2Conv, global_max_pool, global_mean_pool, global_add_pool
+from torch.nn import Linear, Sequential, ReLU, Dropout, LayerNorm, BatchNorm1d
 
 class CausalBrainGNN(torch.nn.Module):
     """
-    Tuned GNN for 5-Node Lobe Graphs.
-    Input: 9 Features (6 Temporal + 3 Spatial)
-    Architecture: GATv2 with Mean-Max Hub Fusion
+    GNN for 5-Node Lobe Graphs with architectural improvements.
+    
+    Input: 14 Features (8 Temporal + 6 Spatial)
+    Architecture: 
+    - 3 GATv2 layers with skip connections
+    - Layer normalization after each layer
+    - Dropout between layers
+    - Multi-scale pooling (mean + max + sum)
+    - Learnable edge weight transformation
     """
-    def __init__(self, num_node_features=9, hidden_channels=64, num_classes=2):
+    def __init__(
+        self, 
+        num_node_features=14, 
+        hidden_channels=64, 
+        num_classes=2,
+        dropout=0.5,
+        num_heads=2
+    ):
         super(CausalBrainGNN, self).__init__()
         torch.manual_seed(42)
 
-        # 1. Input Embedding
-        # LayerNorm is critical here because it stabilizes the 9 features (which vary in scale)
+        # 1. Input Embedding with normalization
         self.lin_in = Linear(num_node_features, hidden_channels)
         self.norm_in = LayerNorm(hidden_channels)
-
-        # 2. Multi-Head Causal Attention
-        # 2 heads is sufficient for 5 nodes; 4 heads often leads to redundancy on this scale.
-        self.conv1 = GATv2Conv(hidden_channels, hidden_channels, heads=2, edge_dim=1, concat=True)
-        # The output of conv1 is hidden_channels * 2 (due to concat)
-        self.conv2 = GATv2Conv(hidden_channels * 2, hidden_channels, heads=2, edge_dim=1, concat=True)
         
-        # Simple skip connections to maintain feature identity
-        self.skip1 = Linear(hidden_channels, hidden_channels * 2)
-        self.skip2 = Linear(hidden_channels * 2, hidden_channels * 2)
-
-        # 3. Final Classification (Hierarchical Fusion)
-        # (hidden_channels * 2) * 2 because we concat Mean and Max pooling
-        self.classifier = Sequential(
-            Linear(hidden_channels * 2 * 2, hidden_channels),
+        # 2. Learnable Edge Weight Transformation
+        # This allows the model to learn which edge correlations matter most
+        self.edge_encoder = Sequential(
+            Linear(1, 16),  # Edge attr is scalar correlation
             ReLU(),
-            Dropout(0.5), # High dropout to prevent memorizing site-specific noise
+            Linear(16, 1)
+        )
+
+        # 3. Multi-Head Causal Attention Layers (3 layers for depth)
+        # Layer 1
+        self.conv1 = GATv2Conv(
+            hidden_channels, 
+            hidden_channels, 
+            heads=num_heads, 
+            edge_dim=1,  # Transformed edge weight
+            concat=True
+        )
+        self.norm1 = LayerNorm(hidden_channels * num_heads)
+        self.dropout1 = Dropout(dropout)
+        self.skip1 = Linear(hidden_channels, hidden_channels * num_heads)
+        
+        # Layer 2
+        self.conv2 = GATv2Conv(
+            hidden_channels * num_heads,
+            hidden_channels,
+            heads=num_heads,
+            edge_dim=1,
+            concat=True
+        )
+        self.norm2 = LayerNorm(hidden_channels * num_heads)
+        self.dropout2 = Dropout(dropout)
+        self.skip2 = Linear(hidden_channels * num_heads, hidden_channels * num_heads)
+        
+        # Layer 3 (NEW: increased depth)
+        self.conv3 = GATv2Conv(
+            hidden_channels * num_heads,
+            hidden_channels,
+            heads=num_heads,
+            edge_dim=1,
+            concat=False  # Final layer averages heads
+        )
+        self.norm3 = LayerNorm(hidden_channels)
+        self.dropout3 = Dropout(dropout)
+        self.skip3 = Linear(hidden_channels * num_heads, hidden_channels)
+
+        # 4. Multi-Scale Pooling
+        # Combines mean (global brain state), max (pathological hub), and sum (total activation)
+        pooling_dim = hidden_channels * 3  # mean + max + sum
+        
+        # 5. Final Classification Head
+        self.classifier = Sequential(
+            Linear(pooling_dim, hidden_channels * 2),
+            LayerNorm(hidden_channels * 2),
+            ReLU(),
+            Dropout(dropout),
+            Linear(hidden_channels * 2, hidden_channels),
+            LayerNorm(hidden_channels),
+            ReLU(),
+            Dropout(dropout),
             Linear(hidden_channels, num_classes)
         )
         
-        # Initialize weights for medical stability
+        # Initialize weights
         self._init_weights()
 
     def _init_weights(self):
+        """Kaiming initialization for stable training."""
         for m in self.modules():
             if isinstance(m, Linear):
                 torch.nn.init.kaiming_normal_(m.weight)
-                torch.nn.init.zeros_(m.bias)
+                if m.bias is not None:
+                    torch.nn.init.zeros_(m.bias)
 
     def forward(self, x, edge_index, edge_attr, batch):
-        # A. Feature Projection
+        """
+        Forward pass with  architecture.
+        
+        Args:
+            x: Node features (num_nodes, 14)
+            edge_index: Edge connectivity (2, num_edges)
+            edge_attr: Edge weights (num_edges, 1)
+            batch: Batch assignment (num_nodes,)
+        
+        Returns:
+            Logits (batch_size, 2)
+        """
+        # A. Input Projection
         h = self.norm_in(F.relu(self.lin_in(x)))
         
-        # B. Causal Message Passing Layer 1
-        h_res = self.skip1(h)
-        h = F.elu(self.conv1(h, edge_index, edge_attr) + h_res)
+        # B. Transform Edge Weights (learnable importance)
+        edge_attr_transformed = self.edge_encoder(edge_attr)
         
-        # C. Causal Message Passing Layer 2
+        # C. Layer 1: Causal Message Passing + Skip + Norm + Dropout
+        h_res = self.skip1(h)
+        h = self.conv1(h, edge_index, edge_attr_transformed)
+        h = self.norm1(h + h_res)
+        h = F.elu(h)
+        h = self.dropout1(h)
+        
+        # D. Layer 2: Causal Message Passing + Skip + Norm + Dropout
         h_res = self.skip2(h)
-        h = F.elu(self.conv2(h, edge_index, edge_attr) + h_res)
+        h = self.conv2(h, edge_index, edge_attr_transformed)
+        h = self.norm2(h + h_res)
+        h = F.elu(h)
+        h = self.dropout2(h)
+        
+        # E. Layer 3: Causal Message Passing + Skip + Norm + Dropout
+        h_res = self.skip3(h)
+        h = self.conv3(h, edge_index, edge_attr_transformed)
+        h = self.norm3(h + h_res)
+        h = F.elu(h)
+        h = self.dropout3(h)
 
-        # D. Hub-Aware Pooling
-        # global_mean_pool: Captures the 'Global Brain State'
-        # global_max_pool: Captures the 'Pathological Lobe Hub'
-        g_mean = global_mean_pool(h, batch)
-        g_max = global_max_pool(h, batch)
-        g = torch.cat([g_mean, g_max], dim=1)
+        # F. Multi-Scale Hub-Aware Pooling
+        g_mean = global_mean_pool(h, batch)  # Global brain state
+        g_max = global_max_pool(h, batch)    # Pathological hub detection
+        g_sum = global_add_pool(h, batch)    # Total activation level
+        
+        g = torch.cat([g_mean, g_max, g_sum], dim=1)
 
-        # E. Final Logits
+        # G. Final Classification
         return self.classifier(g)
 
     def get_node_importance(self, x, edge_index, edge_attr, batch):
         """
-        Explainability Hook: Returns which lobe (0-4) drove the classification.
+        Explainability: Returns node importance via gradient-based saliency.
+        
+        Returns:
+            Tensor (num_nodes,): Importance score per node (lobe)
         """
         self.eval()
         x = x.clone().detach().requires_grad_(True)
+        
         out = self.forward(x, edge_index, edge_attr, batch)
-        # Backpropagate through the winning class
+        
+        # Backpropagate through predicted class
         score = out.max()
         score.backward()
-        # Saliency = Absolute value of gradients normalized across features
+        
+        # Saliency = absolute gradient magnitude
         return x.grad.abs().sum(dim=1)
+    
+    def get_edge_importance(self, x, edge_index, edge_attr, batch):
+        """
+        Explainability: Returns edge importance via gradient-based saliency.
+        
+        Returns:
+            Tensor (num_edges,): Importance score per edge
+        """
+        self.eval()
+        edge_attr_clone = edge_attr.clone().detach().requires_grad_(True)
+        
+        out = self.forward(x, edge_index, edge_attr_clone, batch)
+        
+        score = out.max()
+        score.backward()
+        
+        return edge_attr_clone.grad.abs().squeeze()
+
+
+if __name__ == "__main__":
+    """Test the  architecture."""
+    print("="*60)
+    print("TESTING  GNN ARCHITECTURE")
+    print("="*60)
+    
+    # Create dummy data
+    num_nodes = 5
+    num_edges = 8
+    batch_size = 4
+    
+    x = torch.randn(num_nodes * batch_size, 14)
+    edge_index = torch.randint(0, num_nodes * batch_size, (2, num_edges * batch_size))
+    edge_attr = torch.randn(num_edges * batch_size, 1)
+    batch = torch.repeat_interleave(torch.arange(batch_size), num_nodes)
+    
+    # Initialize model
+    model = CausalBrainGNN(
+        num_node_features=14,
+        hidden_channels=64,
+        num_classes=2,
+        dropout=0.5,
+        num_heads=2
+    )
+    
+    # Forward pass
+    out = model(x, edge_index, edge_attr, batch)
+    
+    print(f"✓ Input shape: {x.shape}")
+    print(f"✓ Output shape: {out.shape}")
+    print(f"✓ Expected: ({batch_size}, 2)")
+    
+    assert out.shape == (batch_size, 2), "Output shape mismatch!"
+    
+    # Test explainability
+    node_importance = model.get_node_importance(x, edge_index, edge_attr, batch)
+    edge_importance = model.get_edge_importance(x, edge_index, edge_attr, batch)
+    
+    print(f"✓ Node importance shape: {node_importance.shape}")
+    print(f"✓ Edge importance shape: {edge_importance.shape}")
+    
+    # Count parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    
+    print(f"\n✓ Total parameters: {total_params:,}")
+    print(f"✓ Trainable parameters: {trainable_params:,}")
+    
+    print("="*60)
+    print("✅ ALL TESTS PASSED")
+    print("="*60)

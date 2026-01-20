@@ -7,11 +7,12 @@ from pathlib import Path
 import sys
 
 # Setup paths and config
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     NUM_LOBES, LOBE_NAMES, DATA_ROOT,
     MASTER_MANIFEST, NODE_ATTRIBUTES_HARMONIZED, 
-    NODE_FEATURES_3D, CAUSAL_GRAPHS_DIR
+    NODE_FEATURES_3D, CAUSAL_GRAPHS_DIR,
+    NUM_TEMPORAL_FEATURES, NUM_SPATIAL_FEATURES, GNN_IN_CHANNELS
 )
 
 # Setup logging
@@ -22,30 +23,49 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class ABIDECausalDataset(Dataset):
-    """
-    Optimized Dataset Factory for 5-Lobe Macro-Anatomy Graphs.
-    Matches the output of the ROI Feature Extractor.
-    
-    CRITICAL FIX: Handles edge cases where sparsification creates graphs with zero edges.
-    """
-  
+
     def __init__(self, split='train', transform=None, pre_transform=None):
         super().__init__(None, transform, pre_transform)
         self.split = split
         self._load_data_sources()
         self._validate_subjects()
         
-        logger.info(f"Initialized {split} dataset with {len(self.manifest)} subjects (5-node architecture)")
+        # Validate feature counts match config
+        self._validate_feature_dimensions()
+        
+        logger.info(f"Initialized {split} dataset with {len(self.manifest)} subjects")
+        logger.info(f"  Node features: {GNN_IN_CHANNELS} ({NUM_TEMPORAL_FEATURES} temporal + {NUM_SPATIAL_FEATURES} spatial)")
+    
+    def _validate_feature_dimensions(self):
+        """Ensure loaded features match config expectations."""
+        if len(self.node_attr) > 0:
+            sample_sub = self.node_attr.index[0]
+            temporal = self._get_subject_temporal(sample_sub)
+            spatial = self._get_subject_spatial(sample_sub)
+            
+            if temporal is not None and temporal.shape != (NUM_LOBES, NUM_TEMPORAL_FEATURES):
+                raise ValueError(
+                    f"Temporal feature mismatch! Expected ({NUM_LOBES}, {NUM_TEMPORAL_FEATURES}), "
+                    f"got {temporal.shape}. Check compute_roi.py output."
+                )
+            
+            if spatial is not None and spatial.shape != (NUM_LOBES, NUM_SPATIAL_FEATURES):
+                raise ValueError(
+                    f"Spatial feature mismatch! Expected ({NUM_LOBES}, {NUM_SPATIAL_FEATURES}), "
+                    f"got {spatial.shape}. Check extract_features.py output."
+                )
+            
+            logger.info(f"✓ Feature dimensions validated")
     
     def _load_data_sources(self):
-        """Load the harmonized 5-lobe features and 3D coordinates."""
+        """Load the harmonized 5-lobe features and spatial coordinates."""
         # 1. Master manifest
         self.manifest_raw = pd.read_csv(MASTER_MANIFEST)
         
-        # 2. Harmonized temporal features (Already aggregated to 5 lobes by extractor)
+        # 2. Harmonized temporal features (aggregated to 5 lobes)
         self.node_attr = pd.read_csv(NODE_ATTRIBUTES_HARMONIZED).set_index('subject_id')
         
-        # 3. Spatial coordinates (x, y, z for 5 lobes)
+        # 3. Spatial coordinates and geometric features (6 per lobe)
         self.coords = pd.read_csv(NODE_FEATURES_3D).set_index('subject_id')
         
         # 4. Adjacency matrices directory
@@ -65,7 +85,6 @@ class ABIDECausalDataset(Dataset):
         for sub in available_subs:
             graph_path = self.adj_dir / f"{sub}_graph.pt"
             if graph_path.exists():
-                # NEW: Pre-validate graph has edges
                 try:
                     graph_data = torch.load(graph_path)
                     if 'adj' not in graph_data:
@@ -76,7 +95,7 @@ class ABIDECausalDataset(Dataset):
                     num_edges = (adj != 0).sum().item()
                     
                     if num_edges == 0:
-                        logger.warning(f"Subject {sub}: Graph has zero edges after sparsification - skipping")
+                        logger.warning(f"Subject {sub}: Graph has zero edges - skipping")
                         invalid_count += 1
                         continue
                     
@@ -99,11 +118,7 @@ class ABIDECausalDataset(Dataset):
         return len(self.manifest)
     
     def get(self, idx):
-        """
-        Construct PyTorch Geometric Data object with enhanced error handling.
-        
-        CRITICAL FIX: Validates edge_index is non-empty before creating Data object.
-        """
+
         sub_id = str(self.manifest.iloc[idx]['subject_id'])
         dx_group = self.manifest.iloc[idx]['DX_GROUP']
         label = 1 if dx_group == 1 else 0  # 1=ASD, 0=Control
@@ -114,62 +129,56 @@ class ABIDECausalDataset(Dataset):
             graph_dict = torch.load(graph_path)
             adj = graph_dict['adj']  # Should be (5, 5)
             
-            # CRITICAL FIX: Validate adjacency matrix
             if torch.isnan(adj).any() or torch.isinf(adj).any():
                 logger.error(f"Subject {sub_id}: Adjacency matrix contains NaN/Inf")
                 return None
 
-            # 2. Load 5-Lobe Temporal Features
+            # 2. Load 5-Lobe Temporal Features (FIXED: 8 per lobe)
             temporal_features = self._get_subject_temporal(sub_id)
             
-            # 3. Load 5-Lobe Spatial Features
+            # 3. Load 5-Lobe Spatial Features (FIXED: 6 per lobe)
             spatial_features = self._get_subject_spatial(sub_id)
             
             if temporal_features is None or spatial_features is None:
                 logger.error(f"Subject {sub_id}: Missing features")
                 return None
 
-            # 4. Combine (5, 6) and (5, 3) -> (5, 9)
+            # 4. Combine (5, 8) and (5, 6) -> (5, 14) ✓ FIXED
             x = torch.cat([
                 torch.tensor(temporal_features, dtype=torch.float32),
                 torch.tensor(spatial_features, dtype=torch.float32)
             ], dim=1)
             
-            # 5. Create Edge Index with CRITICAL VALIDATION
-            edge_index = adj.nonzero().t().contiguous()
-            
-            # ========== CRITICAL FIX START ==========
-            if edge_index.shape[1] == 0:
-                # This subject has ZERO edges after sparsification
-                # Log detailed info for debugging
-                adj_stats = {
-                    'max': float(adj.abs().max()),
-                    'min': float(adj.abs().min()),
-                    'mean': float(adj.abs().mean()),
-                    'non_zero_count': int((adj != 0).sum())
-                }
-                logger.warning(
-                    f"Subject {sub_id}: Zero edges detected | "
-                    f"Adj stats: max={adj_stats['max']:.4f}, "
-                    f"mean={adj_stats['mean']:.4f}, "
-                    f"non_zero={adj_stats['non_zero_count']}"
+            # Validate final shape
+            if x.shape != (NUM_LOBES, GNN_IN_CHANNELS):
+                logger.error(
+                    f"Subject {sub_id}: Feature shape mismatch! "
+                    f"Expected ({NUM_LOBES}, {GNN_IN_CHANNELS}), got {x.shape}"
                 )
                 return None
-            # ========== CRITICAL FIX END ==========
+            
+            # 5. Create Edge Index with validation
+            edge_index = adj.nonzero().t().contiguous()
+            
+            if edge_index.shape[1] == 0:
+                logger.warning(f"Subject {sub_id}: Zero edges detected")
+                return None
             
             edge_attr = adj[edge_index[0], edge_index[1]].unsqueeze(1).to(torch.float32)
             
-            # 6. Validate edge attributes
             if torch.isnan(edge_attr).any() or torch.isinf(edge_attr).any():
                 logger.error(f"Subject {sub_id}: Edge attributes contain NaN/Inf")
                 return None
+            
+            # 6. Build position tensor (first 3 spatial features: x, y, z)
+            pos = torch.tensor(spatial_features[:, :3], dtype=torch.float32)
             
             return Data(
                 x=x,
                 edge_index=edge_index,
                 edge_attr=edge_attr,
                 y=torch.tensor([label], dtype=torch.long),
-                pos=torch.tensor(spatial_features, dtype=torch.float32),
+                pos=pos,
                 sub_id=sub_id
             )
             
@@ -181,19 +190,23 @@ class ABIDECausalDataset(Dataset):
 
     def _get_subject_temporal(self, sub_id):
         """
-        Extracts the 30 temporal features and reshapes to (5, 6).
-        
+        Extracts temporal features and reshapes to (5, 8).        
         Returns None if subject not found or features are invalid.
         """
         try:
             row = self.node_attr.loc[sub_id].values
-            # Ensure we only have the feature columns (no metadata)
-            # 5 lobes * 6 stats = 30 values
-            if len(row) < 30:
-                logger.warning(f"Subject {sub_id}: Insufficient temporal features ({len(row)} < 30)")
+            
+            # Expected: 5 lobes * 8 features = 40 values
+            expected_features = NUM_LOBES * NUM_TEMPORAL_FEATURES
+            
+            if len(row) < expected_features:
+                logger.warning(
+                    f"Subject {sub_id}: Insufficient temporal features "
+                    f"({len(row)} < {expected_features})"
+                )
                 return None
             
-            features = row[:30].reshape(5, 6)
+            features = row[:expected_features].reshape(NUM_LOBES, NUM_TEMPORAL_FEATURES)
             
             # Validate no NaNs
             if np.isnan(features).any():
@@ -211,30 +224,60 @@ class ABIDECausalDataset(Dataset):
 
     def _get_subject_spatial(self, sub_id):
         """
-        Extracts x, y, z for the 5 lobes and reshapes to (5, 3).
+        Extracts spatial features for 5 lobes and reshapes to (5, 6).
         
-        Returns None if subject not found or coordinates are invalid.
+        FIXED: Now extracts all 6 spatial features per lobe:
+        1. x (centroid x-coordinate)
+        2. y (centroid y-coordinate)
+        3. z_depth (centroid z-coordinate)
+        4. size (bounding box area)
+        5. conf_std (detection confidence consistency)
+        6. detection_count (number of slices with detection)
+        
+        Returns None if subject not found or features are invalid.
         """
         try:
-            pos_data = []
-            for lobe_id in range(5):
+            spatial_data = []
+            
+            for lobe_id in range(NUM_LOBES):
                 lobe_name = LOBE_NAMES[lobe_id]
+                
                 try:
+                    # Extract all 6 spatial features
                     x = self.coords.loc[sub_id, f"{lobe_name}_x"]
                     y = self.coords.loc[sub_id, f"{lobe_name}_y"]
                     z = self.coords.loc[sub_id, f"{lobe_name}_z_depth"]
+                    size = self.coords.loc[sub_id, f"{lobe_name}_size"]
+                    conf_std = self.coords.loc[sub_id, f"{lobe_name}_conf_std"]
+                    detection_count = self.coords.loc[sub_id, f"{lobe_name}_detection_count"]
                     
-                    # Validate coordinates are finite
-                    if not all(np.isfinite([x, y, z])):
-                        logger.warning(f"Subject {sub_id}: Invalid coordinates for {lobe_name}")
+                    # Validate all features are finite
+                    features = [x, y, z, size, conf_std, detection_count]
+                    if not all(np.isfinite(features)):
+                        logger.warning(
+                            f"Subject {sub_id}: Invalid spatial features for {lobe_name}"
+                        )
                         return None
                     
-                    pos_data.append([x, y, z])
-                except KeyError:
-                    logger.warning(f"Subject {sub_id}: Missing coordinates for {lobe_name}")
+                    spatial_data.append(features)
+                    
+                except KeyError as e:
+                    logger.warning(
+                        f"Subject {sub_id}: Missing spatial feature for {lobe_name}: {e}"
+                    )
                     return None
             
-            return np.array(pos_data)
+            spatial_array = np.array(spatial_data)
+            
+            # Validate final shape
+            if spatial_array.shape != (NUM_LOBES, NUM_SPATIAL_FEATURES):
+                logger.error(
+                    f"Subject {sub_id}: Spatial features shape mismatch! "
+                    f"Expected ({NUM_LOBES}, {NUM_SPATIAL_FEATURES}), got {spatial_array.shape}"
+                )
+                return None
+            
+            return spatial_array
             
         except Exception as e:
             logger.error(f"Subject {sub_id}: Error loading spatial features: {e}")
@@ -242,9 +285,9 @@ class ABIDECausalDataset(Dataset):
 
 
 if __name__ == "__main__":
-    # Test logic with detailed validation
+    # Test with comprehensive validation
     logger.info("="*60)
-    logger.info("TESTING GRAPH FACTORY WITH EMPTY EDGE FIX")
+    logger.info("TESTING FIXED GRAPH FACTORY")
     logger.info("="*60)
     
     train_set = ABIDECausalDataset(split='train')
@@ -267,15 +310,18 @@ if __name__ == "__main__":
             valid_count += 1
             
             # Validate shapes
-            assert sample.x.shape == (5, 9), f"Wrong node features shape: {sample.x.shape}"
-            assert sample.edge_index.shape[0] == 2, f"Wrong edge_index shape: {sample.edge_index.shape}"
+            assert sample.x.shape == (NUM_LOBES, GNN_IN_CHANNELS), \
+                f"Wrong node features shape: {sample.x.shape}"
+            assert sample.edge_index.shape[0] == 2, \
+                f"Wrong edge_index shape: {sample.edge_index.shape}"
             assert sample.edge_index.shape[1] > 0, "Empty edge_index!"
-            assert sample.edge_attr.shape[0] == sample.edge_index.shape[1], "Edge attr mismatch"
+            assert sample.edge_attr.shape[0] == sample.edge_index.shape[1], \
+                "Edge attr mismatch"
             assert sample.y.shape == (1,), f"Wrong label shape: {sample.y.shape}"
         
         logger.info(f"✓ Validated {valid_count} graphs successfully")
         if null_count > 0:
-            logger.warning(f"⚠️  {null_count} graphs returned None (expected for graphs with zero edges)")
+            logger.warning(f"⚠️  {null_count} graphs returned None")
         
         # Print sample statistics
         sample = train_set[0]

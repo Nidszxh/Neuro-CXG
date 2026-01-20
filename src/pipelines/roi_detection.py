@@ -1,23 +1,28 @@
 from ultralytics import YOLO
 import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from src.core.config import RESULTS_DIR, CONFIG_BRAIN_YAML
 
 def main():
     # 1. Load YOLO11s 
     # Small is the correct choice for capturing the boundaries of the 5 lobe groups.
     model = YOLO("yolo11s.pt") 
 
-    os.makedirs("./results", exist_ok=True)
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     print("🚀 Initiating Anatomically-Preserving ROI Training...")
 
     # 3. Corrected Training Parameters
     results = model.train(
-        data="./configs/brain.yaml",      
+        data=str(CONFIG_BRAIN_YAML),      
         epochs=100,             
         imgsz=640,              
         batch=24,                   # RTX 4060 8GB can handle batch 24 at 640px (note:b24 5.94 GB mem_use, b32 dies ie OOM)
         device=0,               
-        project="./results",    
+        project=str(RESULTS_DIR),    
         name="ROI_Detection_v20", 
         seed=42,                
         deterministic=True,     

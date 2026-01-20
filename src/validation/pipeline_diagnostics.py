@@ -13,7 +13,7 @@ import pandas as pd
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     ATLAS_PATH, PHENO_PATH, MASTER_MANIFEST,
     NODE_ATTRIBUTES_TEMPORAL, NODE_FEATURES_3D,

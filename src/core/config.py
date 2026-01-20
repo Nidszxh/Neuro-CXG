@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT       = PROJECT_ROOT / "data"
 DATA_PROCESSED  = DATA_ROOT / "processed"
 DATA_FINAL      = DATA_ROOT / "final"
-DATA_ATLASES    = DATA_ROOT / "atlases"
+DATA_ATLASES    = DATA_ROOT / "raw" / "atlases"
 DATA_METADATA   = DATA_ROOT / "metadata"
 
 MODEL_ROOT      = PROJECT_ROOT / "models"
@@ -26,6 +26,7 @@ RESULTS_DIR     = PROJECT_ROOT / "results"
 CONFIG_DIR      = PROJECT_ROOT / "configs"
 
 # --- FILE PATHS ---
+CONFIG_BRAIN_YAML = CONFIG_DIR / "brain.yaml"
 ATLAS_PATH      = DATA_ATLASES / "AAL3v1.nii"
 ATLAS_METADATA  = DATA_METADATA / "atlas_metadata.json"
 PHENO_PATH      = DATA_PROCESSED / "Phenotypic_V1_0b_preprocessed1.csv"

@@ -295,7 +295,7 @@ def generate_atlas_metadata(atlas_path: Path, output_path: Path):
 if __name__ == "__main__":
     import sys
     # Add project root to path for module imports
-    project_root = Path(__file__).resolve().parents[1]
+    project_root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(project_root))
 
     try:
