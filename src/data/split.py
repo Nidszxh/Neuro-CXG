@@ -2,7 +2,7 @@ import os, shutil, random, pandas as pd, logging, sys
 from pathlib import Path
 
 # Setup paths from config
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import DATA_ROOT, DATA_PROCESSED, DATA_FINAL
 
 # Setup logging
@@ -23,10 +23,21 @@ PHENO_PATH = DATA_PROCESSED / "Phenotypic_V1_0b_preprocessed1.csv"
 def run_stratified_split():
     # 1. Load labels to ensure stratification (Phase 2.2)
     df = pd.read_csv(PHENO_PATH)
+    # Strip whitespace from FILE_ID to prevent match failures
+    df['FILE_ID'] = df['FILE_ID'].astype(str).str.strip()
     # Only include subjects we actually have files for
     all_images = [f for f in os.listdir(SOURCE_IMG) if f.endswith('.png')]
     valid_ids = set([f.rsplit('_z', 1)[0] for f in all_images])
     df = df[df['FILE_ID'].isin(valid_ids)]
+    
+    # Remove singleton groups that would break stratification
+    # Group subjects to find groups with too few samples
+    group_counts = df.groupby(['DX_GROUP', 'SITE_ID']).size()
+    # Keep only groups that have at least 3 members (one for Train, Val, and Test)
+    valid_groups = group_counts[group_counts >= 3].index
+    df = df.set_index(['DX_GROUP', 'SITE_ID']).loc[valid_groups].reset_index()
+    
+    logger.info(f"Filtered to {len(df)} subjects with valid stratification groups")
 
     # 2. Group by Site and Diagnosis for stratification
     # This ensures a 'site-balanced' split, which is a Q1 Journal requirement

@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PNG_OUTPUT   = PROJECT_ROOT / "data" / "images"
 TS_OUTPUT    = PROJECT_ROOT / "data" / "processed"
 META_DIR     = PROJECT_ROOT / "data" / "metadata"
-ATLAS_PATH   = PROJECT_ROOT / "data" / "atlases" / "AAL3v1.nii"
+ATLAS_PATH   = PROJECT_ROOT / "data" / "raw" / "atlases" / "AAL3v1.nii"
 PHENO_PATH   = PROJECT_ROOT / "data" / "processed" / "Phenotypic_V1_0b_preprocessed1.csv"
 
 # --- HELPER: ATLAS PREP ---
@@ -50,6 +50,11 @@ def save_atlas_metadata():
 
 # --- THE CORE PROCESS ---
 def process_subject(sub_id, tr_val):
+    # 1. Skip if files already exist (Idempotency)
+    final_ts_path = TS_OUTPUT / f"{sub_id}_ts.npy"
+    if final_ts_path.exists():
+        return sub_id, "Skipped", None
+
     s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -57,7 +62,7 @@ def process_subject(sub_id, tr_val):
             f_p = tmp_path / f"{sub_id}_func.nii.gz"
             a_p = tmp_path / f"{sub_id}_alff.nii.gz"
             
-            # Download
+            # Download only if necessary
             s3.download_file("fcp-indi", f"data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/func_preproc/{sub_id}_func_preproc.nii.gz", str(f_p))
             s3.download_file("fcp-indi", f"data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/alff/{sub_id}_alff.nii.gz", str(a_p))
 
@@ -69,7 +74,7 @@ def process_subject(sub_id, tr_val):
             # This ensures the masks align with the processed brain
             resampled_atlas = resample_to_img(str(ATLAS_PATH), func_img, interpolation='nearest')
 
-            # 3. Time Series Extraction
+            # 3. Time Series Extraction with finite check
             masker = NiftiLabelsMasker(
                 labels_img=resampled_atlas, 
                 t_r=float(tr_val), 
@@ -77,11 +82,26 @@ def process_subject(sub_id, tr_val):
                 detrend=True,
                 low_pass=0.08, 
                 high_pass=0.01,
-                memory_level=0 # Saves RAM by not caching to disk
+                ensure_finite=True,  # Safety for NaN values
+                memory_level=0  # Saves RAM by not caching to disk
             )
             
             ts = masker.fit_transform(func_img)
-            np.save(TS_OUTPUT / f"{sub_id}_ts.npy", ts.astype(np.float32))
+            
+            # Validate ROI count (AAL3 has 170 labels)
+            # Critical: catch atlas resampling issues that drop ROIs
+            EXPECTED_ROIS = 170
+            if ts.shape[1] != EXPECTED_ROIS:
+                raise ValueError(
+                    f"ROI count mismatch: extracted {ts.shape[1]} ROIs, expected {EXPECTED_ROIS}. "
+                    f"Atlas resampling may have failed for subject {sub_id}"
+                )
+            
+            # Additional validation: ensure no NaN/Inf after masker processing
+            if not np.isfinite(ts).all():
+                raise ValueError(f"Non-finite values detected in time series for {sub_id}")
+            
+            np.save(final_ts_path, ts.astype(np.float32))
 
             # 4. ALFF Slice Export (YOLO)
             alff_img = nib.as_closest_canonical(nib.load(str(a_p)))
@@ -93,10 +113,12 @@ def process_subject(sub_id, tr_val):
                 
                 # Robust Normalization
                 p2, p98 = np.percentile(slice_arr, [2, 98])
-                norm = np.clip((slice_arr - p2) / (p98 - p2 + 1e-8), 0, 1)
+                denom = p98 - p2
+                norm = np.clip((slice_arr - p2) / (denom if denom > 0 else 1e-8), 0, 1)
                 
                 img = Image.fromarray((norm * 255).astype(np.uint8))
-                img.resize((640, 640)).save(PNG_OUTPUT / f"{sub_id}_z{z}.png")
+                # Using Lanczos for better downsampling quality if reducing size
+                img.resize((640, 640), resample=Image.LANCZOS).save(PNG_OUTPUT / f"{sub_id}_z{z}.png")
             
             return sub_id, "Success", None
             
@@ -114,7 +136,15 @@ if __name__ == "__main__":
     
     # Load Phenotypic data
     df = pd.read_csv(PHENO_PATH)
-    df['TR'] = pd.to_numeric(df['TR'], errors='coerce').fillna(2.0)
+    # Strip whitespace from FILE_ID to prevent match failures
+    df['FILE_ID'] = df['FILE_ID'].astype(str).str.strip()
+    
+    # Handle TR column (may not exist in all phenotype versions)
+    if 'TR' not in df.columns:
+        print("⚠️  Warning: 'TR' column not found in phenotype CSV. Using default TR=2.0s for all subjects.")
+        df['TR'] = 2.0
+    else:
+        df['TR'] = pd.to_numeric(df['TR'], errors='coerce').fillna(2.0)
     
     # Filter valid subjects
     subjects_df = df[df["FILE_ID"] != "no_filename"].dropna(subset=["FILE_ID"])

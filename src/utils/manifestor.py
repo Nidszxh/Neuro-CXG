@@ -3,7 +3,7 @@ import pandas as pd
 from pathlib import Path
 
 # Setup paths from config
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import DATA_PROCESSED, DATA_FINAL, DATA_METADATA, MASTER_MANIFEST
 
 # Setup logging
@@ -23,7 +23,9 @@ def create_manifest():
         
     # 1. Load and clean phenotypic data (Phase 2.1)
     df = pd.read_csv(PHENO_PATH)
-    df.columns = df.columns.str.strip() 
+    df.columns = df.columns.str.strip()
+    # Strip whitespace from FILE_ID to prevent match failures
+    df['FILE_ID'] = df['FILE_ID'].astype(str).str.strip() 
     
     # 2. Map processed files to their specific splits (Phase 2.2)
     manifest_data = []

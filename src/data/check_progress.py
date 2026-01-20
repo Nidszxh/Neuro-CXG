@@ -3,7 +3,7 @@ import pandas as pd
 from pathlib import Path
 
 # Setup paths from config
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import DATA_PROCESSED, DATA_ROOT
 
 # Setup logging
@@ -24,8 +24,8 @@ def check_health():
     
     # Load and clean metadata to ensure FILE_ID matches the filenames
     df = pd.read_csv(PHENO_PATH)
-    # Ensure FILE_ID is treated as a string for matching
-    df['FILE_ID'] = df['FILE_ID'].astype(str)
+    # Ensure FILE_ID is treated as a string for matching and strip whitespace
+    df['FILE_ID'] = df['FILE_ID'].astype(str).str.strip()
     
     # 2. Get list of subjects currently downloaded
     if not PNG_OUTPUT.exists():

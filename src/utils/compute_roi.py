@@ -11,7 +11,7 @@ from scipy.stats import skew, kurtosis
 from tqdm import tqdm
 
 # Setup paths and config
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     DATA_FINAL,
     MASTER_MANIFEST,
@@ -20,6 +20,9 @@ from src.core.config import (
     NUM_TEMPORAL_FEATURES,
     NUM_LOBES
 )
+
+# Expected ROI count for validation (AAL3 atlas)
+EXPECTED_ROIS = 170
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -102,6 +105,11 @@ def main():
                 continue
             
             num_rois = ts_data.shape[1]
+            
+            # Validate ROI count matches expected atlas
+            if num_rois != EXPECTED_ROIS:
+                logger.warning(f"{sub_id}: ROI count mismatch (found {num_rois}, expected {EXPECTED_ROIS})")
+                # Continue processing but log the mismatch
             
             subject_features = [sub_id]
             
