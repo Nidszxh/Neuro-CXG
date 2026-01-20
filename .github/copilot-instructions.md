@@ -10,9 +10,11 @@
 
 ## Quick Start for Agents
 **Most common tasks:**
-- **Run full pipeline**: `python src/run_pipeline.py --run-diagnostics --run-safe-harmonize` (orchestrates all stages)
+- **Run full pipeline**: `python src/run_pipeline.py --run-diagnostics --run-safe-harmonize` (orchestrates all 15 stages)
+- **Run with comprehensive validation**: `python src/run_pipeline.py --run-diagnostics --run-safe-harmonize` (includes YOLO quality, sparsity, feature checks)
+- **Just validation checks**: `python src/run_pipeline.py --run-comprehensive-validation --dry-run` (preview validation stages)
 - **Validate environment**: `python -c "from src.core.config import validate_environment; validate_environment()"` (pre-flight check)
-- **Debug data issues**: Use [src/pipeline_diagnostics.py] — comprehensive health check for all pipeline stages
+- **Debug data issues**: Use [src/validation/integrity.py] — comprehensive post-download + pre-GNN checks
 - **Find config values**: ALL constants live in [src/config.py]—never hardcode paths or parameters
 - **Add new code**: Follow imports from config pattern (see extract_features.py, gnn_model.py for correct examples)
 
@@ -218,18 +220,22 @@ python src/run_pipeline.py --run-diagnostics --run-download --run-manifest --run
 # If missing, skip --run-download and use pre-processed data
 ```
 
-**Pipeline execution order:**
-1. Optional: Pipeline diagnostics (health check)
-2. Environment validation (paths, CUDA, lobe mapping)
-3. Optional: ABIDE download + preprocessing
-4. Stratified split (or skip if already split)
-5. Manifest generation
-6. YOLO ROI detection (or skip if weights exist)
-7. ROI feature extraction (1033 subjects with 5 lobes)
-8. Temporal feature extraction (164 ROIs, ~1min for 1035 subjects)
-9. Safe harmonization (neuroCombat with NaN/Inf handling)
-10. Causal graph construction (lagged correlation)
-11. GNN training (5-fold stratified CV)
+**Pipeline execution order (15 stages):**
+1. Optional: ABIDE download + preprocessing (requires phenotype CSV with 'TR' column)
+2. Stratified split (2D: DX_GROUP + SITE_ID) (or skip if already split)
+3. Master manifest generation (maps subjects to phenotypes)
+4. Atlas validation (verifies atlas files exist and are valid)
+5. Diagnostics (overall pipeline health check)
+6. **Comprehensive Validation & Tuning** ✨ NEW (YOLO quality, graph sparsity, feature preprocessing, stratification)
+7. Post-download integrity check (PNG/NPY validation)
+8. Atlas-based label annotation (generates YOLO training labels)
+9. YOLO ROI detection training (learns to detect 5 lobes)
+10. Spatial feature extraction (detects lobes, aggregates 3D coordinates)
+11. Temporal feature extraction (6 stats per ROI from time series)
+12. Feature harmonization (neuroCombat batch effect removal)
+13. Pre-GNN integrity check (validates dataset completeness per split)
+14. Causal graph construction (lagged correlation, sparsification)
+15. GNN training (5-fold stratified cross-validation)
 
 ### Running the Full Pipeline
 ```bash
@@ -403,20 +409,27 @@ python src/safe_harmonization.py
 | File | Purpose |
 |------|---------|
 | [src/config.py] | ALL constants, paths, hyperparameters; validation functions |
-| [src/pipeline_diagnostics.py] | Comprehensive health check for all pipeline stages |
-| [src/safe_harmonization.py] | Robust feature harmonization with NaN/Inf handling |
+| [src/run_pipeline.py] | Unified entry point (orchestrates all 15 stages with comprehensive validation) |
+| **Validation & Diagnostics** | |
+| [src/validation/integrity.py] | Combined post-download + pre-GNN data integrity checks (PNG/NPY validation, slice distribution) |
+| [src/validation/atlas_validator.py] | Atlas file validation (checks existence, structure, ROI range) |
+| [src/validation/pipeline_diagnostics.py] | Comprehensive health check for all pipeline stages |
+| [src/validation/validator.py] | Comprehensive validation suite (YOLO quality, graph sparsity, feature preprocessing) |
+| **Data Pipeline** | |
 | [src/data/extract_features.py] | YOLO inference → 3D spatial aggregation; all-5-lobes filter |
-| [src/data/harmonize.py] | neuroCombat batch effect removal; protects DX_GROUP |
-| [src/data/split.py] | 2D stratified split (by DX_GROUP + SITE_ID) |
 | [src/data/construct_causal.py] | AAL→Lobe aggregation; lagged correlation; graph creation |
 | [src/data/graph_factory.py] | PyTorch Geometric dataset loader |
+| [src/data/split.py] | 2D stratified split (by DX_GROUP + SITE_ID) |
+| [src/data/harmonize.py] | neuroCombat batch effect removal; protects DX_GROUP |
+| **Harmonization & Features** | |
+| [src/safe_harmonization.py] | Robust feature harmonization with NaN/Inf handling |
+| [src/utils/compute_roi.py] | Temporal feature extraction from time series |
+| [src/utils/manifest.py] | Master manifest generation |
+| **Models** | |
 | [src/models/causal_gnn.py] | GATv2 architecture with skip connections |
 | [src/models/gnn_model.py] | k-fold training loop; metrics computation |
 | [src/pipelines/roi_detection.py] | YOLO training entry point |
 | [src/test.py] | Configuration & data integrity tests |
-| [src/utils/compute_roi.py] | Temporal feature extraction from time series |
-| [src/utils/manifest.py] | Master manifest generation |
-| [src/run_pipeline.py] | Unified entry point (orchestrates all stages) |
 
 ## Integration Points & Critical Dependencies
 
@@ -447,6 +460,64 @@ In [src/data/harmonize.py] and [src/safe_harmonization.py], `DX_GROUP` (diagnosi
 
 ## Recent Fixes & Important Changes (January 2026)
 
+### Data Robustness Improvements (January 20, 2026) ✨ NEW
+- **[src/data/abide_download.py]** - Enhanced extraction robustness:
+  - Added idempotency check: skips processing if `_ts.npy` already exists (prevents redundant re-downloads)
+  - Added `ensure_finite=True` to NiftiLabelsMasker for NaN safety
+  - Added ROI count validation: fails immediately if extracted time series ≠ 170 ROIs (catches atlas resampling issues)
+  - Added non-finite value check after masker processing (redundant safety)
+  - Improved normalization: uses conditional denominator check instead of epsilon addition (prevents division artifacts)
+  - Better image quality: uses `Image.LANCZOS` resampling for sharper brain slice downsampling
+  - Added `.str.strip()` on FILE_ID to prevent whitespace match failures
+
+- **[src/data/split.py]** - Enhanced stratification:
+  - Added `.str.strip()` on FILE_ID for consistent matching with image filenames
+  - Added singleton group filtering: removes groups with <3 subjects (prevents stratification ValueError)
+  - Logs filtered subject count for transparency
+
+- **[src/data/check_progress.py]** - Fixed metadata matching:
+  - Added `.str.strip()` on FILE_ID to remove hidden leading/trailing whitespace
+
+- **[src/validation/integrity.py]** - Added ROI validation:
+  - Added `EXPECTED_ROIS = 170` constant for AAL3 atlas
+  - Validates time series files have correct ROI count (catches atlas mismatches early)
+
+- **[src/utils/manifestor.py]** - Fixed metadata matching:
+  - Added `.str.strip()` on FILE_ID to prevent merge failures due to whitespace
+
+- **[src/utils/compute_roi.py]** - Added ROI validation:
+  - Added `EXPECTED_ROIS = 170` constant
+  - Warns if time series doesn't have 170 ROIs (catches atlas mismatches during feature extraction)
+
+**Impact**: These changes make the pipeline more robust by catching errors at extraction time (not during GNN training), handling interrupted runs gracefully, and preventing silent failures from whitespace/stratification issues.
+
+### Pipeline Integration & Consolidation (January 20, 2026)
+- **[src/run_pipeline.py]** - Integrated validator.py as optional pipeline stage:
+  - Added `--run-comprehensive-validation` flag for quality checks (YOLO quality, graph sparsity, feature preprocessing, stratification)
+  - Added "comprehensive_validation" stage (position 6, after diagnostics)
+  - Fixed atlas_validation condition: now validates unless explicitly skipped with `--skip-atlas-validation`
+  - Updated execution order to include all 15 stages in proper sequence
+  - All references now use `src.validation.integrity` for both post-download and pre-GNN checks
+
+- **[src/validation/integrity.py]** - NEW: Combined integrity check module ✨
+  - **Replaces**: integrity_check.py + integrity_check2.py (consolidated into single module)
+  - **Functions**:
+    - `check_dataset_integrity()` - Post-download: validates PNG files, NPY files, checks for incomplete subjects
+    - `check_distribution()` - Pre-GNN: checks slice distribution across train/val/test, verifies image/label pairing
+  - **Usage**: `python src/validation/integrity.py` or `--dataset` or `--distribution` flags
+  - **Integration**: Called from run_pipeline.py stages "post_download_integrity" and "pre_gnn_integrity"
+  - **Benefits**: Single source of truth, reduced code duplication, centralized validation logic
+
+- **Validation Folder Now Organized** (January 20, 2026):
+  ```
+  src/validation/
+  ├── atlas_validator.py       (atlas file structure & ROI validation)
+  ├── integrity.py             (NEW: combined post-download + pre-GNN checks)
+  ├── pipeline_diagnostics.py  (overall pipeline health check)
+  └── validator.py             (comprehensive validation suite)
+  ```
+  - Deleted: integrity_check.py, integrity_check2.py
+
 ### Module Import Path Fix (January 16, 2026)
 - **[src/pipeline_diagnostics.py]** - Fixed subprocess import issue: changed `sys.path.append(parents[1])` to `sys.path.insert(0, str(Path(__file__).resolve().parent))` and removed non-existent `validate_lobe_mapping` function import, replacing with inline validation. Now runs correctly via `python -m src.pipeline_diagnostics`.
 - **Why it matters**: When `run_pipeline.py` calls modules as subprocesses (to avoid argparse conflicts), they execute in isolated environments. The correct path setup is: modules in `src/` should add their own directory to sys.path FIRST (parent dir), not the project root.
@@ -463,8 +534,10 @@ In [src/data/harmonize.py] and [src/safe_harmonization.py], `DX_GROUP` (diagnosi
 - **[src/run_pipeline.py]** - Major refactor:
   - Added `--run-diagnostics` flag for comprehensive pre-flight checks
   - Added `--run-safe-harmonize` flag to use robust NaN/Inf handling
+  - Added `--run-comprehensive-validation` flag (January 20, 2026)
   - Changed `compute_roi` invocation from direct import to subprocess call (avoids argparse conflicts with sys.argv)
   - Integrated all new diagnostic and harmonization tools
+  - Fixed atlas validation logic
 
 ### Atlas Support
 - **AAL3v1 (166 ROIs)** is now fully supported alongside AAL116/117/170 variants

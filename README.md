@@ -184,10 +184,13 @@ Neuro-CXG/
 │   └── atlases/                   # AAL3 reference atlas
 ├── src/
 │   ├── config.py                  # Central configuration (SINGLE SOURCE OF TRUTH)
-│   ├── run_pipeline.py            # Unified pipeline orchestrator
-│   ├── pipeline_diagnostics.py    # Comprehensive health check
+│   ├── run_pipeline.py            # Unified pipeline orchestrator (15 stages)
 │   ├── safe_harmonization.py      # Robust harmonization with NaN handling
-│   ├── atlas_validator.py         # AAL atlas validation tool
+│   ├── validation/                # ✨ Validation modules (consolidated Jan 20)
+│   │   ├── atlas_validator.py     # AAL atlas validation tool
+│   │   ├── integrity.py           # ✨ NEW: Combined post-download + pre-GNN checks
+│   │   ├── pipeline_diagnostics.py # Comprehensive health check
+│   │   └── validator.py           # ✨ Comprehensive validation suite (YOLO, sparsity)
 │   ├── data/                      # Data processing modules
 │   │   ├── extract_features.py    # YOLO inference → spatial features
 │   │   ├── harmonize.py           # neuroCombat batch effect removal
@@ -203,15 +206,15 @@ Neuro-CXG/
 │   └── utils/                     # Utility functions
 │       ├── manifest.py            # Manifest generation
 │       ├── compute_roi.py         # Temporal feature extraction
-│       ├── integrity_check.py     # Data integrity validation
 │       └── annotate.py            # Atlas-based label annotation
 ├── notebooks/
 │   └── eda1.ipynb                 # Exploratory data analysis
 ├── results/                       # YOLO training outputs
 ├── models/checkpoints/            # Best GNN models per fold
 ├── requirements.txt               # Pinned package versions
-├── ROADMAP.md                     # Development phases
-├── TODO.md                        # 2-day refactoring sprint
+├── ROADMAP.md                     # Development phases & status (updated Jan 20)
+├── PIPELINE_DATAFLOW.md           # ✨ Updated: Pipeline visualization with 15 stages
+├── TODO.md                        # Project tracking
 └── README.md                      # This file
 ```
 
