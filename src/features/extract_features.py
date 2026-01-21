@@ -13,7 +13,7 @@ from src.core.config import (
     DATA_FINAL,
     MASTER_MANIFEST,
     LOBE_NAMES,
-    RESULTS_DIR,
+    YOLO_WEIGHTS_PATH,
     NODE_FEATURES_3D,
     NUM_LOBES,
     NUM_SPATIAL_FEATURES
@@ -27,7 +27,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
-MODEL_PATH    = RESULTS_DIR / "ROI_Detection_v222" / "weights" / "best.pt"
+MODEL_PATH    = YOLO_WEIGHTS_PATH
 SPLIT_ROOT    = DATA_FINAL
 MANIFEST_PATH = MASTER_MANIFEST
 OUTPUT_PATH   = NODE_FEATURES_3D

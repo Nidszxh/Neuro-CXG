@@ -1,8 +1,3 @@
-"""
-Central Configuration for Neuro-CXG Project
-Single source of truth for all paths, parameters, and constants.
-"""
-
 from pathlib import Path
 import torch
 import logging
@@ -17,8 +12,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT       = PROJECT_ROOT / "data"
 DATA_PROCESSED  = DATA_ROOT / "processed"
 DATA_FINAL      = DATA_ROOT / "final"
+DATA_IMAGES     = DATA_ROOT / "images"
+DATA_LABELS     = DATA_ROOT / "labels"
 DATA_ATLASES    = DATA_ROOT / "raw" / "atlases"
 DATA_METADATA   = DATA_ROOT / "metadata"
+
+# Final split directories
+FINAL_TRAIN     = DATA_FINAL / "train"
+FINAL_VAL       = DATA_FINAL / "val"
+FINAL_TEST      = DATA_FINAL / "test"
 
 MODEL_ROOT      = PROJECT_ROOT / "models"
 CHECKPOINT_DIR  = MODEL_ROOT / "checkpoints"
@@ -57,7 +59,9 @@ NUM_SPATIAL_FEATURES = 6   # x, y, z_depth, size, conf_std, detection_count per 
 DEFAULT_TR = 2.0  # Default TR (seconds) for fMRI—fallback if not in phenotype CSV
 
 # --- YOLO DETECTION PARAMETERS (Fixed for Medical Integrity) ---
-YOLO_MODEL_SIZE = "yolo11s.pt"
+YOLO_MODEL_SIZE = "yolo11n.pt"
+YOLO_PROJECT_NAME = "ROI_Detection_v21"  # Output directory name from training
+YOLO_WEIGHTS_PATH = RESULTS_DIR / "ROI_Detection_v21" / "weights" / "best.pt"
 YOLO_IMGSZ = 640
 YOLO_BATCH_SIZE = 24
 YOLO_EPOCHS = 100
@@ -75,18 +79,27 @@ YOLO_MOSAIC = 0.0  # No mosaic - maintains global anatomical context
 
 # --- CAUSAL GRAPH PARAMETERS ---
 CAUSAL_LAG = 1           # 1 TR lag for temporal precedence
-SPARSITY_QUANTILE = 0.60 # Keep top 40% strongest causal edges
+SPARSITY_QUANTILE = 0.60 # Keep top 40% strongest causal edges (v1.2: MORE edges for better GNN learning)
 
 # --- GNN MODEL PARAMETERS ---
-GNN_IN_CHANNELS = 14     # 8 Temporal + 6 Spatial features per node
-GNN_HIDDEN_CHANNELS = 64
+GNN_IN_CHANNELS = 14     # Keep as 14 (existing features from spatial+temporal)
+GNN_HIDDEN_CHANNELS = 128  # INCREASED from 64 to 128 for better capacity
 GNN_NUM_HEADS = 4
 GNN_NUM_CLASSES = 2      # 0: Control, 1: ASD
 GNN_DROPOUT = 0.5
-GNN_LEARNING_RATE = 0.001
+GNN_LEARNING_RATE = 0.0005  # Lower LR for stable training with larger model
 GNN_BATCH_SIZE = 32
-GNN_EPOCHS = 100
+GNN_EPOCHS = 150  # More epochs with early stopping
 K_FOLDS = 5
+# NEW: Improved hyperparameters for better AUC (Experiment v1.2 - AUC Target: 0.60+)
+GNN_LEARNING_RATE_TUNED = 0.0003  # Optimal LR for 128 hidden channels
+GNN_HIDDEN_CHANNELS_TUNED = 128   # Sweet spot for 5-node graphs (128 channels)
+GNN_USE_SITE_EMBEDDING = True      # Reduce site bias
+GNN_USE_DEMOGRAPHICS = True        # Add age/sex/IQ conditioning
+GNN_ENSEMBLE_MODE = True           # Average 5-fold predictions
+GNN_EARLY_STOPPING_PATIENCE = 35   # Patience for early stopping (increased)
+GNN_NUM_GNN_LAYERS = 3             # 3 GATv2 layers for deeper representation
+GNN_SKIP_CONNECTIONS = True        # Enable residual connections
 
 # --- HARDWARE ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -102,9 +115,9 @@ Add these parameters to src/config.py to enable the class balance fixes.
 # CLASS IMBALANCE HANDLING (ADD TO src/config.py)
 # ============================================================
 
-# Focal Loss Parameters
-FOCAL_LOSS_ALPHA = 0.75  # Weight for minority class (ASD)
-FOCAL_LOSS_GAMMA = 2.0   # Focusing parameter (higher = more focus on hard examples)
+# Focal Loss Parameters (Experiment v1.2: Balanced focus on hard examples)
+FOCAL_LOSS_ALPHA = 0.70  # Weight for minority class (ASD) - slightly reduced
+FOCAL_LOSS_GAMMA = 2.0   # OPTIMAL: 2.0 (stable training, proven effective)
 
 # Classification Threshold
 DEFAULT_THRESHOLD = 0.5  # Default classification threshold

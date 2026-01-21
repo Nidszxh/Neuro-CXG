@@ -78,7 +78,7 @@ class ComprehensiveValidator:
             conf_std_col = f"{lobe_name}_conf_std"
             count_col = f"{lobe_name}_detection_count"
             
-            if conf_std_col in df.columns and count_col in df.columns():
+            if conf_std_col in df.columns and count_col in df.columns:
                 conf_std = df[conf_std_col].dropna()
                 det_count = df[count_col].dropna()
                 

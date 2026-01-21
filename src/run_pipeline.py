@@ -13,13 +13,18 @@ from src.core.config import (
     validate_environment,
     PROJECT_ROOT,
     DATA_METADATA,
+    DATA_FINAL,
+    FINAL_TRAIN,
+    FINAL_VAL,
+    FINAL_TEST,
     CAUSAL_GRAPHS_DIR,
     NODE_FEATURES_3D,
     NODE_ATTRIBUTES_TEMPORAL,
     NODE_ATTRIBUTES_HARMONIZED,
     CHECKPOINT_DIR,
     NUM_LOBES,
-    YOLO_MODEL_SIZE
+    YOLO_MODEL_SIZE,
+    YOLO_WEIGHTS_PATH
 )
 
 # Standard logging
@@ -29,11 +34,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pipeline")
 
-# Path constants for new stages
+# Path constants for new stages (some imported from config)
 DOWNLOAD_LOG = DATA_METADATA / "download_log.csv"
-FINAL_TRAIN = PROJECT_ROOT / "data" / "final" / "train"
-FINAL_VAL = PROJECT_ROOT / "data" / "final" / "val"
-FINAL_TEST = PROJECT_ROOT / "data" / "final" / "test"
 MASTER_MANIFEST = DATA_METADATA / "master_manifest.csv"
 ATLAS_DIR = PROJECT_ROOT / "data" / "atlases"
 
@@ -66,7 +68,7 @@ def clear_old_state():
     Prevents 'Shape Mismatches' by clearing old 164/170 ROI data.
     This ensures the new 5-node architecture has a clean environment.
     """
-    logger.info("🧹 Cleaning legacy pipeline state for 5-node alignment...")
+    logger.info("Cleaning legacy pipeline state for 5-node alignment...")
     
     # Files to remove to force regeneration
     to_delete = [
@@ -101,21 +103,21 @@ def run_module(module_path, args_list=None, description=""):
         cmd.extend(args_list)
     
     log_msg = description if description else f"Module: {module_path}"
-    logger.info(f"▶️  Running: {log_msg}")
+    logger.info(f"Running: {log_msg}")
     logger.debug(f"Command: {' '.join(cmd)}")
     
     result = subprocess.run(cmd, cwd=PROJECT_ROOT)
     
     if result.returncode != 0:
-        logger.error(f"❌ Module {module_path} failed with exit code {result.returncode}")
+        logger.error(f"Module {module_path} failed with exit code {result.returncode}")
         sys.exit(1)
     
-    logger.info(f"✅ Completed: {log_msg}")
+    logger.info(f"Completed: {log_msg}")
 
 def check_download_status():
     """Check if ABIDE data has been downloaded."""
     if not DOWNLOAD_LOG.exists():
-        logger.warning("⚠️  Download log not found. Data may not be downloaded.")
+        logger.warning("Download log not found. Data may not be downloaded.")
         return False
     
     # Count downloaded subjects
@@ -124,7 +126,7 @@ def check_download_status():
         log_df = pd.read_csv(DOWNLOAD_LOG)
         total = len(log_df)
         successful = len(log_df[log_df.get('status', '') == 'success'])
-        logger.info(f"📊 Download status: {successful}/{total} subjects successful")
+        logger.info(f"Download status: {successful}/{total} subjects successful")
         return successful > 0
     except Exception as e:
         logger.warning(f"Could not parse download log: {e}")
@@ -142,10 +144,10 @@ def check_split_status():
         train_count = len(list((FINAL_TRAIN / "images").glob("*.png"))) if (FINAL_TRAIN / "images").exists() else 0
         val_count = len(list((FINAL_VAL / "images").glob("*.png"))) if (FINAL_VAL / "images").exists() else 0
         test_count = len(list((FINAL_TEST / "images").glob("*.png"))) if (FINAL_TEST / "images").exists() else 0
-        logger.info(f"📊 Split status: Train={train_count}, Val={val_count}, Test={test_count}")
+        logger.info(f"Split status: Train={train_count}, Val={val_count}, Test={test_count}")
         return True
     
-    logger.warning("⚠️  Train/val/test splits not found.")
+    logger.warning("Train/val/test splits not found.")
     return False
 
 def show_execution_plan(stages):
@@ -195,14 +197,14 @@ Examples:
                         help="Skip all integrity checks")
     parser.add_argument("--skip-atlas-validation", action="store_true",
                         help="Skip atlas validation")
+    parser.add_argument("--skip-diagnostics", action="store_true",
+                        help="Skip comprehensive health check")
+    parser.add_argument("--skip-comprehensive-validation", action="store_true",
+                        help="Skip comprehensive validation & tuning suite (YOLO quality, sparsity, stratification)")
     
     # Force/Diagnostics
     parser.add_argument("--force-reset", action="store_true",
                         help="Wipe all intermediate CSVs and Graphs")
-    parser.add_argument("--run-diagnostics", action="store_true",
-                        help="Run comprehensive health check")
-    parser.add_argument("--run-comprehensive-validation", action="store_true",
-                        help="Run comprehensive validation & tuning suite (YOLO quality, sparsity, stratification)")
     
     args = parser.parse_args()
     
@@ -215,17 +217,17 @@ Examples:
     print("="*70)
     
     # STAGE 0: PRE-FLIGHT VALIDATION
-    logger.info("\n🔍 Stage 0: Pre-Flight Validation")
+    logger.info("\nStage 0: Pre-Flight Validation")
     
     if not validate_environment():
-        logger.error("❌ Environment validation failed. Check config.py and data paths.")
+        logger.error("Environment validation failed. Check config.py and data paths.")
         sys.exit(1)
     
-    logger.info("✅ Environment validation passed")
+    logger.info("Environment validation passed")
     
     # DETERMINE STAGE EXECUTION BASED ON FLAGS
     
-    yolo_weights = PROJECT_ROOT / "results" / "ROI_Detection_v21_Final" / "weights" / "best.pt"
+    yolo_weights = YOLO_WEIGHTS_PATH
     data_downloaded = check_download_status() if not args.skip_download else True
     data_split = check_split_status() if not args.skip_split else True
     
@@ -257,13 +259,13 @@ Examples:
         },
         "diagnostics": {
             "name": "Diagnostics",
-            "should_run": args.run_diagnostics,
-            "reason": "Health check",
+            "should_run": not args.skip_diagnostics,
+            "reason": "Validate all features before GNN training",
             "module": "src.validation.pipeline_diagnostics"
         },
         "comprehensive_validation": {
             "name": "Comprehensive Validation & Tuning",
-            "should_run": args.run_diagnostics or args.run_comprehensive_validation,
+            "should_run": not args.skip_comprehensive_validation,
             "reason": "Detailed quality checks (YOLO, graphs, features, stratification)",
             "module": "src.validation.validator"
         },
@@ -312,7 +314,7 @@ Examples:
             "function": "check_distribution"
         },
         "causal_graphs": {
-            "name": "Causal Graph Construction (5×5)",
+            "name": "Causal Graph Construction (5*5)",
             "should_run": (not any(CAUSAL_GRAPHS_DIR.iterdir()) if CAUSAL_GRAPHS_DIR.exists() else True) or args.force_reset,
             "reason": "Missing graphs" if (not any(CAUSAL_GRAPHS_DIR.iterdir()) if CAUSAL_GRAPHS_DIR.exists() else True) else "Force reset",
             "module": "src.features.construct_causal"
@@ -344,10 +346,11 @@ Examples:
     # STAGE EXECUTION
     # Execute stages in order
     
-    for stage_key in ["download", "split", "manifest", "atlas_validation", "diagnostics",
+    for stage_key in ["download", "split", "manifest", "atlas_validation",
                       "post_download_integrity", "annotate", "yolo", "spatial_features",
-                      "temporal_features", "harmonization", "pre_gnn_integrity",
-                      "comprehensive_validation", "causal_graphs", "gnn_training"]:
+                      "temporal_features", "harmonization", "diagnostics",
+                      "comprehensive_validation", "pre_gnn_integrity",
+                      "causal_graphs", "gnn_training"]:
         
         stage = stages[stage_key]
         
@@ -376,7 +379,7 @@ Examples:
     # COMPLETION
     
     logger.info("\n" + "="*70)
-    logger.info("✅ NEURO-CXG PIPELINE EXECUTION COMPLETE")
+    logger.info("NEURO-CXG PIPELINE EXECUTION COMPLETE")
     logger.info("="*70)
     logger.info(f"📁 Checkpoints saved to: {CHECKPOINT_DIR}")
     logger.info(f"📁 Causal graphs in: {CAUSAL_GRAPHS_DIR}")

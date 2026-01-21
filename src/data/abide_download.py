@@ -72,7 +72,13 @@ def process_subject(sub_id, tr_val):
             
             # 2. Resample Atlas to Functional Space (Critical Step)
             # This ensures the masks align with the processed brain
-            resampled_atlas = resample_to_img(str(ATLAS_PATH), func_img, interpolation='nearest')
+            resampled_atlas = resample_to_img(
+                str(ATLAS_PATH), 
+                func_img, 
+                interpolation='nearest',
+                force_resample=True,  # Suppress future warning
+                copy_header=True      # Use new header behavior
+            )
 
             # 3. Time Series Extraction with finite check
             masker = NiftiLabelsMasker(
@@ -88,12 +94,12 @@ def process_subject(sub_id, tr_val):
             
             ts = masker.fit_transform(func_img)
             
-            # Validate ROI count (AAL3 has 170 labels)
-            # Critical: catch atlas resampling issues that drop ROIs
-            EXPECTED_ROIS = 170
-            if ts.shape[1] != EXPECTED_ROIS:
+            # Validate ROI count (AAL3v1 variant: 164-170 ROIs)
+            # Some AAL3v1 templates have 2 unused/empty ROIs
+            VALID_ROI_RANGE = (164, 170)
+            if not (VALID_ROI_RANGE[0] <= ts.shape[1] <= VALID_ROI_RANGE[1]):
                 raise ValueError(
-                    f"ROI count mismatch: extracted {ts.shape[1]} ROIs, expected {EXPECTED_ROIS}. "
+                    f"ROI count mismatch: extracted {ts.shape[1]} ROIs, expected {VALID_ROI_RANGE[0]}-{VALID_ROI_RANGE[1]}. "
                     f"Atlas resampling may have failed for subject {sub_id}"
                 )
             

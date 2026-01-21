@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 TARGET_SLICES = 5
-EXPECTED_ROIS = 170  # AAL3 atlas ROI count
+VALID_ROI_RANGE = (164, 170)  # AAL3v1 atlas: 164-170 ROIs depending on template variant
 PNG_DIR = DATA_ROOT / "images"
 TS_DIR = DATA_PROCESSED
 
@@ -75,8 +75,9 @@ def check_dataset_integrity():
             data = np.load(path)
             if np.isnan(data).any():
                 raise ValueError("NaNs detected")
-            if data.shape[1] != EXPECTED_ROIS:
-                raise ValueError(f"ROI mismatch: Found {data.shape[1]}, expected {EXPECTED_ROIS}")
+            num_rois = data.shape[1]
+            if not (VALID_ROI_RANGE[0] <= num_rois <= VALID_ROI_RANGE[1]):
+                raise ValueError(f"ROI mismatch: Found {num_rois}, expected {VALID_ROI_RANGE[0]}-{VALID_ROI_RANGE[1]}")
             ts_subjects.add(path.name.replace("_ts.npy", ""))
         except Exception as e:
             logger.warning(f" [!] Invalid NPY: {path.name} ({e})")

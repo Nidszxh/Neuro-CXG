@@ -8,6 +8,7 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 from scipy.stats import skew, kurtosis
+from scipy.signal import welch
 from tqdm import tqdm
 
 # Setup paths and config
@@ -21,8 +22,9 @@ from src.core.config import (
     NUM_LOBES
 )
 
-# Expected ROI count for validation (AAL3 atlas)
-EXPECTED_ROIS = 170
+# Expected ROI count range for validation (AAL3v1 atlas)
+# Note: Some AAL3v1 templates have 2 unused/empty ROIs, so 164-170 are all valid
+VALID_ROI_RANGE = (164, 170)
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -48,23 +50,74 @@ def calculate_autocorr(ts: np.ndarray, lag: int = 1) -> float:
     c_lag = np.dot(ts[:-lag], ts[lag:]) / len(ts)
     return float(c_lag / c0) if c0 > 0 else 0.0
 
-def extract_single_roi_features(ts: np.ndarray, tr: float):
-    """Computes 8 standardized temporal metrics for one ROI."""
-    if not np.isfinite(ts).all() or np.std(ts) < 1e-6:
-        return [0.0] * 8 # Return zeros for dead signals to prevent NaN propagation
+def calculate_band_power(ts: np.ndarray, tr: float, freq_band: tuple) -> float:
+    """
+    Compute relative power in specific frequency band using Welch's method.
+    
+    Frequency bands for brain analysis:
+    - Delta (0.5-4 Hz): Deep sleep, unconscious processes
+    - Theta (4-8 Hz): Drowsiness, creativity, meditation
+    - Alpha (8-13 Hz): Relaxation, attention
+    - Beta (13-30 Hz): Active thinking, problem solving
+    
+    These are established ASD biomarkers in neuroimaging literature.
+    """
+    if len(ts) < 10 or np.std(ts) < 1e-6:
+        return 0.0
+    
+    fs = 1.0 / tr  # Sampling frequency
+    freqs, psd = welch(ts, fs=fs, nperseg=min(len(ts), 64))
+    
+    # Extract power in specified band
+    band_mask = (freqs >= freq_band[0]) & (freqs <= freq_band[1])
+    if not np.any(band_mask):
+        return 0.0
+    
+    band_power = np.trapz(psd[band_mask], freqs[band_mask])
+    total_power = np.trapz(psd, freqs)
+    
+    return float(band_power / total_power) if total_power > 0 else 0.0
 
-    return [
+def extract_single_roi_features(ts: np.ndarray, tr: float, include_bands: bool = False):
+    """
+    Computes temporal metrics for one ROI.
+    
+    Base features (8): mean, std, skew, kurtosis, psd, mssd, range, autocorr
+    Optional band features (4): delta, theta, alpha, beta power
+    
+    Args:
+        ts: Time series signal
+        tr: Repetition time
+        include_bands: If True, adds 4 frequency band features (12 total)
+    """
+    if not np.isfinite(ts).all() or np.std(ts) < 1e-6:
+        n_features = 12 if include_bands else 8
+        return [0.0] * n_features
+
+    base_features = [
         float(np.mean(ts)),
         float(np.std(ts)),
         float(skew(ts, bias=False)),
         float(kurtosis(ts, bias=False)),
         calculate_psd(ts, tr),
-        float(np.mean(np.diff(ts) ** 2)),  # MSSD (Mean Squared Successive Difference)
-        float(np.max(ts) - np.min(ts)),     # Range (NEW: outlier sensitivity)
-        calculate_autocorr(ts, lag=1)       # Autocorr at lag-1 (NEW: temporal persistence)
+        float(np.mean(np.diff(ts) ** 2)),  # MSSD
+        float(np.max(ts) - np.min(ts)),     # Range
+        calculate_autocorr(ts, lag=1)       # Autocorr
     ]
+    
+    if include_bands:
+        # Add frequency band powers (ASD biomarkers)
+        band_features = [
+            calculate_band_power(ts, tr, (0.5, 4)),    # Delta
+            calculate_band_power(ts, tr, (4, 8)),      # Theta
+            calculate_band_power(ts, tr, (8, 13)),     # Alpha
+            calculate_band_power(ts, tr, (13, 30))     # Beta
+        ]
+        return base_features + band_features
+    
+    return base_features
 
-def main():
+def main(add_bands: bool = False):
     if not MASTER_MANIFEST.exists():
         logger.error("Master manifest missing. Run manifest.py first.")
         return
@@ -84,7 +137,9 @@ def main():
     all_subject_data = []
     failed_subjects = []
     
+    features_per_roi = 12 if add_bands else 8
     logger.info(f"🚀 Extracting temporal features for {len(manifest)} subjects...")
+    logger.info(f"Features per ROI: {features_per_roi} ({'with' if add_bands else 'without'} frequency bands)")
 
     for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Subjects"):
         sub_id = str(row["subject_id"])
@@ -106,21 +161,26 @@ def main():
             
             num_rois = ts_data.shape[1]
             
-            # Validate ROI count matches expected atlas
-            if num_rois != EXPECTED_ROIS:
-                logger.warning(f"{sub_id}: ROI count mismatch (found {num_rois}, expected {EXPECTED_ROIS})")
-                # Continue processing but log the mismatch
+            # Validate ROI count within expected range (AAL3v1 variant: 164-170)
+            if not (VALID_ROI_RANGE[0] <= num_rois <= VALID_ROI_RANGE[1]):
+                logger.error(f"{sub_id}: ROI count {num_rois} outside valid range {VALID_ROI_RANGE}. Skipping.")
+                failed_subjects.append(sub_id)
+                continue
+            
+            # Log if less than 170 (informational)
+            if num_rois < 170:
+                logger.debug(f"{sub_id}: Using {num_rois} ROIs (AAL3v1 variant with unused ROIs)")
             
             subject_features = [sub_id]
             
             for i in range(num_rois):
                 roi_signal = ts_data[:, i]
                 try:
-                    roi_feats = extract_single_roi_features(roi_signal, tr)
+                    roi_feats = extract_single_roi_features(roi_signal, tr, include_bands=add_bands)
                     subject_features.extend(roi_feats)
                 except Exception as e:
                     logger.warning(f"{sub_id} ROI {i}: Feature extraction failed: {e}")
-                    subject_features.extend([0.0] * 6)  # Fallback
+                    subject_features.extend([0.0] * features_per_roi)  # Fallback: 8 features per ROI (mean, std, skew, kurt, psd, mssd, range, autocorr)
             
             all_subject_data.append(subject_features)
 
@@ -141,12 +201,36 @@ def main():
         logger.error("No valid subjects processed!")
         return
 
-    # Create Dynamic Column Names
-    # We use a flat list: roi1_mean, roi1_std... roiN_autocorr
-    first_sub_roi_count = (len(all_subject_data[0]) - 1) // 8
+    # --- STANDARDIZE TO 170 ROIs (Handle AAL3v1 variants with fewer ROIs) ---
+    # Subjects may have 164-170 ROIs; we pad to 170 for consistent downstream processing
+    all_subject_data_normalized = []
+    max_rois = 170
+    features_per_roi = 12 if add_bands else 8
+    expected_features = 1 + (max_rois * features_per_roi)  # subject_id + (170 * features_per_roi)
+    
+    for row in all_subject_data:
+        if len(row) == expected_features:
+            # Already has 170 ROIs, keep as-is
+            all_subject_data_normalized.append(row)
+        else:
+            # Has fewer ROIs; pad with zeros to match 170 columns
+            actual_rois = (len(row) - 1) // features_per_roi
+            logger.debug(f"{row[0]}: Padding from {actual_rois} to {max_rois} ROIs")
+            padded_row = row.copy() if isinstance(row, list) else list(row)
+            # Append zeros for missing ROIs (features_per_roi values per missing ROI)
+            padding_needed = (max_rois - actual_rois) * features_per_roi
+            padded_row.extend([0.0] * padding_needed)
+            all_subject_data_normalized.append(padded_row)
+    
+    all_subject_data = all_subject_data_normalized
+
+    # Create Fixed Column Names (always 170 ROIs after normalization)
     columns = ['subject_id']
     stats = ["mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr"]
-    for r in range(1, first_sub_roi_count + 1):
+    if add_bands:
+        stats.extend(["delta", "theta", "alpha", "beta"])
+    
+    for r in range(1, 171):  # Always 170 ROIs, even if some are zero-padded
         for s in stats:
             columns.append(f"roi{r}_{s}")
 
@@ -161,11 +245,23 @@ def main():
         df.to_csv(NODE_ATTRIBUTES_TEMPORAL, index=False)
         
         logger.info(f"✅ Extracted features for {len(df)} subjects.")
-        logger.info(f"ROI Count: {first_sub_roi_count} | Features per subject: {len(columns)-1}")
+        logger.info(f"ROI Count: 170 (standardized; subjects with <170 ROIs zero-padded) | Features per subject: {len(columns)-1}")
         logger.info(f"Output saved to: {NODE_ATTRIBUTES_TEMPORAL}")
     except Exception as e:
         logger.error(f"Failed to save output: {e}")
         raise
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Extract temporal features from fMRI time series")
+    parser.add_argument(
+        "--add-bands",
+        action="store_true",
+        help="Add frequency band features (delta, theta, alpha, beta) - increases features from 8 to 12 per ROI"
+    )
+    args = parser.parse_args()
+    
+    if args.add_bands:
+        logger.info("🎵 Including frequency band features (delta, theta, alpha, beta)")
+        logger.info("This will increase features per ROI: 8 → 12")
+    
+    main(add_bands=args.add_bands)

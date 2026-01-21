@@ -27,6 +27,7 @@ class ABIDECausalDataset(Dataset):
     def __init__(self, split='train', transform=None, pre_transform=None):
         super().__init__(None, transform, pre_transform)
         self.split = split
+        self.augment_graphs = split == 'train'  # Only augment training data
         self._load_data_sources()
         self._validate_subjects()
         
@@ -121,7 +122,7 @@ class ABIDECausalDataset(Dataset):
 
         sub_id = str(self.manifest.iloc[idx]['subject_id'])
         dx_group = self.manifest.iloc[idx]['DX_GROUP']
-        label = 1 if dx_group == 1 else 0  # 1=ASD, 0=Control
+        label = 1 if dx_group == 2 else 0  # DX_GROUP: 1=Control, 2=ASD → labels: 0=Control, 1=ASD
         
         try:
             # 1. Load 5x5 Causal Adjacency Matrix
@@ -173,14 +174,37 @@ class ABIDECausalDataset(Dataset):
             # 6. Build position tensor (first 3 spatial features: x, y, z)
             pos = torch.tensor(spatial_features[:, :3], dtype=torch.float32)
             
-            return Data(
+            # 7. Extract site and demographic covariates (NEW: for conditioning)
+            site_id = self.manifest.iloc[idx]['SITE_ID']
+            age = self.manifest.iloc[idx].get('AGE_AT_SCAN', 0)
+            sex = self.manifest.iloc[idx].get('SEX', 0)  # 1=M, 2=F typically
+            fiq = self.manifest.iloc[idx].get('FIQ', 100)
+            
+            # Map site names to indices (0-19 for 20 sites)
+            site_idx = self._encode_site(site_id)
+            
+            # Normalize covariates
+            age_norm = (age - 15) / 20 if pd.notna(age) else 0  # Roughly 5-35 years
+            sex_norm = (sex - 1.5) if pd.notna(sex) else 0  # Normalize to ~[-0.5, 0.5]
+            fiq_norm = (fiq - 100) / 30 if pd.notna(fiq) and fiq > 0 else 0  # Normalize IQ
+            
+            data_obj = Data(
                 x=x,
                 edge_index=edge_index,
                 edge_attr=edge_attr,
                 y=torch.tensor([label], dtype=torch.long),
                 pos=pos,
-                sub_id=sub_id
+                sub_id=sub_id,
+                site_id=torch.tensor([site_idx], dtype=torch.long),
+                age=torch.tensor([age_norm], dtype=torch.float32),
+                sex=torch.tensor([sex_norm], dtype=torch.float32),
+                fiq=torch.tensor([fiq_norm], dtype=torch.float32)
             )
+
+            # Apply augmentation to training data
+            data_obj = self._augment_graph(data_obj)
+
+            return data_obj
             
         except Exception as e:
             logger.error(f"Failed to build graph for {sub_id}: {e}")
@@ -282,6 +306,37 @@ class ABIDECausalDataset(Dataset):
         except Exception as e:
             logger.error(f"Subject {sub_id}: Error loading spatial features: {e}")
             return None
+
+    def _encode_site(self, site_name):
+        """
+        Encodes site name to integer index (0-19).
+        Creates mapping on-the-fly if not cached.
+        """
+        if not hasattr(self, '_site_mapping'):
+            unique_sites = sorted(self.manifest['SITE_ID'].unique())
+            self._site_mapping = {site: idx for idx, site in enumerate(unique_sites)}
+
+        return self._site_mapping.get(site_name, 0)  # Default to site 0 if unknown
+
+    def _augment_graph(self, data):
+        """
+        Applies light augmentation to training graphs (feature noise, edge dropout).
+        Only applied to training set to improve generalization.
+        """
+        if not self.augment_graphs or np.random.random() > 0.5:  # 50% augmentation rate
+            return data
+        
+        # Light feature noise (5% Gaussian noise on node features)
+        noise = torch.randn_like(data.x) * 0.05
+        data.x = data.x + noise
+        
+        # Edge weight dropout (30% chance to drop edge weights, but keep edge)
+        edge_dropout = 0.3
+        keep_mask = torch.rand(data.edge_attr.shape[0]) > edge_dropout
+        if keep_mask.sum() > 0:
+            data.edge_attr = data.edge_attr * keep_mask.unsqueeze(1).float()
+        
+        return data
 
 
 if __name__ == "__main__":

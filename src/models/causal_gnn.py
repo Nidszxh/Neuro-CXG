@@ -21,13 +21,26 @@ class CausalBrainGNN(torch.nn.Module):
         hidden_channels=64, 
         num_classes=2,
         dropout=0.5,
-        num_heads=2
+        num_heads=2,
+        num_sites=20,  # NEW: Site conditioning
+        use_site_embedding=True,  # NEW: Toggle site conditioning
+        use_demographics=True     # NEW: age/sex/fiq conditioning
     ):
         super(CausalBrainGNN, self).__init__()
         torch.manual_seed(42)
 
+        self.use_site_embedding = use_site_embedding
+        self.use_demographics = use_demographics
+        
+        # NEW: Site embedding (reduces site-specific bias)
+        if use_site_embedding:
+            self.site_embedding = torch.nn.Embedding(num_sites, 16)
+            site_embed_dim = 16
+        else:
+            site_embed_dim = 0
+
         # 1. Input Embedding with normalization
-        self.lin_in = Linear(num_node_features, hidden_channels)
+        self.lin_in = Linear(num_node_features + site_embed_dim, hidden_channels)
         self.norm_in = LayerNorm(hidden_channels)
         
         # 2. Learnable Edge Weight Transformation
@@ -77,7 +90,8 @@ class CausalBrainGNN(torch.nn.Module):
 
         # 4. Multi-Scale Pooling
         # Combines mean (global brain state), max (pathological hub), and sum (total activation)
-        pooling_dim = hidden_channels * 3  # mean + max + sum
+        demo_dim = 3 if use_demographics else 0
+        pooling_dim = hidden_channels * 3 + demo_dim  # mean + max + sum + demographics
         
         # 5. Final Classification Head
         self.classifier = Sequential(
@@ -103,7 +117,7 @@ class CausalBrainGNN(torch.nn.Module):
                 if m.bias is not None:
                     torch.nn.init.zeros_(m.bias)
 
-    def forward(self, x, edge_index, edge_attr, batch):
+    def forward(self, x, edge_index, edge_attr, batch, site_id=None, age=None, sex=None, fiq=None):
         """
         Forward pass with  architecture.
         
@@ -116,6 +130,13 @@ class CausalBrainGNN(torch.nn.Module):
         Returns:
             Logits (batch_size, 2)
         """
+        # Optional: site_id tensor (num_graphs,) for site conditioning
+        if self.use_site_embedding and site_id is not None:
+            # Map site embeddings to nodes using batch index
+            site_emb = self.site_embedding(site_id)  # (num_graphs, 16)
+            site_per_node = site_emb[batch]          # (num_nodes, 16)
+            x = torch.cat([x, site_per_node], dim=1)
+
         # A. Input Projection
         h = self.norm_in(F.relu(self.lin_in(x)))
         
@@ -149,6 +170,11 @@ class CausalBrainGNN(torch.nn.Module):
         g_sum = global_add_pool(h, batch)    # Total activation level
         
         g = torch.cat([g_mean, g_max, g_sum], dim=1)
+
+        # Append demographics (age, sex, fiq) if available
+        if self.use_demographics and age is not None and sex is not None and fiq is not None:
+            demo = torch.stack([age, sex, fiq], dim=1)  # (num_graphs, 3)
+            g = torch.cat([g, demo], dim=1)
 
         # G. Final Classification
         return self.classifier(g)
