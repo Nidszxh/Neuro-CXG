@@ -310,10 +310,8 @@ src.run_pipeline (ORCHESTRATOR)
 │       └── imports: src.features.graph_factory
 │       └── imports: src.models.causal_gnn
 │
-├── [AVAILABLE BUT NOT REQUIRED] src.data.check_progress
-│   └─→ Progress tracking
-└── [AVAILABLE BUT NOT REQUIRED] src.data.class_distribution
-    └─→ Class balance analysis
+└── [AVAILABLE BUT NOT REQUIRED] src.validation.integrity
+    └─→ Comprehensive validation: post-download, pre-GNN, class analysis, health reports
 
 Legend:
   ✓ Integrated: Module is called by run_pipeline.py (or invoked as subprocess)

@@ -98,6 +98,17 @@
 
 #### Pipeline Enhancement & Code Consolidation (✅ COMPLETE)
 
+**Validation Module Consolidation (January 22, 2026):**
+- [x] Consolidated check_progress.py and class_distribution.py into integrity.py
+- [x] integrity.py now provides 4 main functions:
+  - check_dataset_integrity() - Post-download validation
+  - check_distribution() - Pre-GNN distribution checks
+  - analyze_class_distribution() - Class imbalance analysis with recommendations
+  - generate_health_report() - Comprehensive dataset health report
+- [x] Deleted redundant files (check_progress.py, class_distribution.py)
+- [x] Updated all documentation (copilot-instructions.md, PIPELINE_DATAFLOW.md, ROADMAP.md)
+- [x] Single source of truth for dataset quality checks
+
 **Validator Integration:**
 - [x] Integrated validator.py into run_pipeline.py as Stage 6 (Comprehensive Validation & Tuning)
 - [x] Added --run-comprehensive-validation flag for quality checks

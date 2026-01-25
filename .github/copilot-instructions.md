@@ -117,7 +117,7 @@ Train GNN with 5-fold stratified cross-validation
   sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
   from src.core.config import DATA_ROOT, DATA_FINAL, DATA_PROCESSED
   ```
-- **Status**: ✅ ALL modules centralized (split.py, manifest.py, annotate.py, check_progress.py, integrity_check.py)
+- **Status**: ✅ ALL modules centralized (split.py, manifest.py, annotate.py, integrity.py)
 - Never hardcode relative paths like `./data` or `../..`
 - Use Path().exists() for validation before loading
 
@@ -206,7 +206,7 @@ Train GNN with 5-fold stratified cross-validation
     logger = logging.getLogger(__name__)
     ```
   - Usage: `logger.info()`, `logger.warning()`, `logger.error()`, `logger.debug()`
-  - **Status**: ✅ All core modules updated (split.py, manifest.py, annotate.py, check_progress.py, etc.)
+  - **Status**: ✅ All core modules updated (split.py, manifest.py, annotate.py, integrity.py, etc.)
 
 - **Try-Catch Error Handling**: All I/O operations wrapped with specific error types
   - **CSV Loading**: `FileNotFoundError`, `pd.errors.ParserError` caught separately
@@ -322,6 +322,24 @@ python src/run_pipeline.py --run-download --run-manifest --run-safe-harmonize --
 # Run comprehensive pipeline diagnostics (health check)
 python src/validation/pipeline_diagnostics.py
 
+# Post-download dataset integrity check
+python src/validation/integrity.py --dataset
+
+# Pre-GNN distribution check
+python src/validation/integrity.py --distribution
+
+# Class imbalance analysis with recommendations
+python src/validation/integrity.py --class-analysis
+
+# Comprehensive health report
+python src/validation/integrity.py --health
+
+# Health report with deep file validation (slower)
+python src/validation/integrity.py --health --deep
+
+# Run all integrity checks (default)
+python src/validation/integrity.py
+
 # Check dataset loading (verify labels, shapes, sample counts)
 python -c "from src.features.graph_factory import ABIDECausalDataset; \
 ds = ABIDECausalDataset('train'); print(f'Loaded {len(ds)} subjects, first graph has {ds[0].x.shape[0]} nodes')"
@@ -430,7 +448,7 @@ python src/features/safe_harmonization.py
 | [src/config.py] | ALL constants, paths, hyperparameters; validation functions |
 | [src/run_pipeline.py] | Unified entry point (orchestrates all 15 stages with comprehensive validation) |
 | **Validation & Diagnostics** | |
-| [src/validation/integrity.py] | Combined post-download + pre-GNN data integrity checks (PNG/NPY validation, slice distribution) |
+| [src/validation/integrity.py] | **Consolidated validation module** - post-download checks, pre-GNN checks, class distribution analysis, health reports |
 | [src/validation/atlas_validator.py] | Atlas file validation (checks existence, structure, ROI range) |
 | [src/validation/pipeline_diagnostics.py] | Comprehensive health check for all pipeline stages |
 | [src/validation/validator.py] | Comprehensive validation suite (YOLO quality, graph sparsity, feature preprocessing) |
@@ -508,8 +526,9 @@ In [src/features/safe_harmonization.py], `DX_GROUP` (diagnosis) is NEVER passed 
   - Added singleton group filtering: removes groups with <3 subjects (prevents stratification ValueError)
   - Logs filtered subject count for transparency
 
-- **[src/data/check_progress.py]** - Fixed metadata matching:
-  - Added `.str.strip()` on FILE_ID to remove hidden leading/trailing whitespace
+- **[src/validation/integrity.py]** - Consolidated dataset validation (Jan 2026):
+  - Merged check_progress.py and class_distribution.py functionality
+  - Provides comprehensive health reports with metadata matching via `.str.strip()` on FILE_ID
 
 - **[src/validation/integrity.py]** - Added ROI validation:
   - Added `EXPECTED_ROIS = 170` constant for AAL3 atlas
