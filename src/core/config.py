@@ -63,7 +63,7 @@ YOLO_MODEL_SIZE = "yolo11n.pt"
 YOLO_PROJECT_NAME = "ROI_Detection_v21"  # Output directory name from training
 YOLO_WEIGHTS_PATH = RESULTS_DIR / "ROI_Detection_v21" / "weights" / "best.pt"
 YOLO_IMGSZ = 640
-YOLO_BATCH_SIZE = 24
+YOLO_BATCH_SIZE = 32
 YOLO_EPOCHS = 100
 YOLO_CONF_THRESHOLD = 0.30
 
@@ -76,6 +76,36 @@ YOLO_DEGREES = 0.0 # No rotation - maintains exact 3D centroid coordinates
 YOLO_FLIPLR = 0.0  # No flipping - prevents Left/Right hemisphere confusion
 YOLO_FLIPUD = 0.0  
 YOLO_MOSAIC = 0.0  # No mosaic - maintains global anatomical context
+
+# Consolidated YOLO Training Configuration
+# Pass to model.train() with **YOLO_TRAIN_CONFIG to eliminate parameter duplication
+YOLO_TRAIN_CONFIG = {
+    'epochs': YOLO_EPOCHS,
+    'imgsz': YOLO_IMGSZ,
+    'batch': YOLO_BATCH_SIZE,
+    'device': 0,
+    'seed': 42,
+    'deterministic': True,
+    'plots': True,
+    'save': True,
+    'val': True,
+    'patience': 25,
+    'workers': 8,
+    'optimizer': 'AdamW',
+    'lr0': 0.001,
+    'label_smoothing': 0.0,
+    'box': 7.5,
+    'cls': 2.0,
+    # Medical augmentation - anatomical protection
+    'hsv_h': YOLO_HSV_H,
+    'hsv_s': YOLO_HSV_S,
+    'hsv_v': YOLO_HSV_V,
+    'degrees': YOLO_DEGREES,
+    'fliplr': YOLO_FLIPLR,
+    'flipud': YOLO_FLIPUD,
+    'mosaic': YOLO_MOSAIC,
+    'mixup': 0.0
+}
 
 # --- CAUSAL GRAPH PARAMETERS ---
 CAUSAL_LAG = 1           # 1 TR lag for temporal precedence
@@ -111,9 +141,7 @@ Updated Configuration with Class Imbalance Handling
 Add these parameters to src/config.py to enable the class balance fixes.
 """
 
-# ============================================================
 # CLASS IMBALANCE HANDLING (ADD TO src/config.py)
-# ============================================================
 
 # Focal Loss Parameters (Experiment v1.2: Balanced focus on hard examples)
 FOCAL_LOSS_ALPHA = 0.70  # Weight for minority class (ASD) - slightly reduced
@@ -132,9 +160,7 @@ USE_BALANCED_SAMPLING = False  # Oversample minority class in batches
 PATIENCE = 25  # Epochs without improvement before stopping
 EVAL_FREQUENCY = 10  # Evaluate and check threshold every N epochs
 
-# ============================================================
 # DIAGNOSTIC THRESHOLDS
-# ============================================================
 
 # AUC Thresholds for Health Checks
 AUC_RANDOM_THRESHOLD = 0.52  # Below this is essentially random
@@ -153,9 +179,6 @@ LOSS_RANDOM_THRESHOLD = 0.693  # log(2) - random guessing
 LOSS_LEARNING_THRESHOLD = 0.65  # Model is learning
 LOSS_CONVERGED_THRESHOLD = 0.50  # Model has converged
 
-# ============================================================
-# VALIDATION FUNCTION UPDATES
-# ============================================================
 
 def validate_training_health(metrics: dict) -> str:
     """

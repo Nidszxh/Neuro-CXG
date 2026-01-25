@@ -13,6 +13,7 @@ from pathlib import Path
 from tqdm import tqdm
 import sys
 import warnings
+import time
 
 warnings.filterwarnings('ignore')
 
@@ -21,6 +22,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     K_FOLDS, GNN_BATCH_SIZE, GNN_EPOCHS, 
     CHECKPOINT_DIR, DEVICE, GNN_IN_CHANNELS
+)
+from src.models.training_utils import (
+    EarlyStopping, WarmupScheduler, TrainingTracker, CheckpointManager,
+    train_one_epoch_with_accumulation
 )
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -136,58 +141,6 @@ def find_optimal_threshold(y_true, y_probs):
     return best_threshold, best_f1
 
 
-def train_one_epoch(model, loader, optimizer, criterion, gradient_accumulation_steps=1):
-    """
-    Train for one epoch with gradient accumulation.
-    
-    Args:
-        gradient_accumulation_steps: Accumulate gradients over N batches
-                                      (effective batch size = batch_size * N)
-    """
-    model.train()
-    total_loss = 0
-    optimizer.zero_grad()
-    
-    for i, data in enumerate(loader):
-        if data is None:
-            continue
-            
-        data = data.to(DEVICE)
-        
-        # Forward pass
-        out = model(
-            data.x,
-            data.edge_index,
-            data.edge_attr,
-            data.batch,
-            getattr(data, 'site_id', None),
-            getattr(data, 'age', None),
-            getattr(data, 'sex', None),
-            getattr(data, 'fiq', None)
-        )
-        loss = criterion(out, data.y)
-        
-        # Normalize loss for gradient accumulation
-        loss = loss / gradient_accumulation_steps
-        loss.backward()
-        
-        # Update weights every N steps
-        if (i + 1) % gradient_accumulation_steps == 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-            optimizer.zero_grad()
-        
-        total_loss += loss.item() * gradient_accumulation_steps
-    
-    # Final update if not divisible
-    if (i + 1) % gradient_accumulation_steps != 0:
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
-        optimizer.zero_grad()
-    
-    return total_loss / len(loader)
-
-
 @torch.no_grad()
 def evaluate(model, loader, threshold=0.5):
     """Evaluate model with custom threshold."""
@@ -234,9 +187,12 @@ def evaluate(model, loader, threshold=0.5):
 
 
 def run_enhanced_training():
-    """Main training loop with all PART 3 optimizations."""
-    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    """
+    Main training loop with k-fold cross-validation.
     
+    Uses modular training utilities (EarlyStopping, WarmupScheduler, TrainingTracker, CheckpointManager)
+    to reduce code duplication and improve maintainability.
+    """
     from src.features.graph_factory import ABIDECausalDataset
     from src.models.causal_gnn import CausalBrainGNN
     from src.core.config import (
@@ -252,14 +208,14 @@ def run_enhanced_training():
     dataset = ABIDECausalDataset(split='train')
     
     # Extract labels
-    labels = []
-    for i in range(len(dataset)):
-        data = dataset.get(i)
-        if data is not None:
-            labels.append(data.y.item())
+    labels = [dataset.get(i).y.item() for i in range(len(dataset)) if dataset.get(i) is not None]
     
     # Compute class weights
     class_weights = compute_class_weights(labels)
+    
+    # Initialize tracking and checkpoint management
+    tracker = TrainingTracker(k_folds=K_FOLDS)
+    checkpoint_manager = CheckpointManager(CHECKPOINT_DIR, monitor='auc', mode='max')
     
     logger.info(f"\n{'='*70}")
     logger.info("5-FOLD CROSS VALIDATION WITH OPTIMIZATIONS (v1.1 - Stable)")
@@ -277,22 +233,13 @@ def run_enhanced_training():
     logger.info(f"{'='*70}\n")
     
     skf = StratifiedKFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
-    fold_results = {
-        'auc': [],
-        'f1': [],
-        'acc': [],
-        'threshold': [],
-        'best_epoch': []
-    }
-
-    # NEW: Store ensemble predictions
-    all_fold_probs = []
-    all_fold_labels = []
     
     for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(labels)), labels)):
         logger.info(f"\n{'='*70}")
         logger.info(f"FOLD {fold+1}/{K_FOLDS}")
         logger.info(f"{'='*70}")
+        
+        fold_start_time = time.time()
         
         # Create data loaders
         train_data = [dataset[i] for i in train_idx if dataset[i] is not None]
@@ -307,10 +254,10 @@ def run_enhanced_training():
         train_loader = DataLoader(train_data, batch_size=GNN_BATCH_SIZE, shuffle=True)
         val_loader = DataLoader(val_data, batch_size=GNN_BATCH_SIZE)
         
-        # Initialize model with tuned hyperparameters
+        # Initialize model
         model = CausalBrainGNN(
-            num_node_features=GNN_IN_CHANNELS,  # INCREASED: 20 (was 14)
-            hidden_channels=GNN_HIDDEN_CHANNELS_TUNED,  # INCREASED: 256 (was 128)
+            num_node_features=GNN_IN_CHANNELS,
+            hidden_channels=GNN_HIDDEN_CHANNELS_TUNED,
             num_classes=2,
             dropout=0.5,
             num_heads=2,
@@ -319,35 +266,123 @@ def run_enhanced_training():
             use_demographics=GNN_USE_DEMOGRAPHICS,
         ).to(DEVICE)
         
-        # Optimizer with tuned learning rate
+        # Optimizer
         optimizer = torch.optim.AdamW(
             model.parameters(),
-            lr=GNN_LEARNING_RATE_TUNED,  # tuned: 0.0002
+            lr=GNN_LEARNING_RATE_TUNED,
             weight_decay=1e-3
         )
         
-        # Learning rate warmup
+        # Schedulers
         warmup = WarmupScheduler(optimizer, warmup_epochs=5, base_lr=GNN_LEARNING_RATE_TUNED)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=GNN_EPOCHS - 5)
         
-        # Cosine annealing after warmup
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=GNN_EPOCHS - 5
-        )
-        
-        # Focal Loss (INCREASED gamma for harder focus on difficult examples)
+        # Loss and early stopping
         criterion = FocalLoss(alpha=0.75, gamma=3.0)
-        
-        # Early stopping
         early_stopping = EarlyStopping(patience=GNN_EARLY_STOPPING_PATIENCE, min_delta=0.001, mode='max')
+        checkpoint_manager.reset()
         
-        best_auc = float('-inf')  # ensure first eval saves checkpoint
+        best_auc = 0.0
         best_f1 = 0.0
         best_threshold = 0.5
         best_epoch = 0
         
+        # Training loop
         for epoch in range(1, GNN_EPOCHS + 1):
             # Warmup for first 5 epochs
+            if epoch <= 5:
+                warmup.step()
+            
+            # Train with gradient accumulation (effective batch size = 64)
+            loss = train_one_epoch_with_accumulation(
+                model, train_loader, optimizer, criterion, DEVICE,
+                gradient_accumulation_steps=2
+            )
+            
+            # Step scheduler after warmup
+            if epoch > 5:
+                scheduler.step()
+            
+            # Evaluate every 5 epochs
+            if epoch % 5 == 0:
+                metrics = evaluate(model, val_loader, threshold=0.5)
+                
+                # Find optimal threshold
+                opt_threshold, opt_f1 = find_optimal_threshold(
+                    metrics['labels'],
+                    metrics['probs']
+                )
+                
+                metrics_opt = evaluate(model, val_loader, threshold=opt_threshold)
+                current_lr = optimizer.param_groups[0]['lr']
+                
+                logger.info(
+                    f"Epoch {epoch:03d} | LR: {current_lr:.6f} | Loss: {loss:.4f} | "
+                    f"AUC: {metrics['auc']:.4f} | "
+                    f"F1@{opt_threshold:.2f}: {metrics_opt['f1']:.4f}"
+                )
+                
+                # Save best model using CheckpointManager
+                checkpoint_metrics = {
+                    'auc': metrics['auc'],
+                    'f1': metrics_opt['f1'],
+                    'threshold': opt_threshold
+                }
+                checkpoint_manager.save(model, optimizer, epoch, checkpoint_metrics, fold=fold)
+                
+                if metrics['auc'] > best_auc:
+                    best_auc = metrics['auc']
+                    best_f1 = metrics_opt['f1']
+                    best_threshold = opt_threshold
+                    best_epoch = epoch
+                    
+                    logger.info(
+                        f"✓ New best: AUC={best_auc:.4f}, "
+                        f"F1={best_f1:.4f} @ threshold={best_threshold:.3f}"
+                    )
+                
+                # Early stopping check
+                if early_stopping(metrics['auc']):
+                    logger.info(f"Early stopping at epoch {epoch}")
+                    break
+        
+        # Final evaluation
+        checkpoint = checkpoint_manager.load(model, fold=fold)
+        final_threshold = checkpoint['threshold']
+        final_metrics = evaluate(model, val_loader, threshold=final_threshold)
+        
+        fold_train_time = time.time() - fold_start_time
+        
+        logger.info(f"\nFold {fold+1} Final Results:")
+        logger.info(f"  Best epoch: {best_epoch}")
+        logger.info(f"  Training time: {fold_train_time:.1f}s")
+        logger.info(f"  AUC: {final_metrics['auc']:.4f}")
+        logger.info(f"  F1: {final_metrics['f1']:.4f} (threshold={final_threshold:.3f})")
+        logger.info(f"  Accuracy: {final_metrics['acc']:.4f}")
+        logger.info(f"  Confusion Matrix:")
+        logger.info(f"    {final_metrics['cm']}")
+        
+        # Track results
+        tracker.add_fold_result(
+            fold=fold,
+            auc=final_metrics['auc'],
+            f1=final_metrics['f1'],
+            acc=final_metrics['acc'],
+            threshold=final_threshold,
+            best_epoch=best_epoch,
+            train_time=fold_train_time,
+            val_probs=final_metrics['probs'],
+            val_labels=final_metrics['labels']
+        )
+    
+    # Log summary statistics
+    tracker.log_summary()
+    
+    # Ensemble evaluation
+    if GNN_ENSEMBLE_MODE:
+        evaluate_ensemble(tracker, checkpoint_manager)
+    
+    logger.info(f"{'='*70}\n")
             if epoch <= 5:
                 warmup.step()
             
@@ -485,6 +520,8 @@ def run_enhanced_training():
                         num_sites=20,
                         use_site_embedding=True,
                         use_demographics=True,
+                        strip_yolo_metadata=True,   # << toggle this for coords-only
+
                     ).to(DEVICE)
 
                     checkpoint = torch.load(CHECKPOINT_DIR / f"best_model_fold{fold}.pt", weights_only=False)

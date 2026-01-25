@@ -17,20 +17,31 @@ class CausalBrainGNN(torch.nn.Module):
     """
     def __init__(
         self, 
-        num_node_features=14, 
+        num_node_features=14,  
         hidden_channels=64, 
         num_classes=2,
         dropout=0.5,
         num_heads=2,
-        num_sites=20,  # NEW: Site conditioning
-        use_site_embedding=True,  # NEW: Toggle site conditioning
-        use_demographics=True     # NEW: age/sex/fiq conditioning
+        num_sites=20,              # Site conditioning
+        use_site_embedding=True,   # Toggle site conditioning
+        use_demographics=True,     # age/sex/fiq conditioning
+        strip_yolo_metadata=False, # If True, drop YOLO metadata (size/conf/count) and keep coords only
+        yolo_metadata_dim=3        # Number of YOLO metadata features to optionally strip
     ):
         super(CausalBrainGNN, self).__init__()
         torch.manual_seed(42)
 
         self.use_site_embedding = use_site_embedding
         self.use_demographics = use_demographics
+        self.strip_yolo_metadata = strip_yolo_metadata
+        self.yolo_metadata_dim = yolo_metadata_dim
+
+        # Allow two modes:
+        # 1) YOLO coords-only: strip_yolo_metadata=True → drop last yolo_metadata_dim features
+        # 2) YOLO full: strip_yolo_metadata=False → use all features (default)
+        effective_in_feats = num_node_features - (yolo_metadata_dim if strip_yolo_metadata else 0)
+        if effective_in_feats <= 0:
+            raise ValueError("Effective input features must be positive. Check num_node_features/yolo_metadata_dim.")
         
         # NEW: Site embedding (reduces site-specific bias)
         if use_site_embedding:
@@ -40,7 +51,7 @@ class CausalBrainGNN(torch.nn.Module):
             site_embed_dim = 0
 
         # 1. Input Embedding with normalization
-        self.lin_in = Linear(num_node_features + site_embed_dim, hidden_channels)
+        self.lin_in = Linear(effective_in_feats + site_embed_dim, hidden_channels)
         self.norm_in = LayerNorm(hidden_channels)
         
         # 2. Learnable Edge Weight Transformation
@@ -119,17 +130,28 @@ class CausalBrainGNN(torch.nn.Module):
 
     def forward(self, x, edge_index, edge_attr, batch, site_id=None, age=None, sex=None, fiq=None):
         """
-        Forward pass with  architecture.
+        Forward pass.
         
         Args:
-            x: Node features (num_nodes, 14)
+            x: Node features. Two supported layouts:
+               - YOLO full (default): temporal + spatial coords + metadata (size/conf/count)
+               - YOLO coords-only: temporal + spatial coords (set strip_yolo_metadata=True)
             edge_index: Edge connectivity (2, num_edges)
             edge_attr: Edge weights (num_edges, 1)
             batch: Batch assignment (num_nodes,)
-        
-        Returns:
-            Logits (batch_size, 2)
         """
+        # Optionally drop YOLO metadata (size/conf/count) to run coords-only mode
+        if self.strip_yolo_metadata:
+            if x.shape[1] == self.lin_in.in_features:
+                pass  # already stripped before call
+            elif x.shape[1] == self.lin_in.in_features + self.yolo_metadata_dim:
+                x = x[:, :-self.yolo_metadata_dim]
+            else:
+                raise ValueError(
+                    f"Unexpected feature dim {x.shape[1]} for coords-only mode. "
+                    f"Expected {self.lin_in.in_features} (stripped) or "
+                    f"{self.lin_in.in_features + self.yolo_metadata_dim} (full)."
+                )
         # Optional: site_id tensor (num_graphs,) for site conditioning
         if self.use_site_embedding and site_id is not None:
             # Map site embeddings to nodes using batch index
