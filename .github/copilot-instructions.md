@@ -117,14 +117,14 @@ Train GNN with 5-fold stratified cross-validation
   sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
   from src.core.config import DATA_ROOT, DATA_FINAL, DATA_PROCESSED
   ```
-- **Status**: ✅ ALL modules centralized (split.py, manifest.py, annotate.py, integrity.py)
+- **Status**: ✅ ALL modules centralized (split.py, manifestor.py, annotate.py, integrity.py)
 - Never hardcode relative paths like `./data` or `../..`
 - Use Path().exists() for validation before loading
 
 ### 3. Tensor/Data Shapes (Critical for Graph Construction)
 - **Input time series**: `(timepoints, num_rois)` where num_rois ∈ {116, 117, 170} depending on atlas
 - **After lobe aggregation**: `(timepoints, 5)` (always 5 lobes)
-- **Graph node features (x)**: `(5, num_features)` where num_features = 6 (temporal) + 3 (spatial coords)
+- **Graph node features (x)**: `(5, num_features)` where num_features = 8 (temporal) + 6 (spatial) = 14
 - **Edge index**: `(2, num_edges)` — 2D tensor for PyTorch Geometric format
 - **Edge attributes**: `(num_edges,)` — causal correlation weights (floats in [-1, 1])
 - **Batch label (y)**: scalar 0 (Control) or 1 (ASD)
@@ -161,7 +161,7 @@ Train GNN with 5-fold stratified cross-validation
 - **Output format**: PyTorch `.pt` files containing `torch_geometric.Data` objects:
   ```python
   Data(
-    x=node_features,           # shape: (5, num_features)
+    x=node_features,           # shape: (5, 14) - 8 temporal + 6 spatial
     edge_index=edge_indices,   # shape: (2, num_edges)
     edge_attr=weights,         # shape: (num_edges,)
     y=diagnosis_label,         # 0 or 1
@@ -206,7 +206,7 @@ Train GNN with 5-fold stratified cross-validation
     logger = logging.getLogger(__name__)
     ```
   - Usage: `logger.info()`, `logger.warning()`, `logger.error()`, `logger.debug()`
-  - **Status**: ✅ All core modules updated (split.py, manifest.py, annotate.py, integrity.py, etc.)
+  - **Status**: ✅ All core modules updated (split.py, manifestor.py, annotate.py, integrity.py, etc.)
 
 - **Try-Catch Error Handling**: All I/O operations wrapped with specific error types
   - **CSV Loading**: `FileNotFoundError`, `pd.errors.ParserError` caught separately
@@ -248,22 +248,22 @@ python src/run_pipeline.py --run-diagnostics --run-download --run-manifest --run
 2. Stratified split (2D: DX_GROUP + SITE_ID) (or skip if already split)
 3. Master manifest generation (maps subjects to phenotypes)
 4. Atlas validation (verifies atlas files exist and are valid)
-5. Diagnostics (overall pipeline health check)
-6. **Comprehensive Validation & Tuning** ✨ NEW (YOLO quality, graph sparsity, feature preprocessing, stratification)
-7. Post-download integrity check (PNG/NPY validation)
+5. Diagnostics (overall pipeline health check via integrity.py --health)
+6. **Comprehensive Validation & Tuning** (YOLO quality, graph sparsity, feature preprocessing, stratification)
+7. Post-download integrity check (PNG/NPY validation via integrity.py --dataset)
 8. Atlas-based label annotation (generates YOLO training labels)
 9. YOLO ROI detection training (learns to detect 5 lobes)
 10. Spatial feature extraction (detects lobes, aggregates 3D coordinates)
 11. Temporal feature extraction (6 stats per ROI from time series)
 12. Feature harmonization (neuroCombat batch effect removal)
-13. Pre-GNN integrity check (validates dataset completeness per split)
+13. Pre-GNN integrity check (validates dataset completeness per split via integrity.py --distribution)
 14. Causal graph construction (lagged correlation, sparsification)
 15. GNN training (5-fold stratified cross-validation)
 
 ### Running the Full Pipeline
 ```bash
-# 0. Optional: Validate entire pipeline health (diagnostics on all stages)
-python src/validation/pipeline_diagnostics.py
+# 0. Optional: Validate entire pipeline health (comprehensive health report)
+python src/validation/integrity.py --health
 
 # OR run the full pipeline with built-in diagnostics
 python src/run_pipeline.py --run-diagnostics
@@ -274,8 +274,6 @@ python src/run_pipeline.py
 # Full pipeline using safe harmonization (robust NaN/Inf handling)
 python src/run_pipeline.py --run-safe-harmonize
 
-# Just diagnostics before starting pipeline
-python src/validation/pipeline_diagnostics.py
 
 # 1. Train YOLO (one-time, outputs best.pt to results/)
 python src/pipelines/roi_detection.py
@@ -319,8 +317,8 @@ python src/run_pipeline.py --run-download --run-manifest --run-safe-harmonize --
 
 ### Testing & Validation
 ```bash
-# Run comprehensive pipeline diagnostics (health check)
-python src/validation/pipeline_diagnostics.py
+# Comprehensive health report (replaces pipeline_diagnostics.py)
+python src/validation/integrity.py --health
 
 # Post-download dataset integrity check
 python src/validation/integrity.py --dataset
@@ -448,10 +446,9 @@ python src/features/safe_harmonization.py
 | [src/config.py] | ALL constants, paths, hyperparameters; validation functions |
 | [src/run_pipeline.py] | Unified entry point (orchestrates all 15 stages with comprehensive validation) |
 | **Validation & Diagnostics** | |
-| [src/validation/integrity.py] | **Consolidated validation module** - post-download checks, pre-GNN checks, class distribution analysis, health reports |
+| [src/validation/integrity.py] | **Consolidated validation module** - post-download checks, pre-GNN checks, class distribution analysis, health reports, pipeline diagnostics |
 | [src/validation/atlas_validator.py] | Atlas file validation (checks existence, structure, ROI range) |
-| [src/validation/pipeline_diagnostics.py] | Comprehensive health check for all pipeline stages |
-| [src/validation/validator.py] | Comprehensive validation suite (YOLO quality, graph sparsity, feature preprocessing) |
+| [src/validation/validator.py] | Comprehensive validation suite (YOLO quality, graph sparsity, feature preprocessing, stratification) |
 | **Feature Engineering & Graphs** | |
 | [src/features/extract_features.py] | YOLO inference → 3D spatial aggregation; all-5-lobes filter |
 | [src/features/construct_causal.py] | AAL→Lobe aggregation; lagged correlation; graph creation |
@@ -565,15 +562,19 @@ In [src/features/safe_harmonization.py], `DX_GROUP` (diagnosis) is NEVER passed 
   ```
   src/validation/
   ├── atlas_validator.py       (atlas file structure & ROI validation)
-  ├── integrity.py             (NEW: combined post-download + pre-GNN checks)
-  ├── pipeline_diagnostics.py  (overall pipeline health check)
+  ├── integrity.py             (NEW: combined post-download + pre-GNN checks + health reports)
   └── validator.py             (comprehensive validation suite)
   ```
-  - Deleted: integrity_check.py, integrity_check2.py
+  - Deleted: integrity_check.py, integrity_check2.py, pipeline_diagnostics.py (merged into integrity.py)
 
-### Module Import Path Fix (January 16, 2026)
-- **[src/validation/pipeline_diagnostics.py]** - Fixed subprocess import issue: changed `sys.path.append(parents[1])` to `sys.path.insert(0, str(Path(__file__).resolve().parent))` and removed non-existent `validate_lobe_mapping` function import, replacing with inline validation. Now runs correctly via `python -m src.validation.pipeline_diagnostics`.
-- **Why it matters**: When `run_pipeline.py` calls modules as subprocesses (to avoid argparse conflicts), they execute in isolated environments. The correct path setup is: modules in `src/` should add their own directory to sys.path FIRST (parent dir), not the project root.
+### Validation Module Consolidation (January 26, 2026)
+- **[src/validation/integrity.py]** - Now serves as the single source of truth for all validation operations:
+  - `check_dataset_integrity()` - Post-download validation
+  - `check_distribution()` - Pre-GNN validation
+  - `analyze_class_distribution()` - Class imbalance analysis
+  - `generate_health_report()` - Comprehensive pipeline health check (replaces pipeline_diagnostics.py)
+- **Deleted files**: pipeline_diagnostics.py merged into integrity.py for better maintainability
+- **Why it matters**: Single validation module reduces code duplication and provides unified interface for all data quality checks
 
 ### Path Resolution Fixes
 - **[src/data/abide_download.py]** - Fixed `PROJECT_ROOT = Path(__file__).resolve().parents[2]` (was parents[0], incorrectly pointed to src/data/ instead of project root)
@@ -583,7 +584,7 @@ In [src/features/safe_harmonization.py], `DX_GROUP` (diagnosis) is NEVER passed 
 - **[src/features/safe_harmonization.py]** - Fixed pandas FutureWarning by replacing `df[col].fillna(..., inplace=True)` with proper assignment `df[col] = df[col].fillna(...)`
 
 ### Pipeline Diagnostics & Validation
-- **[src/validation/pipeline_diagnostics.py]** - Updated to accept **166 ROIs** (AAL3v1 variant) in atlas validation. Previously only accepted 116/117/170, causing false positives for valid AAL3v1 atlases.
+- **[src/validation/integrity.py]** - Consolidated all validation functions including health reports, ROI validation (accepts 164-170 ROIs for AAL3v1 variants), class distribution analysis
 - **[src/run_pipeline.py]** - Major refactor:
   - Added `--run-diagnostics` flag for comprehensive pre-flight checks
   - Added `--run-safe-harmonize` flag to use robust NaN/Inf handling

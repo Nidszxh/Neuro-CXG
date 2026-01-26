@@ -3,9 +3,9 @@
 
 ---
 
-## IMPLEMENTATION STATUS (January 20, 2026)
+## IMPLEMENTATION STATUS (January 26, 2026)
 
-**Latest Update**: Validator.py integrated into run_pipeline.py (Stage 6), integrity checks consolidated into single module
+**Latest Update**: Validation modules fully consolidated - pipeline_diagnostics.py merged into integrity.py, providing unified validation interface
 
 ### COMPLETED PHASES (100%)
 
@@ -55,7 +55,7 @@
 **Path Consistency Sweep (100% Complete):**
 - [x] Centralize all hardcoded paths in config.py
 - [x] Update split.py (removed `Path("./data")`, now imports from config)
-- [x] Update manifest.py (centralized path imports)
+- [x] Update manifestor.py (centralized path imports)
 - [x] Update annotate.py (uses DATA_FINAL, DATA_ATLASES from config)
 - [x] Update check_progress.py (all paths from config)
 - [x] Update integrity_check.py (all paths from config)
@@ -63,14 +63,14 @@
 **Logging Standardization (100% Complete):**
 - [x] Replace print statements with logger.info/warning/error
 - [x] split.py (5 print statements → logging)
-- [x] manifest.py (4 print statements → logging)
+- [x] manifestor.py (4 print statements → logging)
 - [x] annotate.py (3 print statements → logging)
 - [x] check_progress.py (8 print statements → logging)
 - [x] integrity_check.py (6 print statements → logging)
 
 **Error Handling Hardening (100% Complete):**
 - [x] Add try-catch to extract_features.py (YOLO inference with specific errors)
-- [x] Add try-catch to harmonize.py (CSV loading, merge failures)
+- [x] Add try-catch to safe_harmonization.py (CSV loading, merge failures)
 - [x] Add try-catch to compute_roi.py (file I/O with fallback)
 - [x] CSV parsing: FileNotFoundError, pd.errors.ParserError caught separately
 - [x] File operations: FileNotFoundError, ValueError for invalid arrays
@@ -98,16 +98,16 @@
 
 #### Pipeline Enhancement & Code Consolidation (✅ COMPLETE)
 
-**Validation Module Consolidation (January 22, 2026):**
-- [x] Consolidated check_progress.py and class_distribution.py into integrity.py
+**Validation Module Consolidation (January 26, 2026):**
+- [x] Consolidated check_progress.py, class_distribution.py, and pipeline_diagnostics.py into integrity.py
 - [x] integrity.py now provides 4 main functions:
   - check_dataset_integrity() - Post-download validation
   - check_distribution() - Pre-GNN distribution checks
   - analyze_class_distribution() - Class imbalance analysis with recommendations
-  - generate_health_report() - Comprehensive dataset health report
-- [x] Deleted redundant files (check_progress.py, class_distribution.py)
-- [x] Updated all documentation (copilot-instructions.md, PIPELINE_DATAFLOW.md, ROADMAP.md)
-- [x] Single source of truth for dataset quality checks
+  - generate_health_report() - Comprehensive dataset health report (replaces pipeline_diagnostics)
+- [x] Deleted redundant files (check_progress.py, class_distribution.py, pipeline_diagnostics.py)
+- [x] Updated all documentation (copilot-instructions.md, README.md, ROADMAP.md)
+- [x] Single source of truth for all validation and quality checks
 
 **Validator Integration:**
 - [x] Integrated validator.py into run_pipeline.py as Stage 6 (Comprehensive Validation & Tuning)
@@ -128,17 +128,18 @@
 - [x] All imports point to src.validation.integrity for both post-download and pre-GNN checks
 
 **Documentation Updates:**
-- [x] Updated .github/copilot-instructions.md with complete January 20 changelog
+- [x] Updated .github/copilot-instructions.md with complete January 26 changelog
 - [x] Updated PIPELINE_DATAFLOW.md with 15-stage visualization
-- [x] Updated README.md with new validation folder structure
+- [x] Updated README.md with current validation folder structure (3 modules)
 - [x] Updated ROADMAP.md with latest completion status
-- [x] All references consolidated: 4 validation modules clearly documented
+- [x] All references consolidated: 3 validation modules clearly documented (atlas_validator, integrity, validator)
 
 **Code Quality Improvements:**
-- [x] Single source of truth for integrity validation logic
-- [x] Reduced code duplication (80 lines → 195 lines consolidated)
-- [x] Centralized validation folder (4 modules: atlas_validator, integrity, pipeline_diagnostics, validator)
+- [x] Single source of truth for all validation logic (integrity.py)
+- [x] Reduced code duplication (250+ lines → 610 lines consolidated with 4 functions)
+- [x] Centralized validation folder (3 modules: atlas_validator, integrity, validator)
 - [x] Clear integration status for all validation modules
+- [x] Unified command interface: python src/validation/integrity.py [--dataset|--distribution|--class-analysis|--health]
 
 ### COMPLETED SPRINT: CODE REFINEMENT & PRODUCTION-READY (January 15-17, 2026)
 
@@ -152,7 +153,7 @@
 **Path Consistency Sweep (100% Complete):**
 - [x] Centralize all hardcoded paths in config.py
 - [x] Update split.py (removed `Path("./data")`, now imports from config)
-- [x] Update manifest.py (centralized path imports)
+- [x] Update manifestor.py (centralized path imports)
 - [x] Update annotate.py (uses DATA_FINAL, DATA_ATLASES from config)
 - [x] Update check_progress.py (all paths from config)
 - [x] Update integrity_check.py (all paths from config)
@@ -160,14 +161,14 @@
 **Logging Standardization (100% Complete):**
 - [x] Replace print statements with logger.info/warning/error
 - [x] split.py (5 print statements → logging)
-- [x] manifest.py (4 print statements → logging)
+- [x] manifestor.py (4 print statements → logging)
 - [x] annotate.py (3 print statements → logging)
 - [x] check_progress.py (8 print statements → logging)
 - [x] integrity_check.py (6 print statements → logging)
 
 **Error Handling Hardening (100% Complete):**
 - [x] Add try-catch to extract_features.py (YOLO inference with specific errors)
-- [x] Add try-catch to harmonize.py (CSV loading, merge failures)
+- [x] Add try-catch to safe_harmonization.py (CSV loading, merge failures)
 - [x] Add try-catch to compute_roi.py (file I/O with fallback)
 - [x] CSV parsing: FileNotFoundError, pd.errors.ParserError caught separately
 - [x] File operations: FileNotFoundError, ValueError for invalid arrays

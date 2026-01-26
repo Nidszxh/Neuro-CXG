@@ -65,7 +65,7 @@ Extract temporal and spatial features from detected ROIs:
 
 ```bash
 # Extract 3D spatial coordinates from YOLO detections
-python -m src.data.extract_features
+python -m src.features.extract_features
 # Outputs: data/processed/metadata/node_features_3d.csv
 
 # Extract temporal features (mean, std, skew, kurtosis, PSD, MSSD)
@@ -78,7 +78,7 @@ python -m src.utils.compute_roi
 Remove site-specific scanner bias while protecting disease signal:
 
 ```bash
-python -m src.data.harmonize
+python -m src.features.safe_harmonization
 # Outputs: data/processed/metadata/node_attributes_harmonized.csv
 # (Note: DX_GROUP diagnosis protected as covariate)
 ```
@@ -88,7 +88,7 @@ python -m src.data.harmonize
 Build directed causal graphs from time series:
 
 ```bash
-python -m src.data.construct_causal
+python -m src.features.construct_causal
 # Outputs: data/processed/causal_graphs/{subject_id}_graph.pt
 # Graphs: 5 nodes (lobes), directed edges, causal correlation weights
 ```
@@ -183,28 +183,29 @@ Neuro-CXG/
 │   ├── final/                     # Train/val/test split images
 │   └── atlases/                   # AAL3 reference atlas
 ├── src/
-│   ├── config.py                  # Central configuration (SINGLE SOURCE OF TRUTH)
+│   ├── core/
+│   │   └── config.py              # Central configuration (SINGLE SOURCE OF TRUTH)
 │   ├── run_pipeline.py            # Unified pipeline orchestrator (15 stages)
-│   ├── safe_harmonization.py      # Robust harmonization with NaN handling
-│   ├── validation/                # ✨ Validation modules (consolidated Jan 20)
+│   ├── validation/                # ✨ Validation modules (consolidated Jan 26)
 │   │   ├── atlas_validator.py     # AAL atlas validation tool
-│   │   ├── integrity.py           # ✨ NEW: Combined post-download + pre-GNN checks
-│   │   ├── pipeline_diagnostics.py # Comprehensive health check
-│   │   └── validator.py           # ✨ Comprehensive validation suite (YOLO, sparsity)
+│   │   ├── integrity.py           # ✨ Complete validation suite: post-download, pre-GNN, health reports
+│   │   └── validator.py           # ✨ Comprehensive validation: YOLO quality, sparsity, stratification
+│   ├── features/                  # Feature engineering and graph construction
+│   │   ├── extract_features.py    # YOLO inference → 3D spatial aggregation
+│   │   ├── safe_harmonization.py  # neuroCombat batch effect removal (robust NaN handling)
+│   │   ├── construct_causal.py    # Causal graph construction (lagged correlation)
+│   │   └── graph_factory.py       # PyTorch Geometric dataset loader
 │   ├── data/                      # Data processing modules
-│   │   ├── extract_features.py    # YOLO inference → spatial features
-│   │   ├── harmonize.py           # neuroCombat batch effect removal
-│   │   ├── construct_causal.py    # Graph construction (lagged correlation)
-│   │   ├── graph_factory.py       # PyTorch Geometric dataset loader
-│   │   ├── split.py               # Stratified splitting
+│   │   ├── split.py               # Stratified splitting (2D: DX_GROUP + SITE_ID)
 │   │   └── abide_download.py      # ABIDE data download and preprocessing
 │   ├── models/                    # GNN architecture and training
-│   │   ├── causal_gnn.py          # GAT-based model (2 heads, skip connections)
-│   │   └── gnn_model.py           # k-fold training loop
+│   │   ├── causal_gnn.py          # GATv2-based model (2 heads, skip connections)
+│   │   ├── gnn_model.py           # k-fold training loop
+│   │   └── training_utils.py      # Training utilities (EarlyStopping, WarmupScheduler)
 │   ├── pipelines/
 │   │   └── roi_detection.py       # YOLO training entry point
 │   └── utils/                     # Utility functions
-│       ├── manifest.py            # Manifest generation
+│       ├── manifestor.py          # Master manifest generation
 │       ├── compute_roi.py         # Temporal feature extraction
 │       └── annotate.py            # Atlas-based label annotation
 ├── notebooks/
@@ -220,7 +221,7 @@ Neuro-CXG/
 
 ## Configuration
 
-All project constants defined in [src/config.py](src/config.py) (single source of truth):
+All project constants defined in [src/core/config.py](src/core/config.py) (single source of truth):
 
 ### Critical Parameters
 
@@ -228,7 +229,7 @@ All project constants defined in [src/config.py](src/config.py) (single source o
 |-----------|-------|-------|
 | NUM_LOBES | 5 | Frontal, Temporal, Parietal, Occipital, Limbic |
 | LOBE_MAPPING | 170→5 | AAL3 atlas ROI aggregation (1-indexed to 0-indexed) |
-| GNN_IN_CHANNELS | 9 | 6 temporal + 3 spatial (x,y,z) features |
+| GNN_IN_CHANNELS | 14 | 8 temporal + 6 spatial features (updated architecture) |
 | GNN_HIDDEN_CHANNELS | 64 | Hidden dimension for GATv2Conv |
 | GNN_NUM_HEADS | 2 | Attention heads per GAT layer (sufficient for 5 nodes) |
 | GNN_DROPOUT | 0.5 | High dropout to prevent site-specific memorization |
@@ -239,7 +240,7 @@ All project constants defined in [src/config.py](src/config.py) (single source o
 | CAUSAL_LAG | 1 | Time lag for temporal precedence (TRs) |
 | SPARSITY_QUANTILE | 0.80 | Keep top 20% causal connections (~5 edges/graph) |
 
-See [src/config.py](src/config.py) for all 60+ parameters.
+See [src/core/config.py](src/core/config.py) for all 60+ parameters.
 
 ## Data Format
 
@@ -261,7 +262,7 @@ See [src/config.py](src/config.py) for all 60+ parameters.
 **Final format** (loaded by graph_factory.py into PyTorch Geometric):
 ```python
 Data(
-  x=torch.Tensor(5, 9),          # 5 lobes × (6 temporal + 3 spatial features)
+  x=torch.Tensor(5, 14),         # 5 lobes × (8 temporal + 6 spatial features)
   edge_index=torch.Tensor(2, K), # K directed edges (typically ~5 after sparsification)
   edge_attr=torch.Tensor(K,),    # Causal correlation weights [-1, 1]
   y=torch.Tensor([0 or 1]),      # Label: 0=Control, 1=ASD
@@ -281,8 +282,8 @@ Data(
 ### Pipeline Health Check
 
 ```bash
-# Run comprehensive diagnostics on all pipeline stages
-python src/pipeline_diagnostics.py
+# Run comprehensive health report on all pipeline stages
+python src/validation/integrity.py --health
 
 # Outputs:
 # - Environment validation (paths, CUDA, dependencies)
@@ -290,6 +291,7 @@ python src/pipeline_diagnostics.py
 # - Feature matrix validation (shapes, NaN detection)
 # - Graph construction validation (node/edge counts)
 # - Atlas validation (ROI coverage, mapping correctness)
+# - Class distribution analysis with recommendations
 ```
 
 ### Manual Validation Commands
