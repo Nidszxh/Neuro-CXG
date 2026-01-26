@@ -257,15 +257,9 @@ Examples:
             "reason": "Verify atlas files exist and are valid",
             "module": "src.validation.atlas_validator"
         },
-        "diagnostics": {
-            "name": "Diagnostics",
-            "should_run": not args.skip_diagnostics,
-            "reason": "Validate all features before GNN training",
-            "module": "src.validation.pipeline_diagnostics"
-        },
-        "comprehensive_validation": {
+        "validation": {
             "name": "Comprehensive Validation & Tuning",
-            "should_run": not args.skip_comprehensive_validation,
+            "should_run": not args.skip_validation,
             "reason": "Detailed quality checks (YOLO, graphs, features, stratification)",
             "module": "src.validation.validator"
         },
