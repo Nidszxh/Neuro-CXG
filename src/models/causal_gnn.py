@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GATv2Conv, global_max_pool, global_mean_pool, global_add_pool
-from torch.nn import Linear, Sequential, ReLU, Dropout, LayerNorm, BatchNorm1d
+from torch.nn import Linear, Sequential, ReLU, Dropout, LayerNorm
 
 class CausalBrainGNN(torch.nn.Module):
     """
@@ -134,8 +134,8 @@ class CausalBrainGNN(torch.nn.Module):
         
         Args:
             x: Node features. Two supported layouts:
-               - YOLO full (default): temporal + spatial coords + metadata (size/conf/count)
-               - YOLO coords-only: temporal + spatial coords (set strip_yolo_metadata=True)
+                - YOLO full (default): temporal + spatial coords + metadata (size/conf/count)
+                - YOLO coords-only: temporal + spatial coords (set strip_yolo_metadata=True)
             edge_index: Edge connectivity (2, num_edges)
             edge_attr: Edge weights (num_edges, 1)
             batch: Batch assignment (num_nodes,)
@@ -213,7 +213,7 @@ class CausalBrainGNN(torch.nn.Module):
         
         out = self.forward(x, edge_index, edge_attr, batch)
         
-        # Backpropagate through predicted class
+        # Back propagate through predicted class
         score = out.max()
         score.backward()
         

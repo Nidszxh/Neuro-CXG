@@ -16,7 +16,7 @@ import numpy as np
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -394,3 +394,4 @@ def train_one_epoch_with_accumulation(
         optimizer.zero_grad()
     
     return total_loss / max(num_batches, 1)
+

@@ -1,5 +1,4 @@
 from ultralytics import YOLO
-import os
 import sys
 from pathlib import Path
 

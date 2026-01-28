@@ -37,6 +37,8 @@ from src.core.config import (
     GNN_USE_DEMOGRAPHICS,
     GNN_ENSEMBLE_MODE,
     GNN_EARLY_STOPPING_PATIENCE,
+    CAUSAL_GRAPHS_DIR,
+    DATA_METADATA,
 )
 from src.models.training_utils import (
     EarlyStopping, 
@@ -45,6 +47,16 @@ from src.models.training_utils import (
     CheckpointManager,
     train_one_epoch_with_accumulation
 )
+
+# Analysis modules
+from src.analysis.gradients.training_monitor import TrainingMonitor
+from src.analysis.gradients.graph_analysis import CausalGraphAnalyzer
+try:
+    from src.analysis.feature_importance import FeatureAttributionAnalyzer
+    FEATURE_ANALYSIS_AVAILABLE = True
+except ImportError:
+    FEATURE_ANALYSIS_AVAILABLE = False
+    logger.warning("FeatureAttributionAnalyzer unavailable (requires Captum)")
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
@@ -334,6 +346,10 @@ def run_training():
     tracker = TrainingTracker(k_folds=K_FOLDS)
     checkpoint_manager = CheckpointManager(CHECKPOINT_DIR, monitor='auc', mode='max')
     
+    # Initialize training monitor for analysis
+    analysis_dir = Path('results/analysis')
+    monitor = TrainingMonitor(analysis_dir / 'training', num_folds=K_FOLDS)
+    
     # Print configuration
     logger.info(f"\n{'='*70}")
     logger.info("GNN TRAINING - 5-FOLD CROSS-VALIDATION")
@@ -424,8 +440,8 @@ def run_training():
             if epoch > 5:
                 scheduler.step()
             
-            # Evaluate every 5 epochs
-            if epoch % 5 == 0:
+            # Evaluate every 10 epochs
+            if epoch % 10 == 0:
                 # Get predictions
                 metrics = evaluate(model, val_loader, threshold=0.5)
                 
@@ -439,10 +455,34 @@ def run_training():
                 metrics_opt = evaluate(model, val_loader, threshold=opt_threshold)
                 current_lr = optimizer.param_groups[0]['lr']
                 
+                # Compute gradient norm for stability tracking
+                grad_norm = 0.0
+                for p in model.parameters():
+                    if p.grad is not None:
+                        grad_norm += p.grad.data.norm(2).item() ** 2
+                grad_norm = grad_norm ** 0.5
+                
+                # Log to training monitor
+                monitor.log_epoch(
+                    fold_id=fold,
+                    epoch=epoch,
+                    metrics={
+                        'train_loss': loss,
+                        'val_loss': metrics['auc'],  # We don't have val loss, use 1-AUC as proxy
+                        'val_auc': metrics['auc'],
+                        'val_f1': metrics_opt['f1'],
+                        'val_acc': metrics_opt['acc'],
+                        'lr': current_lr
+                    },
+                    grad_norm=grad_norm,
+                    confusion_matrix=metrics_opt['cm']
+                )
+                
                 logger.info(
                     f"Epoch {epoch:03d} | LR: {current_lr:.6f} | Loss: {loss:.4f} | "
                     f"AUC: {metrics['auc']:.4f} | "
-                    f"F1@{opt_threshold:.2f}: {metrics_opt['f1']:.4f}"
+                    f"F1@{opt_threshold:.2f}: {metrics_opt['f1']:.4f} | "
+                    f"GradNorm: {grad_norm:.2f}"
                 )
                 
                 # Save checkpoint
@@ -499,6 +539,14 @@ def run_training():
             val_probs=final_metrics['probs'],
             val_labels=final_metrics['labels']
         )
+        
+        # Generate training visualizations for this fold
+        logger.info("\nGenerating fold visualizations...")
+        plot_path = monitor.plot_training_curves(fold)
+        logger.info(f"  Training curves saved to: {plot_path}")
+        
+        history_path = monitor.save_history(fold)
+        logger.info(f"  Training history saved to: {history_path}")
     
     # Log cross-validation summary
     tracker.log_summary()
@@ -506,6 +554,90 @@ def run_training():
     # Ensemble evaluation on test set
     if GNN_ENSEMBLE_MODE:
         evaluate_ensemble(tracker, checkpoint_manager)
+    
+    # POST-TRAINING ANALYSIS
+    logger.info(f"\n{'='*70}")
+    logger.info("POST-TRAINING ANALYSIS")
+    logger.info(f"{'='*70}\n")
+    
+    # 1. Feature Attribution Analysis (if Captum available)
+    if FEATURE_ANALYSIS_AVAILABLE:
+        try:
+            logger.info("Running feature attribution analysis...")
+            from src.features.graph_factory import ABIDECausalDataset
+            
+            # Load test set
+            test_dataset = ABIDECausalDataset(split='test')
+            test_loader = DataLoader(
+                [d for d in test_dataset if d is not None],
+                batch_size=GNN_BATCH_SIZE
+            )
+            
+            # Define feature names (8 temporal + 6 spatial)
+            feature_names = [
+                'mean', 'std', 'skew', 'kurtosis', 'entropy', 'hurst',  # 6 temporal
+                'x_coord', 'y_coord', 'z_coord',  # 3 spatial
+            ]
+            
+            # Load best model (fold 0 as representative)
+            best_model = CausalBrainGNN(
+                num_node_features=GNN_IN_CHANNELS,
+                hidden_channels=GNN_HIDDEN_CHANNELS_TUNED,
+                num_classes=2,
+                dropout=0.5,
+                num_heads=2,
+                num_sites=20,
+                use_site_embedding=GNN_USE_SITE_EMBEDDING,
+                use_demographics=GNN_USE_DEMOGRAPHICS,
+            ).to(DEVICE)
+            checkpoint_manager.load(best_model, fold=0)
+            
+            # Compute feature attributions
+            feature_analyzer = FeatureAttributionAnalyzer(
+                best_model, test_loader, feature_names, device=DEVICE
+            )
+            attributions = feature_analyzer.compute_attributions()
+            
+            # Visualize and save
+            feature_output = analysis_dir / 'features'
+            feature_output.mkdir(parents=True, exist_ok=True)
+            feature_analyzer.visualize_feature_importance(
+                attributions,
+                str(feature_output / 'feature_importance.png')
+            )
+            logger.info(f"  Feature importance plot saved to: {feature_output / 'feature_importance.png'}")
+            
+        except Exception as e:
+            logger.warning(f"Feature attribution analysis failed: {e}")
+    
+    # 2. Causal Graph Analysis
+    try:
+        logger.info("\nRunning causal graph analysis...")
+        import pandas as pd
+        
+        # Load manifest
+        manifest_path = DATA_METADATA / 'master_manifest.csv'
+        manifest = pd.read_csv(manifest_path)
+        
+        # Compute graph properties
+        graph_analyzer = CausalGraphAnalyzer(CAUSAL_GRAPHS_DIR, manifest)
+        graph_metrics = graph_analyzer.compute_graph_properties()
+        
+        # Compare ASD vs Control
+        graph_output = analysis_dir / 'graphs'
+        graph_output.mkdir(parents=True, exist_ok=True)
+        graph_analyzer.compare_asd_vs_control(
+            graph_metrics,
+            str(graph_output)
+        )
+        logger.info(f"  Graph analysis plots saved to: {graph_output}")
+        
+    except Exception as e:
+        logger.warning(f"Causal graph analysis failed: {e}")
+    
+    logger.info(f"\n{'='*70}")
+    logger.info("TRAINING AND ANALYSIS COMPLETE")
+    logger.info(f"{'='*70}\n")
 
 
 # CLI

@@ -1,6 +1,5 @@
 import argparse
 import logging
-import os
 import subprocess
 import sys
 import shutil
@@ -13,7 +12,6 @@ from src.core.config import (
     validate_environment,
     PROJECT_ROOT,
     DATA_METADATA,
-    DATA_FINAL,
     FINAL_TRAIN,
     FINAL_VAL,
     FINAL_TEST,
@@ -22,8 +20,6 @@ from src.core.config import (
     NODE_ATTRIBUTES_TEMPORAL,
     NODE_ATTRIBUTES_HARMONIZED,
     CHECKPOINT_DIR,
-    NUM_LOBES,
-    YOLO_MODEL_SIZE,
     YOLO_WEIGHTS_PATH
 )
 
@@ -66,9 +62,9 @@ def prompt_user(message, default=True):
 def clear_old_state():
     """
     Prevents 'Shape Mismatches' by clearing old 164/170 ROI data.
-    This ensures the new 5-node architecture has a clean environment.
+    This ensures the new 12-region architecture has a clean environment.
     """
-    logger.info("Cleaning legacy pipeline state for 5-node alignment...")
+    logger.info("Cleaning legacy pipeline state for 12-region alignment...")
     
     # Files to remove to force regeneration
     to_delete = [
@@ -162,7 +158,7 @@ def show_execution_plan(stages):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Neuro-CXG: 5-Node Causal GNN Pipeline",
+        description="Neuro-CXG: 12-Region Causal GNN Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -193,10 +189,21 @@ Examples:
                         help="Skip atlas-based annotation (use existing labels)")
     parser.add_argument("--skip-yolo", action="store_true",
                         help="Skip YOLO training (use existing weights)")
+    parser.add_argument("--skip-gnn", action="store_true",
+                        help="Skip GNN training")
     parser.add_argument("--skip-integrity", action="store_true",
                         help="Skip all integrity checks")
     parser.add_argument("--skip-atlas-validation", action="store_true",
                         help="Skip atlas validation")
+    parser.add_argument("--skip-validation", action="store_true",
+                        help="Skip validation checks")
+    
+    # NEW: Visualization flags
+    parser.add_argument("--skip-visualizations", action="store_true",
+                        help="Skip generating visualizations after training")
+    parser.add_argument("--visualizations-only", action="store_true",
+                        help="Only run visualizations (skip all other stages)")
+    
     parser.add_argument("--skip-diagnostics", action="store_true",
                         help="Skip comprehensive health check")
     parser.add_argument("--skip-comprehensive-validation", action="store_true",
@@ -213,7 +220,7 @@ Examples:
     
     print("\n" + "="*70)
     print("NEURO-CXG PIPELINE RUNNER")
-    print("5-Node Causal GNN for fMRI Analysis")
+    print("12-Region Causal GNN for fMRI Analysis")
     print("="*70)
     
     # STAGE 0: PRE-FLIGHT VALIDATION
@@ -283,7 +290,7 @@ Examples:
             "module": "src.pipelines.roi_detection"
         },
         "spatial_features": {
-            "name": "Spatial Feature Extraction (5-lobe)",
+            "name": "Spatial Feature Extraction (12-region)",
             "should_run": not NODE_FEATURES_3D.exists() or args.force_reset,
             "reason": "Missing features" if not NODE_FEATURES_3D.exists() else "Force reset",
             "module": "src.features.extract_features"
@@ -307,19 +314,45 @@ Examples:
             "module": "src.validation.integrity",
             "function": "check_distribution"
         },
+        "diagnostics": {
+            "name": "Pipeline Diagnostics",
+            "should_run": not args.skip_diagnostics,
+            "reason": "Comprehensive health check",
+            "module": "src.validation.integrity",
+            "function": "generate_health_report"
+        },
+        "comprehensive_validation": {
+            "name": "Comprehensive Validation",
+            "should_run": not args.skip_comprehensive_validation,
+            "reason": "YOLO quality, sparsity, stratification checks",
+            "module": "src.validation.validator"
+        },
         "causal_graphs": {
-            "name": "Causal Graph Construction (5*5)",
+            "name": "Causal Graph Construction (12×12)",
             "should_run": (not any(CAUSAL_GRAPHS_DIR.iterdir()) if CAUSAL_GRAPHS_DIR.exists() else True) or args.force_reset,
             "reason": "Missing graphs" if (not any(CAUSAL_GRAPHS_DIR.iterdir()) if CAUSAL_GRAPHS_DIR.exists() else True) else "Force reset",
             "module": "src.features.construct_causal"
         },
         "gnn_training": {
             "name": "GNN Training (5-Fold CV)",
-            "should_run": True,  # Always offer to run
+            "should_run": not args.skip_gnn and not args.visualizations_only,  # Skip if only visualizations requested
             "reason": "Main training phase",
             "module": "src.models.gnn_model"
+        },
+        "visualizations": {
+            "name": "Generate Visualizations",
+            "should_run": not args.skip_visualizations,  # Run by default unless skipped
+            "reason": "Generate comprehensive visualizations",
+            "module": "src.analysis.visualize_results"
         }
     }
+    
+    # Special handling for visualizations-only mode
+    if args.visualizations_only:
+        logger.info("🎨 Visualizations-only mode: Skipping all training stages")
+        for key in stages.keys():
+            if key != "visualizations":
+                stages[key]["should_run"] = False
     
     # Show execution plan
     stage_list = [(stage_info["name"], stage_info["should_run"], stage_info["reason"]) 
@@ -344,7 +377,10 @@ Examples:
                       "post_download_integrity", "annotate", "yolo", "spatial_features",
                       "temporal_features", "harmonization", "diagnostics",
                       "comprehensive_validation", "pre_gnn_integrity",
-                      "causal_graphs", "gnn_training"]:
+                      "causal_graphs", "gnn_training", "visualizations"]:  # Added visualizations
+        
+        if stage_key not in stages:
+            continue
         
         stage = stages[stage_key]
         
@@ -360,10 +396,12 @@ Examples:
             msg = f"Run {stage['name']}? (This may take 2-4 hours)"
         elif stage_key == "gnn_training":
             msg = f"🚀 Start {stage['name']}? (Main training phase)"
+        elif stage_key == "visualizations":
+            msg = f"🎨 Generate {stage['name']}? (Creates plots and analysis)"
         else:
             msg = f"Run {stage['name']}?"
         
-        if interactive:
+        if interactive and not args.visualizations_only:  # No prompt in visualizations-only mode
             if not prompt_user(msg, default=True):
                 logger.info(f"⏭️  User skipped: {stage['name']}")
                 continue
