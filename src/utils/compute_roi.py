@@ -1,9 +1,7 @@
 import argparse
-import json
 import logging
 import sys
 from pathlib import Path
-from collections import Counter
 
 import numpy as np
 import pandas as pd
@@ -17,9 +15,7 @@ from src.core.config import (
     DATA_FINAL,
     MASTER_MANIFEST,
     NODE_ATTRIBUTES_TEMPORAL,
-    DEFAULT_TR,
-    NUM_TEMPORAL_FEATURES,
-    NUM_LOBES
+    DEFAULT_TR
 )
 
 # Expected ROI count range for validation (AAL3v1 atlas)

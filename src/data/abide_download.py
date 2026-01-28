@@ -1,4 +1,4 @@
-import os, json, tempfile, numpy as np, pandas as pd, nibabel as nib
+import json, tempfile, numpy as np, pandas as pd, nibabel as nib
 from pathlib import Path
 from PIL import Image
 import boto3

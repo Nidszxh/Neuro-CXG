@@ -1,7 +1,5 @@
-import os
 import logging
 import pandas as pd
-import numpy as np
 from ultralytics import YOLO
 from tqdm import tqdm
 from pathlib import Path
@@ -91,7 +89,7 @@ def extract_features():
     for sub_id in tqdm(subject_ids, desc="Building Subject Nodes"):
         sub_group = raw_df[raw_df['subject_id'] == sub_id]
         
-        # Check if we found all 5 lobes
+        # Check if we found all 12 regions
         if sub_group['roi_class'].nunique() < NUM_LOBES:
             continue
 

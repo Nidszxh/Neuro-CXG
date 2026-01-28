@@ -1,4 +1,4 @@
-import os, numpy as np, nibabel as nib, pandas as pd, logging, sys
+import os, numpy as np, nibabel as nib, logging, sys
 from PIL import Image
 from tqdm import tqdm
 from pathlib import Path

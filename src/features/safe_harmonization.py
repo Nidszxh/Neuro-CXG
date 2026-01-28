@@ -15,7 +15,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     NODE_ATTRIBUTES_TEMPORAL, MASTER_MANIFEST,
-    NODE_ATTRIBUTES_HARMONIZED, NUM_TEMPORAL_FEATURES
+    NODE_ATTRIBUTES_HARMONIZED, NUM_TEMPORAL_FEATURES,
+    LOBE_MAPPING, NUM_LOBES, LOBE_NAMES
 )
 
 logging.basicConfig(
@@ -23,6 +24,67 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def aggregate_rois_to_lobes(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Aggregate 170 ROI features to 12 region features.
+    
+    Input: subject_id + (170 ROIs × 8 features) = 1361 columns
+    Output: subject_id + (12 regions × 8 features) = 97 columns
+    
+    For each region, averages the features of all ROIs belonging to that region.
+    """
+    logger.info("Aggregating 170 ROIs to 12 regions...")
+    
+    # Identify feature types (8 temporal features per ROI)
+    feature_types = ["mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr"]
+    
+    # Build aggregated dataframe
+    aggregated_data = []
+    
+    for idx, row in df.iterrows():
+        subject_row = {'subject_id': row['subject_id']}
+        
+        # For each lobe
+        for lobe_id in range(NUM_LOBES):
+            lobe_name = LOBE_NAMES[lobe_id]
+            roi_indices = LOBE_MAPPING[lobe_id]  # These are 1-indexed
+            
+            # For each feature type
+            for feat_idx, feat_name in enumerate(feature_types):
+                # Collect values from all ROIs in this lobe for this feature
+                roi_values = []
+                for roi_id in roi_indices:
+                    # Convert 1-indexed ROI to column name
+                    col_name = f"roi{roi_id}_{feat_name}"
+                    if col_name in df.columns:
+                        val = row[col_name]
+                        if pd.notna(val) and np.isfinite(val):
+                            roi_values.append(val)
+                
+                # Average across ROIs in this lobe
+                if len(roi_values) > 0:
+                    subject_row[f"{lobe_name}_{feat_name}"] = np.mean(roi_values)
+                else:
+                    # No valid values found; use zero
+                    subject_row[f"{lobe_name}_{feat_name}"] = 0.0
+        
+        aggregated_data.append(subject_row)
+    
+    aggregated_df = pd.DataFrame(aggregated_data)
+    
+    # Validate output shape
+    expected_cols = 1 + (NUM_LOBES * NUM_TEMPORAL_FEATURES)  # subject_id + 12*8
+    if len(aggregated_df.columns) != expected_cols:
+        logger.warning(
+            f"Unexpected column count: {len(aggregated_df.columns)} vs expected {expected_cols}"
+        )
+    
+    logger.info(f"✓ Aggregated to {NUM_LOBES} regions with {NUM_TEMPORAL_FEATURES} features each")
+    logger.info(f"  Total columns: {len(aggregated_df.columns)} (subject_id + {NUM_LOBES*NUM_TEMPORAL_FEATURES} features)")
+    
+    return aggregated_df
 
 
 def validate_temporal_features(df: pd.DataFrame) -> Dict[str, any]:
@@ -382,16 +444,30 @@ def run_safe_harmonization(
                 [harmonized_df[feature_cols].max().max(), harmonized_df[feature_cols].min().min()]
             )
         
-        # Step 7: Save
+        # Step 7: Aggregate 170 ROIs to 12 regions
+        logger.info("\nStep 7: Aggregating ROIs to lobes...")
+        lobe_aggregated_df = aggregate_rois_to_lobes(harmonized_df)
+        
+        # Final validation after aggregation
+        lobe_feature_cols = [c for c in lobe_aggregated_df.columns if c != 'subject_id']
+        final_nan_after_agg = lobe_aggregated_df[lobe_feature_cols].isna().sum().sum()
+        
+        if final_nan_after_agg > 0:
+            logger.warning(f"{final_nan_after_agg} NaNs found after aggregation - filling with zeros")
+            lobe_aggregated_df[lobe_feature_cols] = lobe_aggregated_df[lobe_feature_cols].fillna(0)
+        
+        # Step 8: Save aggregated features
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        harmonized_df.to_csv(output_path, index=False)
+        lobe_aggregated_df.to_csv(output_path, index=False)
         
         logger.info("="*60)
-        logger.info("✓ HARMONIZATION SUCCESSFUL")
+        logger.info("✓ HARMONIZATION AND AGGREGATION SUCCESSFUL")
         logger.info(f"  Output: {output_path}")
-        logger.info(f"  Subjects: {len(harmonized_df)}")
-        logger.info(f"  Features per subject: {len(feature_cols)}")
-        logger.info(f"  Final NaN count: {final_nan_count}")
+        logger.info(f"  Subjects: {len(lobe_aggregated_df)}")
+        logger.info(f"  Lobes: {NUM_LOBES}")
+        logger.info(f"  Features per lobe: {NUM_TEMPORAL_FEATURES}")
+        logger.info(f"  Total features per subject: {len(lobe_feature_cols)}")
+        logger.info(f"  Final NaN count: {final_nan_after_agg}")
         logger.info("="*60)
         
         return True

@@ -9,7 +9,7 @@ import sys
 # Setup paths and config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
-    NUM_LOBES, LOBE_NAMES, DATA_ROOT,
+    NUM_LOBES, LOBE_NAMES,
     MASTER_MANIFEST, NODE_ATTRIBUTES_HARMONIZED, 
     NODE_FEATURES_3D, CAUSAL_GRAPHS_DIR,
     NUM_TEMPORAL_FEATURES, NUM_SPATIAL_FEATURES, GNN_IN_CHANNELS
@@ -59,11 +59,11 @@ class ABIDECausalDataset(Dataset):
             logger.info(f"✓ Feature dimensions validated")
     
     def _load_data_sources(self):
-        """Load the harmonized 5-lobe features and spatial coordinates."""
+        """Load the harmonized 12-region features and spatial coordinates."""
         # 1. Master manifest
         self.manifest_raw = pd.read_csv(MASTER_MANIFEST)
         
-        # 2. Harmonized temporal features (aggregated to 5 lobes)
+        # 2. Harmonized temporal features (aggregated to 12 regions)
         self.node_attr = pd.read_csv(NODE_ATTRIBUTES_HARMONIZED).set_index('subject_id')
         
         # 3. Spatial coordinates and geometric features (6 per lobe)
@@ -125,26 +125,26 @@ class ABIDECausalDataset(Dataset):
         label = 1 if dx_group == 2 else 0  # DX_GROUP: 1=Control, 2=ASD → labels: 0=Control, 1=ASD
         
         try:
-            # 1. Load 5x5 Causal Adjacency Matrix
+            # 1. Load 12×12 Causal Adjacency Matrix
             graph_path = self.adj_dir / f"{sub_id}_graph.pt"
             graph_dict = torch.load(graph_path)
-            adj = graph_dict['adj']  # Should be (5, 5)
+            adj = graph_dict['adj']  # Should be (12, 12)
             
             if torch.isnan(adj).any() or torch.isinf(adj).any():
                 logger.error(f"Subject {sub_id}: Adjacency matrix contains NaN/Inf")
                 return None
 
-            # 2. Load 5-Lobe Temporal Features (FIXED: 8 per lobe)
+            # 2. Load 12-Region Temporal Features (8 per region)
             temporal_features = self._get_subject_temporal(sub_id)
             
-            # 3. Load 5-Lobe Spatial Features (FIXED: 6 per lobe)
+            # 3. Load 12-Region Spatial Features (6 per region)
             spatial_features = self._get_subject_spatial(sub_id)
             
             if temporal_features is None or spatial_features is None:
                 logger.error(f"Subject {sub_id}: Missing features")
                 return None
 
-            # 4. Combine (5, 8) and (5, 6) -> (5, 14) ✓ FIXED
+            # 4. Combine (12, 8) temporal and (12, 6) spatial -> (12, 14) ✓
             x = torch.cat([
                 torch.tensor(temporal_features, dtype=torch.float32),
                 torch.tensor(spatial_features, dtype=torch.float32)
@@ -214,13 +214,13 @@ class ABIDECausalDataset(Dataset):
 
     def _get_subject_temporal(self, sub_id):
         """
-        Extracts temporal features and reshapes to (5, 8).        
+        Extracts temporal features and reshapes to (12, 8).        
         Returns None if subject not found or features are invalid.
         """
         try:
             row = self.node_attr.loc[sub_id].values
             
-            # Expected: 5 lobes * 8 features = 40 values
+            # Expected: 12 regions * 8 features = 96 values
             expected_features = NUM_LOBES * NUM_TEMPORAL_FEATURES
             
             if len(row) < expected_features:
@@ -248,9 +248,9 @@ class ABIDECausalDataset(Dataset):
 
     def _get_subject_spatial(self, sub_id):
         """
-        Extracts spatial features for 5 lobes and reshapes to (5, 6).
+        Extracts spatial features for 12 regions and reshapes to (12, 6).
         
-        FIXED: Now extracts all 6 spatial features per lobe:
+        FIXED: Now extracts all 6 spatial features per region:
         1. x (centroid x-coordinate)
         2. y (centroid y-coordinate)
         3. z_depth (centroid z-coordinate)

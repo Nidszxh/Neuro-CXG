@@ -64,7 +64,7 @@ def compute_lagged_causality(ts_lobe: torch.Tensor) -> torch.Tensor:
     ts_prev = ts_std[:-CAUSAL_LAG]
     ts_curr = ts_std[CAUSAL_LAG:]
     
-    # 3. Compute Adjacency Matrix (5x5)
+    # 3. Compute Adjacency Matrix (12x12 for 12 regions)
     directed_adj = (ts_prev.T @ ts_curr) / (ts_std.shape[0] - CAUSAL_LAG)
     
     # 4. Validate output
@@ -93,10 +93,10 @@ def construct_graph(subject_id: str, split: str) -> bool:
             logger.warning(f"{subject_id}: Insufficient timepoints ({ts_data.shape[0]})")
             return False
         
-        # 1. Aggregate to 5 Lobes
+        # 1. Aggregate to 12 Regions
         ts_lobes = aggregate_to_lobes(ts_data)
         
-        # 2. Compute 5x5 Causal Matrix
+        # 2. Compute 12x12 Causal Matrix
         causal_matrix = compute_lagged_causality(ts_lobes)
         
         #  CRITICAL FIX: VALIDATE BEFORE SPARSIFICATION 
@@ -172,7 +172,7 @@ def construct_graph(subject_id: str, split: str) -> bool:
 
 def main():
     logger.info("="*60)
-    logger.info(f"CONSTRUCTING 5×5 CAUSAL GRAPHS (Lag={CAUSAL_LAG})")
+    logger.info(f"CONSTRUCTING 12×12 CAUSAL GRAPHS (Lag={CAUSAL_LAG})")
     logger.info(f"Sparsity: Keep top {(1-SPARSITY_QUANTILE)*100:.0f}% of edges")
     logger.info("="*60)
     
