@@ -23,35 +23,57 @@ FINAL_VAL       = DATA_FINAL / "val"
 FINAL_TEST      = DATA_FINAL / "test"
 
 MODEL_ROOT      = PROJECT_ROOT / "models"
-CHECKPOINT_DIR  = MODEL_ROOT / "checkpoints"
+CHECKPOINT_DIR  = MODEL_ROOT   / "checkpoints"
 RESULTS_DIR     = PROJECT_ROOT / "results"
 CONFIG_DIR      = PROJECT_ROOT / "configs"
 
 # --- FILE PATHS ---
-CONFIG_BRAIN_YAML = CONFIG_DIR / "brain.yaml"
-ATLAS_PATH      = DATA_ATLASES / "AAL3v1.nii"
-ATLAS_METADATA  = DATA_METADATA / "atlas_metadata.json"
+CONFIG_BRAIN_YAML = CONFIG_DIR   / "brain.yaml"
+ATLAS_PATH      = DATA_ATLASES   / "AAL3v1.nii"
+ATLAS_METADATA  = DATA_METADATA  / "atlas_metadata.json"
 PHENO_PATH      = DATA_PROCESSED / "Phenotypic_V1_0b_preprocessed1.csv"
-MASTER_MANIFEST = DATA_METADATA / "master_manifest.csv"
+MASTER_MANIFEST = DATA_METADATA  / "master_manifest.csv"
 
 # Output files for the pipeline
-NODE_ATTRIBUTES_TEMPORAL     = DATA_METADATA / "node_attributes_temporal.csv"
-NODE_ATTRIBUTES_HARMONIZED   = DATA_METADATA / "node_attributes_harmonized.csv"
-NODE_FEATURES_3D             = DATA_METADATA / "node_features_3d.csv"
+NODE_ATTRIBUTES_TEMPORAL     = DATA_METADATA  / "node_attributes_temporal.csv"
+NODE_ATTRIBUTES_HARMONIZED   = DATA_METADATA  / "node_attributes_harmonized.csv"
+NODE_FEATURES_3D             = DATA_METADATA  / "node_features_3d.csv"
 CAUSAL_GRAPHS_DIR            = DATA_PROCESSED / "causal_graphs"
 
-# --- ANATOMICAL MAPPING (5-Lobe Standard) ---
+# --- ANATOMICAL MAPPING (12-Region Neuroanatomical Subdivision) ---
 # Note: ROI IDs are 1-indexed (AAL Standard). Internal code converts to 0-indexed.
+# Updated January 2026: Expanded from 5 lobes to 12 functionally-distinct brain regions
+# for improved spatial resolution in causal graph analysis
 LOBE_MAPPING = {
-    0: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26],  # Frontal
-    1: [79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90],  # Temporal
-    2: [57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70],  # Parietal
-    3: [43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54],  # Occipital
-    4: [31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 71, 72, 73, 74, 75, 76, 77, 78, 91, 92, 93, 94]  # Limbic
+    0: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],  # Frontal_Superior (Left+Right)
+    1: [21, 22, 25, 26, 27, 28],  # Frontal_Orbital (Left+Right)
+    2: [17, 18, 19, 20, 23, 24],  # Motor_Premotor (Central, includes 23-24)
+    3: [29, 30, 31, 32],  # Insula (Left+Right, 29-30 missing previously)
+    4: [33, 34, 35, 36, 37, 38, 151, 152, 153, 154, 155, 156],  # Cingulate + ACC subdivisions
+    5: [39, 40, 41, 42, 91, 92, 93, 94],  # Limbic (Hippocampus, Amygdala)
+    6: [43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56],  # Occipital
+    7: [57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70],  # Parietal
+    8: [79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90],  # Temporal
+    9: [71, 72, 73, 74, 75, 76, 77, 78, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150],  # Subcortical (Thalamus, Basal Ganglia, Subthalamic nucleus, SNpc)
+    10: list(range(95, 121)) + list(range(157, 167)),  # Cerebellum (Vermis + Hemispheres)
+    11: [167, 168, 169, 170]  # Brainstem (Midbrain, Pons, Medulla)
 }
 
-LOBE_NAMES = {0: 'Frontal', 1: 'Temporal', 2: 'Parietal', 3: 'Occipital', 4: 'Limbic'}
-NUM_LOBES = 5
+LOBE_NAMES = {
+    0: 'Frontal_Superior',
+    1: 'Frontal_Orbital', 
+    2: 'Motor_Premotor',
+    3: 'Insula',
+    4: 'Cingulate',
+    5: 'Limbic',
+    6: 'Occipital',
+    7: 'Parietal',
+    8: 'Temporal',
+    9: 'Subcortical',
+    10: 'Cerebellum',
+    11: 'Brainstem'
+}
+NUM_LOBES = 12  # Updated from 5 to 12 regions
 NUM_TEMPORAL_FEATURES = 8  # Mean, Std, Skew, Kurtosis, PSD, MSSD, Range, Autocorr per ROI
 NUM_SPATIAL_FEATURES = 6   # x, y, z_depth, size, conf_std, detection_count per lobe
 
@@ -59,9 +81,9 @@ NUM_SPATIAL_FEATURES = 6   # x, y, z_depth, size, conf_std, detection_count per 
 DEFAULT_TR = 2.0  # Default TR (seconds) for fMRI—fallback if not in phenotype CSV
 
 # --- YOLO DETECTION PARAMETERS (Fixed for Medical Integrity) ---
-YOLO_MODEL_SIZE = "yolo11n.pt"
-YOLO_PROJECT_NAME = "ROI_Detection_v21"  # Output directory name from training
-YOLO_WEIGHTS_PATH = RESULTS_DIR / "ROI_Detection_v21" / "weights" / "best.pt"
+YOLO_MODEL_SIZE = "yolo26n.pt"
+YOLO_PROJECT_NAME = "ROI_Detection_v25"  # Output directory name from training
+YOLO_WEIGHTS_PATH = RESULTS_DIR / "ROI_Detection_v25" / "weights" / "best.pt"
 YOLO_IMGSZ = 640
 YOLO_BATCH_SIZE = 32
 YOLO_EPOCHS = 100
@@ -119,11 +141,12 @@ GNN_NUM_CLASSES = 2      # 0: Control, 1: ASD
 GNN_DROPOUT = 0.5
 GNN_LEARNING_RATE = 0.0005  # Lower LR for stable training with larger model
 GNN_BATCH_SIZE = 32
-GNN_EPOCHS = 150  # More epochs with early stopping
+GNN_EPOCHS = 100  # More epochs with early stopping
 K_FOLDS = 5
+
 # NEW: Improved hyperparameters for better AUC (Experiment v1.2 - AUC Target: 0.60+)
 GNN_LEARNING_RATE_TUNED = 0.0003  # Optimal LR for 128 hidden channels
-GNN_HIDDEN_CHANNELS_TUNED = 128   # Sweet spot for 5-node graphs (128 channels)
+GNN_HIDDEN_CHANNELS_TUNED = 128   # Suitable for 12-region graphs (128 channels)
 GNN_USE_SITE_EMBEDDING = True      # Reduce site bias
 GNN_USE_DEMOGRAPHICS = True        # Add age/sex/IQ conditioning
 GNN_ENSEMBLE_MODE = True           # Average 5-fold predictions
@@ -247,9 +270,9 @@ def log_training_diagnostics(fold: int, epoch: int, metrics: dict):
     
 # --- VALIDATION LOGIC ---
 def validate_environment():
-    """Checks if the 5-node architecture is ready for execution."""
+    """Checks if the 12-region architecture is ready for execution."""
     logger.info("="*60)
-    logger.info("VALIDATING NEURO-CXG 5-NODE ARCHITECTURE")
+    logger.info("VALIDATING NEURO-CXG 12-REGION ARCHITECTURE")
     logger.info("="*60)
     
     # Check paths

@@ -4,10 +4,17 @@ train: train/images
 val: val/images
 test: test/images
 
-# Classes (AAL Groups which is defined)
+# Classes (12 Neuroanatomical Regions - Updated January 2026)
 names:
-  0: Frontal
-  1: Temporal
-  2: Parietal
-  3: Occipital
-  4: Limbic
+  0: Frontal_Superior
+  1: Frontal_Orbital
+  2: Motor_Premotor
+  3: Insula
+  4: Cingulate
+  5: Limbic
+  6: Occipital
+  7: Parietal
+  8: Temporal
+  9: Subcortical
+  10: Cerebellum
+  11: Brainstem
