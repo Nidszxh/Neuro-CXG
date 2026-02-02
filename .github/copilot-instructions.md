@@ -1,44 +1,32 @@
-# Neuro-CXG Codebase Guide for AI Agents
+# Neuro-CXG: AI Agent Guide
 
-## Project Overview
-**Neuro-CXG** is a Graph Neural Network framework for brain disorder classification (ASD vs Control) using causal inference on fMRI data. It combines:
-- **YOLO26n** for anatomical ROI detection in brain slices
-- **Causal graph construction** (12-region aggregation with lagged correlation)
-- **Graph Neural Networks** (GATv2 with 3 layers) on causal adjacency matrices
+## Quick Start
 
-**Data Flow**: Raw fMRI → 2D brain slices → YOLO detections (12 regions) → temporal features → causal graphs → GNN classifier
+**Pipeline**: raw fMRI → YOLO (12 regions) → features → causal graphs → GNN classifier
 
-## Quick Start for Agents
-**Most common tasks:**
-- **Run full pipeline**: `python src/run_pipeline.py --auto --skip-download --skip-split --skip-yolo` (orchestrates all 8 core stages)
-- **Current results**: Mean AUC 0.5716 ± 0.0280 (improved from 0.5354 baseline with 12-region architecture)
-- **Just validation checks**: `python src/validation/integrity.py --health` (comprehensive health report)
-- **Validate environment**: `python -c "from src.core.config import validate_environment; validate_environment()"` (pre-flight check)
-- **Debug data issues**: Use [src/validation/integrity.py] — comprehensive post-download + pre-GNN checks
-- **Find config values**: ALL constants live in [src/core/config.py]—never hardcode paths or parameters
-- **Add new code**: Follow imports from config pattern (see src/features/extract_features.py, src/models/gnn_model.py for correct examples)
+**Essential Commands**:
+```bash
+# Full pipeline
+python src/run_pipeline.py --run-diagnostics --run-manifest --skip-split --run-safe-harmonize
 
-## Architecture & Complete Data Pipeline
+# Health check
+python src/validation/integrity.py --health
 
-### End-to-End Pipeline (Critical Sequencing)
-
-```
-Raw fMRI (ABIDE) 
-  ↓ [abide_download.py]
-Extract 5 z-slices per subject (640×640 PNGs)
-  ↓ [src/pipelines/roi_detection.py - YOLO training]
-Detect bounding boxes for 12 brain regions across slices
-  ↓ [src/features/extract_features.py]
-Aggregate detections into 3D spatial coords per region (12 nodes)
-  ↓ [src/utils/compute_roi.py → src/features/safe_harmonization.py]
-Extract temporal features (8 per node) + spatial (6) = 14 total + harmonize with neuroCombat
-  ↓ [src/features/construct_causal.py]
-Build directed causal graphs (170 AAL→12 regions, lagged Pearson correlation)
-  ↓ [src/models/gnn_model.py]
-Train GNN with 5-fold stratified cross-validation
+# Environment validation
+python -c "from src.core.config import validate_environment; validate_environment()"
 ```
 
-### Critical: Data Format Transformations
+**Key Principle**: ALL constants live in [src/core/config.py](src/core/config.py) - never hardcode paths/dimensions.
+
+## Current State (February 2026)
+
+**YOLO v25**: mAP50-95=0.908, 12-region detection (production-ready)  
+**GNN Hybrid v1**: AUC=0.5832±0.048, F1=0.681±0.004, Focal Loss, 3-layer GATv2  
+**Architecture**: 12 regions (AAL 170→12), 14 features (8 temporal + 6 spatial)
+
+## Data Pipeline (5 Critical Steps)
+
+**Flow**: Raw fMRI → YOLO (12 detections) → Features (14D) → Causal Graphs (12×12) → GNN Classifier
 
 1. **Feature Extraction** → [src/features/extract_features.py]
    - Inference: `model.predict()` with `stream=True` (RAM management)
@@ -75,35 +63,38 @@ Train GNN with 5-fold stratified cross-validation
    - Label smoothing (0.1) and gradient clipping (1.0) for stable training
    - Saves best-AUC model per fold to `models/checkpoints/best_model_fold{0-4}.pt`
 
-### Performance Metrics (January 28, 2026) ✨ UPDATED with 12-Region Architecture
+### Performance Metrics (February 2026) ✨ UPDATED with 12-Region Architecture
 
 **YOLO26n ROI Detector** → [results/ROI_Detection_v25/results.csv]
 - **Latest Training (v25)**: 100 epochs completed
 - **Final mAP50**: 0.976
 - **Final mAP50-95**: 0.908
-- **Precision**: 0.925
+- **Precision**: 0.925 at epoch 100
 - **Recall**: 0.970
-- **Model**: YOLO26n (640×640 input, batch 24, no augmentation for medical images)
+- **Model**: YOLO26n (640×640 input, batch 32, no augmentation for medical images)
 - **Status**: ✅ Excellent performance; production-ready for 12-region detection
 - **Architecture**: Expanded from 5 lobes to 12 anatomical regions for finer granularity
+- **Note**: v26 in progress; v25 deployed to production
 
 **GNN Classification (5-Fold CV with 12-Region Architecture)**
-- **Mean AUC**: 0.5716 ± 0.0280 (improved from 0.5354 baseline, +3.6% improvement)
-- **Per-Fold AUCs**: [0.5582, 0.6041, 0.5243, 0.5806, 0.5907]
-- **Best Fold**: 0.6041 AUC at epoch 80 (Fold 1, clinically relevant signal)
-- **Mean F1**: 0.6874 ± 0.0053 (excellent stability, improved from 0.6586)
-- **Mean Accuracy**: 0.5447 ± 0.0352
-- **Status**: ✅ Established baseline with 12-region model; consistent improvement trajectory:
-  - Previous 5-lobe AUC: 0.5354
-  - Current 12-region AUC: 0.5716 (+6.8% relative improvement)
-  - Architecture changes: 128 hidden channels (up from 64), 3 GATv2 layers with skip connections
+- **Latest Model (Jan 22)**: Hybrid v1 with Focal Loss
+- **Mean AUC**: 0.5832 ± 0.0476 (+8.9% from baseline 0.5354)
+- **Mean F1**: 0.6808 ± 0.0041 (+3.4% from baseline 0.6586)
+- **Architecture**: 3-layer GATv2 with skip connections, 128 hidden channels, 2 attention heads
+- **Loss Function**: Focal Loss (α=0.75, γ=3.0) - addresses class imbalance better than CE
+- **Status**: ✅ Current production baseline; projected target AUC 0.650 with full metadata integration
+- **Evolution**:
+  - Baseline (Jan 21): 0.5354 AUC, 2-layer GATv2, Cross-Entropy
+  - Hybrid v1 (Jan 22): 0.5832 AUC, 3-layer GATv2, Focal Loss, coordinates-only features
+  - Target: 0.650 AUC with full 14-feature metadata + attention mechanisms
 
 ## Critical Patterns & Conventions
 
 ### 1. Configuration as Single Source of Truth ✅ (Refactored January 2026)
 - **ALL** hardcoded constants must live in [src/core/config.py]
 - Import from config everywhere else (e.g., `from src.core.config import LOBE_MAPPING, NUM_LOBES`)
-- AAL3 → Lobe mapping: 5 lobes, 1-indexed ROIs (AAL standard), convert to 0-indexed internally
+- 12-region architecture: `NUM_LOBES=12` (expanded from 5 lobes January 2026 for finer granularity)
+- AAL3 → 12-region mapping: 170 ROIs (1-indexed) aggregated via `LOBE_MAPPING` dict
 - Config provides comprehensive validation functions:
   - `validate_environment()`: Pre-flight checks (paths, CUDA, lobe mapping)
   - `validate_graph_construction_inputs()`: Pre-checks before causal graph building
@@ -123,22 +114,46 @@ Train GNN with 5-fold stratified cross-validation
 - Never hardcode relative paths like `./data` or `../..`
 - Use Path().exists() for validation before loading
 
-### 3. Tensor/Data Shapes (Critical for Graph Construction)
+### 3. Error Handling & Logging ✅ (Refactored January 2026)
+- **Logging**: All modules use Python `logging` instead of `print()` statements
+  - Setup in each module: 
+    ```python
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+    ```
+  - Usage: `logger.info()`, `logger.warning()`, `logger.error()`, `logger.debug()`
+  - **Status**: ✅ All core modules updated (split.py, manifestor.py, annotate.py, integrity.py, etc.)
+
+- **Try-Catch Error Handling**: All I/O operations wrapped with specific error types
+  - **CSV Loading**: Catch `FileNotFoundError` and `pd.errors.ParserError` separately ([src/utils/compute_roi.py] lines 118-130)
+  - **File Operations**: Catch `FileNotFoundError`, `ValueError` for invalid arrays
+  - **Graph Construction**: Use `torch.isnan()`, `torch.isinf()` checks before using edge/node tensors
+  - **DataLoader**: Null-safety for graphs with zero edges (validated in [src/features/graph_factory.py] line ~145)
+  - **Status**: ✅ All data utilities updated (extract_features.py, safe_harmonization.py, compute_roi.py)
+
+- **Graph Edge Cases**: 
+  - Empty edge_index handled gracefully (validated in `graph_factory.py` line ~145)
+  - Zero-edge graphs detected after sparsification (validated in `construct_causal.py` line ~110)
+  - Subjects with insufficient edges skipped with warning logs
+  - Training loop skips null graphs: `if data is None: continue` in `train_one_epoch()` and `evaluate()`
+
+### 4. Tensor/Data Shapes (Critical for Graph Construction)
 - **Input time series**: `(timepoints, num_rois)` where num_rois ∈ {116, 117, 170} depending on atlas
-- **After lobe aggregation**: `(timepoints, 12)` (always 12 regions)
+- **After lobe aggregation**: `(timepoints, 12)` (always 12 regions from LOBE_MAPPING)
 - **Graph node features (x)**: `(12, num_features)` where num_features = 8 (temporal) + 6 (spatial) = 14
 - **Edge index**: `(2, num_edges)` — 2D tensor for PyTorch Geometric format
 - **Edge attributes**: `(num_edges,)` — causal correlation weights (floats in [-1, 1])
 - **Batch label (y)**: scalar 0 (Control) or 1 (ASD)
 
-### 4. AAL3 Neuroanatomy
-- **170 ROIs** (1-indexed, AAL standard)
+### 5. AAL3 Neuroanatomy
+- **170 ROIs** (1-indexed, AAL standard; convert to 0-indexed in code: `aal_roi - 1`)
 - **12 Regions** in config.LOBE_MAPPING (expanded from 5 lobes for finer granularity)
   - All 170 AAL ROIs mapped to 12 brain regions (see config for mapping details)
 - **Validation**: `config.validate_lobe_mapping()` checks completeness, no duplicates, range [1-170]
-- When indexing: convert AAL 1-indexed to Python 0-indexed: `aal_roi - 1`
+- **Robustness**: AAL3v1 may have 164-170 ROIs (2 unused); code pads to 170 for consistency ([src/utils/compute_roi.py] line ~220)
 
-### 5. YOLO-Specific (Medical Image Tuning - CRITICAL)
+### 6. YOLO-Specific (Medical Image Tuning - CRITICAL)
 - Model size: `yolo26n` (defined in config.YOLO_MODEL_SIZE)
 - Input size: 640×640 (config.YOLO_IMGSZ)
 - Batch: 24 (config.YOLO_BATCH_SIZE)
@@ -152,7 +167,7 @@ Train GNN with 5-fold stratified cross-validation
 - Config file: `configs/brain.yaml` (defines 12 ROI classes for 12 brain regions)
 - **Key insight**: Medical image preprocessing is opposite of natural image YOLO—disable all augmentation that breaks anatomical alignment
 
-### 6. Causal Graph Construction Details
+### 7. Causal Graph Construction Details
 - **Lag**: t-1 → t (1 TR lag enforces temporal precedence)
 - **Method**: Lagged Pearson correlation (not partial correlation)
 - **Sparsity**: Keep top 40% of correlations by setting `SPARSITY_QUANTILE = 0.60`
@@ -168,7 +183,7 @@ Train GNN with 5-fold stratified cross-validation
   ```
 - **Spatial coordinates**: Aggregated from YOLO detections (mean x, y, z_depth per region)
 
-### 7. GNN Architecture & Training
+### 8. GNN Architecture & Training
 - **Model**: `CausalBrainGNN` (class in [src/models/causal_gnn.py])
   - Input embedding: LayerNorm (not BatchNorm—graphs are small; stabilizes 14 features with varying scales)
   - Layer 1: GATv2Conv with **2 heads**, edge_dim=1 (causal weights; 128 hidden channels)
@@ -182,44 +197,18 @@ Train GNN with 5-fold stratified cross-validation
 - **Training details**:
   - Optimizer: AdamW with `lr=0.001, weight_decay=1e-3`
   - Scheduler: CosineAnnealingLR over EPOCHS
-  - Loss: CrossEntropyLoss with `label_smoothing=0.1`
+  - Loss: Focal Loss (α=0.75, γ=3.0) for class imbalance (replaces CrossEntropyLoss in Hybrid v1)
   - Gradient clipping: `max_norm=1.0` (prevents explosion in small graphs)
   - K-fold: 5-fold stratified by DX_GROUP
   - Metrics: Accuracy, F1, ROC-AUC (from probs[:,1]), confusion matrix per fold
   - Checkpointing: Save best model per fold (top validation AUC)
   - Dropout: 0.5 (high dropout to prevent memorizing site-specific noise)
 
-- **Current Results** (5-fold CV on full training set with 12-region architecture):
-  - Mean AUC: **0.5716 ± 0.0280** (improved from 0.5354 baseline, +6.8% relative)
-  - Per-fold AUCs: **[0.5582, 0.6041, 0.5243, 0.5806, 0.5907]**
-  - Best fold: **0.6041 AUC** (Fold 1, epoch 80 - clinically relevant signal)
-  - Mean F1: **0.6874 ± 0.0053** (excellent stability across folds)
-  - Mean Accuracy: **0.5447 ± 0.0352**
-  - Note: 12-region architecture shows consistent improvement; represents production-ready baseline
-
-### 8. Error Handling & Logging ✅ (Refactored January 2026)
-- **Logging**: All modules use Python `logging` instead of `print()` statements
-  - Setup in each module: 
-    ```python
-    import logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger(__name__)
-    ```
-  - Usage: `logger.info()`, `logger.warning()`, `logger.error()`, `logger.debug()`
-  - **Status**: ✅ All core modules updated (split.py, manifestor.py, annotate.py, integrity.py, etc.)
-
-- **Try-Catch Error Handling**: All I/O operations wrapped with specific error types
-  - **CSV Loading**: `FileNotFoundError`, `pd.errors.ParserError` caught separately
-  - **File Operations**: `FileNotFoundError`, `ValueError` for invalid arrays
-  - **Graph Construction**: `torch.isnan()`, `torch.isinf()` checks before use
-  - **DataLoader**: Null-safety for graphs with zero edges (returns `None`, skipped in training loop)
-  - **Status**: ✅ All data utilities updated (extract_features.py, safe_harmonization.py, compute_roi.py)
-
-- **Graph Edge Cases**: 
-  - Empty edge_index handled gracefully (validated in `graph_factory.py` line ~145)
-  - Zero-edge graphs detected after sparsification (validated in `construct_causal.py` line ~110)
-  - Subjects with insufficient edges skipped with warning logs
-  - Training loop skips null graphs: `if data is None: continue` in `train_one_epoch()` and `evaluate()`
+- **Current Results** (5-fold CV with 12-region architecture):
+  - Mean AUC: **0.5832 ± 0.0476** (Hybrid v1 with Focal Loss)
+  - Mean F1: **0.6808 ± 0.0041** (excellent stability)
+  - Evolution: Baseline 0.5354 → Hybrid v1 0.5832 (+8.9% improvement)
+  - Note: Current production model uses coordinates-only features; target 0.650 AUC with full 14-feature metadata
 
 ## Development Workflows
 
@@ -252,9 +241,9 @@ python src/run_pipeline.py --run-diagnostics --run-download --run-manifest --run
 6. **Comprehensive Validation & Tuning** (YOLO quality, graph sparsity, feature preprocessing, stratification)
 7. Post-download integrity check (PNG/NPY validation via integrity.py --dataset)
 8. Atlas-based label annotation (generates YOLO training labels)
-9. YOLO ROI detection training (learns to detect 5 lobes)
+9. YOLO ROI detection training (learns to detect 12 brain regions)
 10. Spatial feature extraction (detects lobes, aggregates 3D coordinates)
-11. Temporal feature extraction (6 stats per ROI from time series)
+11. Temporal feature extraction (8 stats per ROI from time series)
 12. Feature harmonization (neuroCombat batch effect removal)
 13. Pre-GNN integrity check (validates dataset completeness per split via integrity.py --distribution)
 14. Causal graph construction (lagged correlation, sparsification)
@@ -361,8 +350,9 @@ python src/features/safe_harmonization.py
 
 **If features are missing:**
 - Check `node_features_3d.csv` exists (output of [src/features/extract_features.py])
-- Verify all-5-lobes filter: `python -c "import pandas as pd; df=pd.read_csv('data/processed/metadata/node_features_3d.csv'); print(f'Complete subjects: {len(df)}')"`
-- If count dropped significantly, lobes weren't detected → check YOLO model path in [src/features/extract_features.py]
+- Verify all-12-regions filter: `python -c "import pandas as pd; df=pd.read_csv('data/processed/metadata/node_features_3d.csv'); print(f'Complete subjects: {len(df)}')"`
+- If count dropped significantly, regions weren't detected → check YOLO model path in [src/features/extract_features.py]
+
 **If temporal features CSV is corrupted:**
 - **Symptom**: `pandas.errors.ParserError: Error tokenizing data. C error: Expected 1 fields in line 5, saw 986`
 - **Cause**: CSV has header comments or malformed structure
@@ -385,10 +375,10 @@ python src/features/safe_harmonization.py
 
 **If stratification fails:**
 - Ensure `SITE_ID` and `DX_GROUP` columns exist in phenotype CSV
-- Check no subjects missing from manifest: `python -c "import pandas as pd; df=pd.read_csv('data/processed/Phenotypic_V1_0b_preprocessed1.csv'); print(f'Groups: {df.DX_GROUP.value_counts().to_dict()}')"` 
+- Check no subjects missing from manifest: `python -c "import pandas as pd; df=pd.read_csv('data/processed/Phenotypic_V1_0b_preprocessed1.csv'); print(f'Groups: {df.DX_GROUP.value_counts().to_dict()}')"`
 
 **If atlas validation fails:**
-- **166 ROI atlas error** (fixed Jan 2026): Pipeline now accepts 164-166 ROIs for AAL3v1
+- **166 ROI atlas error** (fixed Jan 2026): Pipeline now accepts 164-170 ROIs for AAL3v1
 - Run atlas validator: `python src/validation/atlas_validator.py`
 - Check atlas exists: `ls -la data/atlases/AAL3v1.nii`
 
@@ -410,8 +400,8 @@ python src/features/safe_harmonization.py
 - **Status**: split.py, manifest.py, annotate.py still use hardcoded paths—refactor when touching these files
 
 **Graph Construction:**
-- ❌ **Bad**: Assuming all subjects have 5 lobes detected (some have missing detections)
-- ✅ **Good**: extract_features.py enforces `node_count == 5` filter; only 1033/1035 subjects proceed
+- ❌ **Bad**: Assuming all subjects have 12 regions detected (some have missing detections)
+- ✅ **Good**: extract_features.py enforces `node_count == 12` filter; only complete subjects proceed
 - **Impact**: Graph shape assumptions depend on this filter; skip it and downstream training crashes with shape mismatches
 
 **Config Duplication:**
@@ -420,9 +410,9 @@ python src/features/safe_harmonization.py
 - **Status**: Code is clean; keep it that way
 
 **Temporal Features:**
-- ❌ **Bad**: Computing ROI features from raw 170 AAL time series without aggregating to 5 lobes
-- ✅ **Good**: Aggregate 170 AAL → 5 lobes FIRST (in config.LOBE_MAPPING), then extract 6 stats per lobe
-- **Output shape**: Should be `(num_subjects, 5 lobes * 6 features) = (N, 30)`, not `(N, 170*6)`
+- ❌ **Bad**: Computing ROI features from raw 170 AAL time series without aggregating to 12 regions
+- ✅ **Good**: Aggregate 170 AAL → 12 regions FIRST (in config.LOBE_MAPPING), then extract 8 stats per region
+- **Output shape**: Should be `(num_subjects, 12 regions * 8 features) = (N, 96)`, not `(N, 170*8)`
 
 **YOLO Augmentation:**
 - ❌ **Bad**: Enabling `fliplr=True` or `degrees=15` for medical imaging (breaks anatomical consistency)
@@ -484,8 +474,8 @@ In [src/features/safe_harmonization.py], `DX_GROUP` (diagnosis) is NEVER passed 
 - Post-harmonization validation (ensures zero NaNs)
 - Comprehensive logging for debugging
 
-### Dataset Filtering: All-5-Lobes Requirement
-[src/features/extract_features.py] enforces that only subjects with ALL 5 brain lobes detected proceed to GNN training. This is critical: 5-node graphs assume complete detection. Check the `node_count == 5` filter before downstream processing.
+### Dataset Filtering: All-12-Regions Requirement
+[src/features/extract_features.py] enforces that only subjects with ALL 12 brain regions detected proceed to GNN training. This is critical: 12-node graphs assume complete detection. Check the `node_count == 12` filter before downstream processing.
 
 ### Stratified k-fold Details
 [src/data/split.py] performs 2D stratification on both `DX_GROUP` (diagnosis) AND `SITE_ID` (scanner site). This ensures:
@@ -510,12 +500,14 @@ In [src/features/safe_harmonization.py], `DX_GROUP` (diagnosis) is NEVER passed 
 - Model deployed to `results/ROI_Detection_v20/weights/best.pt`
 - Full training metrics in `results/ROI_Detection_v20/results.csv`
 
-**GNN Training Baseline Established** (January 21, 2026)
-- 5-fold stratified CV on full training set completed
-- Baseline AUC=0.535 ± 0.056 establishes starting point for improvements
-- F1=0.659 ± 0.016 shows balanced precision-recall
-- Identified improvement areas: deeper architecture, richer features, class weighting
-- All fold checkpoints saved to `models/checkpoints/`
+**GNN Evolution & Current State** (January 22, 2026)
+- **Hybrid v1 (Current Production)**: AUC=0.5832 ± 0.0476 with Focal Loss
+  - 3-layer GATv2, coordinates-only features (3D spatial)
+  - +8.9% AUC improvement over baseline
+  - F1=0.6808 ± 0.0041 (excellent stability)
+- **Baseline (Jan 21)**: AUC=0.5354 ± 0.0562 (2-layer GATv2, Cross-Entropy)
+- **Next Target**: AUC=0.650 with full 14-feature metadata integration
+- All fold checkpoints saved to `models/checkpoints/best_model_fold{0-4}.pt`
 
 ### Comprehensive Data Robustness Improvements (January 20, 2026)
 - **[src/data/abide_download.py]** - Enhanced extraction robustness:
@@ -567,12 +559,13 @@ In [src/features/safe_harmonization.py], `DX_GROUP` (diagnosis) is NEVER passed 
   - **Integration**: Called from run_pipeline.py stages "post_download_integrity" and "pre_gnn_integrity"
   - **Benefits**: Single source of truth, reduced code duplication, centralized validation logic
 
-- **Validation Folder Now Organized** (January 20, 2026):
+- **Validation Folder Structure** (February 2026):
   ```
   src/validation/
   ├── atlas_validator.py       (atlas file structure & ROI validation)
-  ├── integrity.py             (NEW: combined post-download + pre-GNN checks + health reports)
-  └── validator.py             (comprehensive validation suite)
+  ├── integrity.py             (unified: post-download + pre-GNN checks + health reports + class analysis)
+  ├── validator.py             (comprehensive validation suite: YOLO quality, graph sparsity, stratification)
+  └── comprehensive_audit.py   (code quality checks: config imports, dimension consistency, lobe mappings)
   ```
   - Deleted: integrity_check.py, integrity_check2.py, pipeline_diagnostics.py (merged into integrity.py)
 
@@ -615,26 +608,27 @@ In [src/features/safe_harmonization.py], `DX_GROUP` (diagnosis) is NEVER passed 
 
 - **Diagnosis label**: 0=Control (healthy), 1=ASD (autism spectrum disorder)
 - **Data source**: ABIDE initiative (public fMRI dataset, multi-site, ~1000 subjects)
-- **Causal inference goal**: Identify lobe→lobe influence patterns distinctive to ASD using lagged correlations
+- **Causal inference goal**: Identify region→region influence patterns distinctive to ASD using lagged correlations
 - **Explainability**: Edge weights in causal graph provide subject-specific feature importance (gradient-based saliency in `causal_gnn.py::get_node_importance()`)
 - **Medical tuning**: YOLO augmentation disabled for grayscale medical images; preserves anatomical alignment
-- **Graph construction**: Lagged Pearson correlation (not partial correlation as initially documented) between lobe i at t-1 and lobe j at t
+- **Graph construction**: Lagged Pearson correlation (not partial correlation as initially documented) between region i at t-1 and region j at t
 - **Key metrics**: 
-  - **YOLO detection**: mAP50-95=0.9859 (excellent; 5-lobe detection highly reliable)
-  - **GNN classification**: AUC=0.535 (baseline; room for improvement via architecture/feature engineering)
-  - F1 score secondary; current 0.659 shows reasonable precision-recall balance
+  - **YOLO detection**: mAP50-95=0.908 (excellent; 12-region detection highly reliable)
+  - **GNN classification**: AUC=0.5832 (baseline; room for improvement via architecture/feature engineering)
+  - F1 score secondary; current 0.6808 shows reasonable precision-recall balance
 - **Imbalanced classification**: 2D stratified CV (DX_GROUP + SITE_ID) ensures balanced evaluation
 
 ### Why These Design Choices?
 
-**5-Lobe Aggregation:**
-- Reduces 170×170=28,900 edges to 5×5=25 edges (computational efficiency)
+**12-Region Aggregation:**
+- Reduces 170×170=28,900 edges to 12×12=144 edges (computational efficiency)
 - Anatomically interpretable for clinical validation
-- Reduces scanner-specific noise through within-lobe averaging
+- Finer granularity than 5-lobe system: separates functionally distinct areas (e.g., motor/premotor, insula, cingulate)
+- Reduces scanner-specific noise through within-region averaging
 - Better statistical power with limited samples (n~1000)
 
 **2-Head GAT (not 4-head):**
-- Sufficient attention capacity for 5-node graphs
+- Sufficient attention capacity for 12-node graphs
 - 4+ heads cause redundancy on small graphs
 - Maintains edge_attr (causal weights) integration
 - Skip connections prevent over-smoothing
@@ -643,4 +637,4 @@ In [src/features/safe_harmonization.py], `DX_GROUP` (diagnosis) is NEVER passed 
 - Scalable to 170 ROIs before aggregation
 - Temporal precedence via lag=1 TR enforces directionality
 - Robust and interpretable compared to VAR models
-- Sparsification (top 20%) keeps strongest connections only
+- Sparsification (top 40%) keeps strongest connections only

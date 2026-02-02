@@ -1,0 +1,4 @@
+Model,Architecture,Features,Loss,AUC (mean ± std),F1 (mean ± std),Improvement
+Baseline (Jan 21),2-layer GATv2,Full YOLO metadata (14),Cross-Entropy,0.5354 ± 0.0562,0.6586 ± 0.0164,Baseline
+Hybrid v1 (Jan 22),3-layer GATv2,Coords only (3),Focal Loss (α=0.75),0.5832 ± 0.0476,0.6808 ± 0.0041,"+8.9% AUC, +3.4% F1"
+Target (Full Hybrid),3-layer GATv2 + Attention,Full metadata (14),Focal Loss (α=0.75),0.650 (target),0.700 (target),+11.5% AUC (projected)

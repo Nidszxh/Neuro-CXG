@@ -38,8 +38,9 @@ class CausalGraphAnalyzer:
         self.manifest = manifest.copy()
         self.manifest['subject_id'] = self.manifest['subject_id'].astype(str)
         
-        # Region names from config
-        self.lobe_names = LOBE_NAMES
+        # Region names from config (convert dict to ordered list for indexing)
+        # LOBE_NAMES is {0: 'name', 1: 'name', ...} so we get values in order
+        self.lobe_names = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
         
         logger.info(f"CausalGraphAnalyzer initialized")
         logger.info(f"  Graphs directory: {graphs_dir}")

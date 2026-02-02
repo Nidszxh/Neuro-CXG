@@ -43,7 +43,6 @@ CAUSAL_GRAPHS_DIR            = DATA_PROCESSED / "causal_graphs"
 # --- ANATOMICAL MAPPING (12-Region Neuroanatomical Subdivision) ---
 # Note: ROI IDs are 1-indexed (AAL Standard). Internal code converts to 0-indexed.
 # Updated January 2026: Expanded from 5 lobes to 12 functionally-distinct brain regions
-# for improved spatial resolution in causal graph analysis
 LOBE_MAPPING = {
     0: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],  # Frontal_Superior (Left+Right)
     1: [21, 22, 25, 26, 27, 28],  # Frontal_Orbital (Left+Right)
@@ -82,8 +81,8 @@ DEFAULT_TR = 2.0  # Default TR (seconds) for fMRI—fallback if not in phenotype
 
 # --- YOLO DETECTION PARAMETERS (Fixed for Medical Integrity) ---
 YOLO_MODEL_SIZE = "yolo26n.pt"
-YOLO_PROJECT_NAME = "ROI_Detection_v25"  # Output directory name from training
-YOLO_WEIGHTS_PATH = RESULTS_DIR / "ROI_Detection_v25" / "weights" / "best.pt"
+YOLO_PROJECT_NAME = "ROI_Detection_v26"  # Output directory name from training
+YOLO_WEIGHTS_PATH = RESULTS_DIR / "ROI_Detection_v26" / "weights" / "best.pt"
 YOLO_IMGSZ = 640
 YOLO_BATCH_SIZE = 32
 YOLO_EPOCHS = 100
@@ -144,8 +143,7 @@ GNN_BATCH_SIZE = 32
 GNN_EPOCHS = 100  # More epochs with early stopping
 K_FOLDS = 5
 
-# NEW: Improved hyperparameters for better AUC (Experiment v1.2 - AUC Target: 0.60+)
-GNN_LEARNING_RATE_TUNED = 0.0003  # Optimal LR for 128 hidden channels
+GNN_LEARNING_RATE_TUNED = 0.0005  # Optimal LR for 128 hidden channels
 GNN_HIDDEN_CHANNELS_TUNED = 128   # Suitable for 12-region graphs (128 channels)
 GNN_USE_SITE_EMBEDDING = True      # Reduce site bias
 GNN_USE_DEMOGRAPHICS = True        # Add age/sex/IQ conditioning
@@ -157,12 +155,6 @@ GNN_SKIP_CONNECTIONS = True        # Enable residual connections
 # --- HARDWARE ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
-"""
-Updated Configuration with Class Imbalance Handling
-
-Add these parameters to src/config.py to enable the class balance fixes.
-"""
 
 # CLASS IMBALANCE HANDLING (ADD TO src/config.py)
 
@@ -204,15 +196,7 @@ LOSS_CONVERGED_THRESHOLD = 0.50  # Model has converged
 
 
 def validate_training_health(metrics: dict) -> str:
-    """
-    Diagnose training health from metrics.
-    
-    Args:
-        metrics: Dictionary with 'auc', 'f1', 'loss'
-    
-    Returns:
-        Health status string
-    """
+
     auc = metrics.get('auc', 0.5)
     f1 = metrics.get('f1', 0.0)
     loss = metrics.get('loss', 0.693)
@@ -271,9 +255,7 @@ def log_training_diagnostics(fold: int, epoch: int, metrics: dict):
 # --- VALIDATION LOGIC ---
 def validate_environment():
     """Checks if the 12-region architecture is ready for execution."""
-    logger.info("="*60)
     logger.info("VALIDATING NEURO-CXG 12-REGION ARCHITECTURE")
-    logger.info("="*60)
     
     # Check paths
     for p in [DATA_ROOT, DATA_METADATA, CAUSAL_GRAPHS_DIR]:
@@ -290,7 +272,6 @@ def validate_environment():
     
     logger.info(f"✓ Target: {NUM_LOBES} nodes | Features: {GNN_IN_CHANNELS}")
     logger.info(f"✓ Device: {DEVICE}")
-    logger.info("="*60)
     return True
 
 
