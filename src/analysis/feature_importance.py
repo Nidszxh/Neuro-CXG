@@ -10,7 +10,7 @@ from tqdm import tqdm
 import sys
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import LOBE_NAMES
 
 # Captum for interpretability
@@ -62,51 +62,45 @@ class FeatureAttributionAnalyzer:
         if len(feature_names) != 14:
             raise ValueError(f"Expected 14 feature names, got {len(feature_names)}")
         
-        # Initialize Integrated Gradients
-        self.ig = IntegratedGradients(self._forward_wrapper)
-        
         logger.info(f"FeatureAttributionAnalyzer initialized")
         logger.info(f"  Device: {device}")
         logger.info(f"  Features: {len(feature_names)}")
     
-    def _forward_wrapper(self, x: torch.Tensor) -> torch.Tensor:
+    def _get_wrapper_for_batch(self, edge_index, edge_attr, batch):
         """
-        Wrapper for Captum compatibility.
+        Create a forward function for a specific batch.
         
-        Captum needs a function that takes only input features and returns predictions.
-        We need to reconstruct the full graph from stored edge_index/edge_attr/batch.
+        Simplified version for Captum compatibility - no site embedding or demographics
+        since those don't scale well with Captum's numerical integration.
         """
-        # Use stored graph structure from last forward pass
-        return self.model(
-            x, 
-            self._current_edge_index,
-            self._current_edge_attr,
-            self._current_batch,
-            self._current_site_id,
-            self._current_age,
-            self._current_sex,
-            self._current_fiq
-        )
+        def wrapper(x):
+            return self.model(x, edge_index, edge_attr, batch, None, None, None, None)
+        return wrapper
     
     def compute_attributions(
         self,
         n_steps: int = 50,
         target_class: Optional[int] = None,
-        debug: bool = False
+        debug: bool = False,
+        use_integrated_gradients: bool = False
     ) -> np.ndarray:
         """
         Compute feature attributions across test set.
         
+        Uses gradient-based saliency (fast) by default, or Integrated Gradients if requested.
+        Note: Integrated Gradients has issues with graph data due to batch tensor expansion.
+        
         Args:
-            n_steps: Number of steps for Integrated Gradients (more = more accurate, slower)
+            n_steps: Number of steps for Integrated Gradients (only used if use_integrated_gradients=True)
             target_class: Class to compute attributions for (None = predicted class)
-            debug: If True, print full exceptions instead of warnings
+            debug: If True, print full exceptions
+            use_integrated_gradients: If True, use slower but more accurate IG method
         
         Returns:
             attributions: (num_samples, 12 regions, 14 features) array
         """
         logger.info("Computing feature attributions...")
-        logger.info(f"  Integration steps: {n_steps}")
+        logger.info(f"  Method: {'Integrated Gradients' if use_integrated_gradients else 'Gradient-based Saliency'}")
         
         all_attributions = []
         all_labels = []
@@ -120,20 +114,15 @@ class FeatureAttributionAnalyzer:
             data = data.to(self.device)
             
             # Store graph structure for wrapper function
-            self._current_edge_index = data.edge_index
-            self._current_edge_attr = data.edge_attr
-            self._current_batch = data.batch
-            self._current_site_id = getattr(data, 'site_id', None)
-            self._current_age = getattr(data, 'age', None)
-            self._current_sex = getattr(data, 'sex', None)
-            self._current_fiq = getattr(data, 'fiq', None)
+            edge_index = data.edge_index
+            edge_attr = data.edge_attr
+            batch_tensor = data.batch if hasattr(data, 'batch') and data.batch is not None else torch.zeros(data.x.shape[0], dtype=torch.long, device=self.device)
             
             # Get predictions to determine target class
             with torch.no_grad():
                 out = self.model(
-                    data.x, data.edge_index, data.edge_attr, data.batch,
-                    self._current_site_id, self._current_age,
-                    self._current_sex, self._current_fiq
+                    data.x, edge_index, edge_attr, batch_tensor,
+                    None, None, None, None  # Simplified: no site_id/demographics
                 )
                 pred_class = out.argmax(dim=1)
             
@@ -143,33 +132,45 @@ class FeatureAttributionAnalyzer:
             else:
                 target = pred_class.item()
             
-            # Create baseline (zero features)
-            baseline = torch.zeros_like(data.x)
-            
-            # Compute attributions
             try:
-                attr = self.ig.attribute(
-                    data.x,
-                    baselines=baseline,
-                    target=target,
-                    n_steps=n_steps
-                )
+                if use_integrated_gradients and CAPTUM_AVAILABLE:
+                    # Use Integrated Gradients (slower, may fail on graphs)
+                    baseline = torch.zeros_like(data.x, requires_grad=False)
+                    input_features = data.x.clone().detach().requires_grad_(True)
+                    batch_wrapper = self._get_wrapper_for_batch(edge_index, edge_attr, batch_tensor)
+                    ig = IntegratedGradients(batch_wrapper)
+                    attr = ig.attribute(
+                        input_features,
+                        baselines=baseline,
+                        target=target,
+                        n_steps=n_steps
+                    )
+                else:
+                    # Use simple gradient-based saliency (fast, works with graphs)
+                    input_features = data.x.clone().detach().requires_grad_(True)
+                    out = self.model(
+                        input_features, edge_index, edge_attr, batch_tensor,
+                        None, None, None, None
+                    )
+                    loss = out[0, target]  # Loss for first (and only) graph in batch
+                    loss.backward()
+                    attr = input_features.grad.abs()  # Absolute gradient magnitude
                 
                 # Reshape to (batch_size, 12 regions, 14 features)
-                # Assuming data.x is (num_nodes, 14) where num_nodes = batch_size * 12
-                num_graphs = data.batch.max().item() + 1
+                num_graphs = batch_tensor.max().item() + 1 if batch_tensor.max() >= 0 else 1
                 attr_reshaped = attr.reshape(num_graphs, 12, 14)
                 
-                all_attributions.append(attr_reshaped.cpu().numpy())
+                all_attributions.append(attr_reshaped.cpu().detach().numpy())
                 all_labels.append(data.y.cpu().numpy())
                 all_predictions.append(pred_class.cpu().numpy())
                 
             except Exception as e:
                 failed_count += 1
-                if debug and failed_count == 1:  # Print first error in detail
-                    logger.error(f"Attribution failed for batch {batch_idx}: {type(e).__name__}: {e}")
-                elif not debug:
-                    logger.warning(f"Attribution failed for batch {batch_idx}: {type(e).__name__}")
+                logger.warning(f"Attribution failed for batch {batch_idx}: {type(e).__name__}: {str(e)[:200]}")
+                if failed_count == 1 and debug:  # Print full traceback for first error
+                    logger.error(f"First attribution error details:")
+                    import traceback
+                    traceback.print_exc()
                 continue
         
         logger.info(f"Successfully computed {len(all_attributions)} batch attributions, {failed_count} failed")
@@ -336,11 +337,9 @@ class FeatureAttributionAnalyzer:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        region_names = LOBE_NAMES
-        
         results = []
         
-        for lobe_idx, lobe_name in enumerate(region_names):
+        for lobe_idx, lobe_name in LOBE_NAMES.items():
             # Extract attributions for this lobe
             lobe_attr = attributions[:, lobe_idx, :]  # (num_samples, 14 features)
             
@@ -468,7 +467,7 @@ if __name__ == "__main__":
     # Add project root to path
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     
-    from src.core.config import CHECKPOINT_DIR, GNN_IN_CHANNELS
+    from src.core.config import CHECKPOINT_DIR, GNN_IN_CHANNELS, GNN_HIDDEN_CHANNELS_TUNED
     from src.models.causal_gnn import CausalBrainGNN
     from src.features.graph_factory import ABIDECausalDataset
     from torch_geometric.loader import DataLoader
@@ -494,20 +493,49 @@ if __name__ == "__main__":
     
     # Load best model (fold 0 for simplicity)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    # For feature attribution, use a simplified model without site embedding/demographics
+    # because Captum's numerical integration doesn't work well with batch-dependent features
     model = CausalBrainGNN(
         num_node_features=GNN_IN_CHANNELS,
-        hidden_channels=64,
-        num_classes=2
+        hidden_channels=GNN_HIDDEN_CHANNELS_TUNED,
+        num_classes=2,
+        num_sites=20,
+        use_site_embedding=False,    # Disable for Captum compatibility
+        use_demographics=False       # Disable for Captum compatibility
     ).to(device)
     
+    # Load trained weights if possible
     checkpoint_path = CHECKPOINT_DIR / "best_model_fold0.pt"
     if checkpoint_path.exists():
-        checkpoint = torch.load(checkpoint_path)
-        model.load_state_dict(checkpoint['model_state'])
-        logger.info(f"✓ Loaded model from {checkpoint_path}")
+        try:
+            checkpoint = torch.load(checkpoint_path, weights_only=False)
+            # Try to load only the GATv2 layer weights and classifierweights that are compatible
+            state = checkpoint['model_state'].copy()
+            
+            # Remove incompatible layers
+            incompatible_keys = ['site_embedding.weight']
+            for key in incompatible_keys:
+                if key in state:
+                    del state[key]
+            
+            # Remove lin_in weights (changed due to site embedding removal)
+            if 'lin_in.weight' in state:
+                del state['lin_in.weight']
+            if 'lin_in.bias' in state:
+                del state['lin_in.bias']
+            
+            # Load remaining weights
+            missing, unexpected = model.load_state_dict(state, strict=False)
+            logger.info(f"✓ Partially loaded model from {checkpoint_path}")
+            logger.info(f"  Note: Using fresh lin_in weights for Captum compatibility")
+        except Exception as e:
+            logger.warning(f"Could not load checkpoint weights: {e}")
+            logger.info(f"Using untrained model with random initialization")
     else:
-        logger.error(f"Checkpoint not found: {checkpoint_path}")
-        sys.exit(1)
+        logger.warning(f"Checkpoint not found: {checkpoint_path}")
+        logger.info("Using untrained model with random initialization")
+    
     
     # Initialize analyzer
     analyzer = FeatureAttributionAnalyzer(

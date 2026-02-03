@@ -12,7 +12,7 @@ from scipy.stats import mannwhitneyu
 import sys
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from src.core.config import LOBE_NAMES, NUM_LOBES
 
 logging.basicConfig(level=logging.INFO)
@@ -77,7 +77,7 @@ class CausalGraphAnalyzer:
         for graph_file in tqdm(graph_files, desc="Computing properties"):
             try:
                 # Load graph
-                graph_data = torch.load(graph_file)
+                graph_data = torch.load(graph_file, weights_only=False)
                 subject_id = graph_file.stem.replace('_graph', '')
                 
                 # Get subject info from manifest
@@ -317,7 +317,7 @@ class CausalGraphAnalyzer:
         
         for graph_file in tqdm(graph_files, desc="Loading graphs"):
             try:
-                graph_data = torch.load(graph_file)
+                graph_data = torch.load(graph_file, weights_only=False)
                 subject_id = graph_file.stem.replace('_graph', '')
                 
                 sub_manifest = self.manifest[self.manifest['subject_id'] == subject_id]

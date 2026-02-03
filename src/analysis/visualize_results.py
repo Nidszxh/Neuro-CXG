@@ -1,19 +1,3 @@
-"""
-Comprehensive Visualization Pipeline for Neuro-CXG Results
-
-This script generates all visualizations for the trained GNN model:
-1. Feature importance analysis (temporal and spatial features)
-2. Training history (loss, accuracy, AUC across folds)
-3. Confusion matrices per fold
-4. ROC curves per fold
-5. Causal graph visualization (average ASD vs Control)
-6. Per-class feature attribution
-
-Usage:
-    python src/analysis/visualize_results.py
-    python src/analysis/visualize_results.py --output-dir custom_output
-"""
-
 import argparse
 import logging
 import sys

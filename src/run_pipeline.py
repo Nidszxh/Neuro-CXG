@@ -83,7 +83,7 @@ def clear_old_state():
         CAUSAL_GRAPHS_DIR.mkdir(parents=True)
         logger.info("Reset Causal Graph directory (cleared old 170x170 matrices)")
 
-def run_module(module_path, args_list=None, description=""):
+def run_module(module_path, args_list=None, description="", function_name=None):
     """
     Executes a submodule as a separate process to avoid ArgParse conflicts.
     
@@ -91,12 +91,20 @@ def run_module(module_path, args_list=None, description=""):
         module_path: Python module path (e.g., 'src.data.split')
         args_list: Optional command-line arguments
         description: Human-readable description for logging
+        function_name: Optional specific function to call within the module
     """
     # Use the same Python executable that's running this script
     python_exe = sys.executable
-    cmd = [python_exe, "-m", module_path]
-    if args_list:
-        cmd.extend(args_list)
+    
+    if function_name:
+        # Call specific function within module
+        cmd = [python_exe, "-c", 
+               f"from {module_path} import {function_name}; {function_name}()"]
+    else:
+        # Run module as script
+        cmd = [python_exe, "-m", module_path]
+        if args_list:
+            cmd.extend(args_list)
     
     log_msg = description if description else f"Module: {module_path}"
     logger.info(f"Running: {log_msg}")
@@ -209,6 +217,10 @@ Examples:
     parser.add_argument("--skip-comprehensive-validation", action="store_true",
                         help="Skip comprehensive validation & tuning suite (YOLO quality, sparsity, stratification)")
     
+    # NEW: Regenerate features without full reset
+    parser.add_argument("--regenerate-features", action="store_true",
+                        help="Regenerate spatial/temporal features, harmonization, and graphs (keeps other data)")
+    
     # Force/Diagnostics
     parser.add_argument("--force-reset", action="store_true",
                         help="Wipe all intermediate CSVs and Graphs")
@@ -244,31 +256,36 @@ Examples:
             "name": "ABIDE Download",
             "should_run": not args.skip_download and not data_downloaded,
             "reason": "Missing ABIDE data",
-            "module": "src.data.abide_download"
+            "module": "src.data.abide_download",
+            "function": None
         },
         "split": {
             "name": "Train/Val/Test Split (2D Stratified)",
             "should_run": not args.skip_split and not data_split,
             "reason": "Missing train/val/test splits",
-            "module": "src.data.split"
+            "module": "src.data.split",
+            "function": None
         },
         "manifest": {
             "name": "Generate Master Manifest",
             "should_run": not args.skip_manifest and (not MASTER_MANIFEST.exists() or args.force_reset),
             "reason": "Missing manifest" if not MASTER_MANIFEST.exists() else "Force reset",
-            "module": "src.utils.manifestor"
+            "module": "src.utils.manifestor",
+            "function": None
         },
         "atlas_validation": {
             "name": "Atlas Validation",
             "should_run": not args.skip_atlas_validation,
             "reason": "Verify atlas files exist and are valid",
-            "module": "src.validation.atlas_validator"
+            "module": "src.validation.atlas_validator",
+            "function": None
         },
-        "validation": {
-            "name": "Comprehensive Validation & Tuning",
+        "pipeline_validation": {
+            "name": "Pipeline Validation (Comprehensive Health Check)",
             "should_run": not args.skip_validation,
-            "reason": "Detailed quality checks (YOLO, graphs, features, stratification)",
-            "module": "src.validation.validator"
+            "reason": "Full pipeline validation (environment, data, features, graphs, models)",
+            "module": "src.validation.pipeline_validator",
+            "function": None
         },
         "post_download_integrity": {
             "name": "Post-Download Integrity Check",
@@ -281,31 +298,36 @@ Examples:
             "name": "Atlas-Based Label Annotation",
             "should_run": not args.skip_annotate and data_split,
             "reason": "Generate YOLO training labels",
-            "module": "src.utils.annotate"
+            "module": "src.utils.annotate",
+            "function": None
         },
         "yolo": {
             "name": "YOLO Training (ROI Detection)",
             "should_run": (not yolo_weights.exists() or args.force_reset) and not args.skip_yolo,
             "reason": "Missing weights" if not yolo_weights.exists() else "Force reset",
-            "module": "src.pipelines.roi_detection"
+            "module": "src.pipelines.roi_detection",
+            "function": None
         },
         "spatial_features": {
             "name": "Spatial Feature Extraction (12-region)",
-            "should_run": not NODE_FEATURES_3D.exists() or args.force_reset,
-            "reason": "Missing features" if not NODE_FEATURES_3D.exists() else "Force reset",
-            "module": "src.features.extract_features"
+            "should_run": not NODE_FEATURES_3D.exists() or args.force_reset or args.regenerate_features,
+            "reason": "Missing features" if not NODE_FEATURES_3D.exists() else ("Force reset" if args.force_reset else "Regenerating"),
+            "module": "src.features.extract_features",
+            "function": None
         },
         "temporal_features": {
             "name": "Temporal Feature Extraction",
-            "should_run": not NODE_ATTRIBUTES_TEMPORAL.exists() or args.force_reset,
-            "reason": "Missing features" if not NODE_ATTRIBUTES_TEMPORAL.exists() else "Force reset",
-            "module": "src.utils.compute_roi"
+            "should_run": not NODE_ATTRIBUTES_TEMPORAL.exists() or args.force_reset or args.regenerate_features,
+            "reason": "Missing features" if not NODE_ATTRIBUTES_TEMPORAL.exists() else ("Force reset" if args.force_reset else "Regenerating"),
+            "module": "src.utils.compute_roi",
+            "function": None
         },
         "harmonization": {
             "name": "Feature Harmonization",
-            "should_run": not NODE_ATTRIBUTES_HARMONIZED.exists() or args.force_reset,
-            "reason": "Missing harmonized data" if not NODE_ATTRIBUTES_HARMONIZED.exists() else "Force reset",
-            "module": "src.features.safe_harmonization"
+            "should_run": not NODE_ATTRIBUTES_HARMONIZED.exists() or args.force_reset or args.regenerate_features,
+            "reason": "Missing harmonized data" if not NODE_ATTRIBUTES_HARMONIZED.exists() else ("Force reset" if args.force_reset else "Regenerating"),
+            "module": "src.features.safe_harmonization",
+            "function": None
         },
         "pre_gnn_integrity": {
             "name": "Pre-GNN Integrity Check",
@@ -321,29 +343,33 @@ Examples:
             "module": "src.validation.integrity",
             "function": "generate_health_report"
         },
-        "comprehensive_validation": {
-            "name": "Comprehensive Validation",
+        "quality_validation": {
+            "name": "Quality Validation (YOLO & Graph Sparsity)",
             "should_run": not args.skip_comprehensive_validation,
             "reason": "YOLO quality, sparsity, stratification checks",
-            "module": "src.validation.validator"
+            "module": "src.validation.validator",
+            "function": None
         },
         "causal_graphs": {
             "name": "Causal Graph Construction (12×12)",
-            "should_run": (not any(CAUSAL_GRAPHS_DIR.iterdir()) if CAUSAL_GRAPHS_DIR.exists() else True) or args.force_reset,
-            "reason": "Missing graphs" if (not any(CAUSAL_GRAPHS_DIR.iterdir()) if CAUSAL_GRAPHS_DIR.exists() else True) else "Force reset",
-            "module": "src.features.construct_causal"
+            "should_run": (not any(CAUSAL_GRAPHS_DIR.iterdir()) if CAUSAL_GRAPHS_DIR.exists() else True) or args.force_reset or args.regenerate_features,
+            "reason": "Missing graphs" if (not any(CAUSAL_GRAPHS_DIR.iterdir()) if CAUSAL_GRAPHS_DIR.exists() else True) else ("Force reset" if args.force_reset else "Regenerating"),
+            "module": "src.features.construct_causal",
+            "function": None
         },
         "gnn_training": {
             "name": "GNN Training (5-Fold CV)",
             "should_run": not args.skip_gnn and not args.visualizations_only,  # Skip if only visualizations requested
             "reason": "Main training phase",
-            "module": "src.models.gnn_model"
+            "module": "src.models.gnn_model",
+            "function": None
         },
         "visualizations": {
             "name": "Generate Visualizations",
             "should_run": not args.skip_visualizations,  # Run by default unless skipped
             "reason": "Generate comprehensive visualizations",
-            "module": "src.analysis.visualize_results"
+            "module": "src.analysis.visualize_results",
+            "function": None
         }
     }
     
@@ -374,10 +400,10 @@ Examples:
     # Execute stages in order
     
     for stage_key in ["download", "split", "manifest", "atlas_validation",
-                      "post_download_integrity", "annotate", "yolo", "spatial_features",
-                      "temporal_features", "harmonization", "diagnostics",
-                      "comprehensive_validation", "pre_gnn_integrity",
-                      "causal_graphs", "gnn_training", "visualizations"]:  # Added visualizations
+                      "pipeline_validation", "post_download_integrity", "annotate", 
+                      "yolo", "spatial_features", "temporal_features", "harmonization", 
+                      "diagnostics", "quality_validation", "pre_gnn_integrity",
+                      "causal_graphs", "gnn_training", "visualizations"]:
         
         if stage_key not in stages:
             continue
@@ -406,7 +432,9 @@ Examples:
                 logger.info(f"⏭️  User skipped: {stage['name']}")
                 continue
         
-        run_module(stage["module"], description=stage["name"])
+        # Execute with function name if specified
+        function_name = stage.get("function", None)
+        run_module(stage["module"], description=stage["name"], function_name=function_name)
     
     # COMPLETION
     
