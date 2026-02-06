@@ -526,7 +526,7 @@ if __name__ == "__main__":
     graph_metrics = analyzer.compute_graph_properties(max_graphs=500)
     
     # Create output directory
-    output_dir = Path("results/analysis/graph_structure")
+    output_dir = Path("results/reports/graph_metrics")
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Save metrics

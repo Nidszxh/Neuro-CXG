@@ -549,7 +549,7 @@ if __name__ == "__main__":
     attributions = analyzer.compute_attributions(n_steps=50)
     
     # Create output directory
-    output_dir = Path("results/analysis/feature_attribution")
+    output_dir = Path("results/figures/interpretability")
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Generate visualizations

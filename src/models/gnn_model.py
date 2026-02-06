@@ -1,13 +1,3 @@
-"""
-GNN Training with K-Fold Cross-Validation
-
-Refactored for clarity and maintainability:
-- Removed duplicate class definitions (EarlyStopping, WarmupScheduler)
-- Fixed duplicate training loop code
-- Proper integration with training_utils.py
-- Clean ensemble evaluation
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -347,8 +337,8 @@ def run_training():
     checkpoint_manager = CheckpointManager(CHECKPOINT_DIR, monitor='auc', mode='max')
     
     # Initialize training monitor for analysis
-    analysis_dir = Path('results/analysis')
-    monitor = TrainingMonitor(analysis_dir / 'training', num_folds=K_FOLDS)
+    analysis_dir = Path('results/experiments/training')
+    monitor = TrainingMonitor(analysis_dir, num_folds=K_FOLDS)
     
     # Print configuration
     logger.info(f"\n{'='*70}")

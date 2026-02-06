@@ -56,7 +56,7 @@ Train YOLO26n to detect 12 brain regions in slices:
 
 ```bash
 python -m src.pipelines.roi_detection
-# Outputs: results/ROI_Detection_v20_Final4/weights/best.pt
+# Outputs: results/experiments/detection/ROI_Detection_v20_Final4/weights/best.pt
 ```
 
 ### 3. Feature Extraction

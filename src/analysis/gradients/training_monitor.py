@@ -206,7 +206,9 @@ class TrainingMonitor:
                     fontsize=18, fontweight='bold', y=0.995)
         plt.tight_layout()
         
-        output_path = self.output_dir / f'training_curves_fold_{fold_id}.png'
+        fold_plots_dir = self.output_dir / 'fold_plots'
+        fold_plots_dir.mkdir(parents=True, exist_ok=True)
+        output_path = fold_plots_dir / f'training_curves_fold_{fold_id}.png'
         plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
         plt.close()
         
@@ -494,7 +496,7 @@ if __name__ == "__main__":
     logger.info("="*70)
     
     # Create demo monitor
-    monitor = TrainingMonitor(output_dir='results/analysis/training_demo', num_folds=1)
+    monitor = TrainingMonitor(output_dir='results/experiments/training/training_demo', num_folds=1)
     
     # Simulate training for 1 fold
     logger.info("Simulating training for demo...")
@@ -544,5 +546,5 @@ if __name__ == "__main__":
     
     logger.info("="*70)
     logger.info("✓ Demo complete")
-    logger.info("  Check results/analysis/training_demo/ for outputs")
+    logger.info("  Check results/experiments/training/training_demo/ for outputs")
     logger.info("="*70)

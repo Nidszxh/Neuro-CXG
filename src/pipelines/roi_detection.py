@@ -21,9 +21,10 @@ def main():
 
     # 3. Training Parameters (consolidated from config.YOLO_TRAIN_CONFIG)
     results = model.train(
-        data=str(CONFIG_BRAIN_YAML),
-        project=str(RESULTS_DIR),
-        name=YOLO_PROJECT_NAME,
+        data="configs/brain.yaml",
+        project="results/experiments/detection",  # Points to your new structure
+        name="ROI_Detection_v27",                # Incremental versioning
+        exist_ok=True,
         **YOLO_TRAIN_CONFIG  # All training hyperparameters from config
     )
 

@@ -65,7 +65,7 @@ python -c "from src.core.config import validate_environment; validate_environmen
 
 ### Performance Metrics (February 2026) ✨ UPDATED with 12-Region Architecture
 
-**YOLO26n ROI Detector** → [results/ROI_Detection_v25/results.csv]
+**YOLO26n ROI Detector** → [results/experiments/detection/ROI_Detection_v25/results.csv]
 - **Latest Training (v25)**: 100 epochs completed
 - **Final mAP50**: 0.976
 - **Final mAP50-95**: 0.908
@@ -497,8 +497,8 @@ In [src/features/safe_harmonization.py], `DX_GROUP` (diagnosis) is NEVER passed 
 - Trained YOLO26n for 100 epochs on brain region detection
 - Achieved mAP50-95=0.908 (v25); mAP50=0.976; production-ready performance
 - Precision 0.9996, Recall 0.9938 at epoch 100
-- Model deployed to `results/ROI_Detection_v20/weights/best.pt`
-- Full training metrics in `results/ROI_Detection_v20/results.csv`
+- Model deployed to `results/experiments/detection/ROI_Detection_v20/weights/best.pt`
+- Full training metrics in `results/experiments/detection/ROI_Detection_v20/results.csv`
 
 **GNN Evolution & Current State** (January 22, 2026)
 - **Hybrid v1 (Current Production)**: AUC=0.5832 ± 0.0476 with Focal Loss
@@ -600,7 +600,7 @@ In [src/features/safe_harmonization.py], `DX_GROUP` (diagnosis) is NEVER passed 
 - Temporal feature extraction correctly detects 164 ROIs from AAL3v1 (2 ROIs may be empty/unused in specific templates)
 
 ### Model Checkpoints (January 21, 2026)
-- **YOLO26n best**: `results/ROI_Detection_v25/weights/best.pt` (mAP50-95=0.908)
+- **YOLO26n best**: `results/experiments/detection/ROI_Detection_v25/weights/best.pt` (mAP50-95=0.908)
 - **YOLO26n backup**: `yolo26n.pt` in project root
 - **GNN folds**: `models/checkpoints/best_model_fold{0-4}.pt` (one per k-fold)
 

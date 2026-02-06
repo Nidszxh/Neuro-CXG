@@ -19,7 +19,7 @@
 - [x] YOLO26n training on brain slices (640x640)
 - [x] 12-region anatomical classification (expanded from 5 lobes)
 - [x] Model evaluation and optimization
-- [x] Outputs: results/ROI_Detection_v25/weights/best.pt (mAP50-95: 0.908)
+- [x] Outputs: results/experiments/detection/ROI_Detection_v25/weights/best.pt (mAP50-95: 0.908)
 
 #### Phase 4: Feature Extraction & Harmonization
 - [x] Temporal feature computation (8 per ROI: mean, std, skew, kurtosis, PSD, MSSD, range, autocorr)

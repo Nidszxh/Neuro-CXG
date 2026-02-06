@@ -82,7 +82,7 @@ DEFAULT_TR = 2.0  # Default TR (seconds) for fMRI—fallback if not in phenotype
 # --- YOLO DETECTION PARAMETERS (Fixed for Medical Integrity) ---
 YOLO_MODEL_SIZE = "yolo26n.pt"
 YOLO_PROJECT_NAME = "ROI_Detection_v26"  # Output directory name from training
-YOLO_WEIGHTS_PATH = RESULTS_DIR / "ROI_Detection_v26" / "weights" / "best.pt"
+YOLO_WEIGHTS_PATH = RESULTS_DIR / "experiments" / "detection" / "ROI_Detection_v26" / "weights" / "best.pt"
 YOLO_IMGSZ = 640
 YOLO_BATCH_SIZE = 32
 YOLO_EPOCHS = 100

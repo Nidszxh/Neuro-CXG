@@ -419,10 +419,11 @@ def run_visualization_pipeline(output_dir: Path):
             logger.info("Generating training history visualizations...")
             
             # Check if training history files exist
-            history_files = list(RESULTS_DIR.glob('training_history_fold*.json'))
+            training_results_dir = RESULTS_DIR / 'experiments' / 'training'
+            history_files = list(training_results_dir.glob('training_history_fold*.json'))
             
             if history_files:
-                monitor = TrainingMonitor(output_dir=output_dir, num_folds=5)
+                monitor = TrainingMonitor(output_dir=training_results_dir, num_folds=5)
                 
                 # Load histories from saved files
                 import json
