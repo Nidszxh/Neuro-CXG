@@ -55,10 +55,10 @@ STAGE 3: OBJECT DETECTION
 ┌──────────────────────────────┐
 │ YOLO Training                │  src/pipelines/roi_detection.py
 │ (12-Region Brain Model)      │  - Uses labeled images
-│                              │  - 100 epochs, batch 24
-└──────────────────┬───────────┘  - yolo26n model
-                   │              - Results: mAP50-95=0.908
-              ✓ best.pt weights
+│                              │  - 100 epochs, batch 32
+└───────────────────┌───────────┘  - yolo26n model
+                   │              - Results: mAP50-95=0.94073 (v26)
+              ✓ best.pt weights  - Precision=0.98012, Recall=0.97754
                    │
                    ▼
 
@@ -291,9 +291,7 @@ src.run_pipeline (ORCHESTRATOR)
 │   └─→ Outputs: master_manifest.csv
 ├── src.validation.atlas_validator
 │   └─→ Validates: atlas files
-├── src.validation.pipeline_diagnostics
-│   └─→ Checks: overall health
-├── src.validation.integrity ✨ NEW (consolidated)
+├── src.validation.integrity ✨ UPDATED (consolidated, Feb 11, 2026)
 │   ├─→ check_dataset_integrity(): Validates PNG/NPY files
 │   └─→ check_distribution(): Validates dataset distribution
 ├── src.utils.annotate
@@ -316,13 +314,20 @@ src.run_pipeline (ORCHESTRATOR)
 │       └── imports: src.features.graph_factory
 │       └── imports: src.models.causal_gnn
 │
-└── [AVAILABLE BUT NOT REQUIRED] src.validation.integrity
-    └─→ Comprehensive validation: post-download, pre-GNN, class analysis, health reports
+├── [VALIDATION SUITE] src.validation.* (5 modules)
+│   ├── atlas_validator.py: Atlas file validation
+│   ├── comprehensive_audit.py: Deep validation checks
+│   ├── integrity.py: Post-download and pre-GNN checks (4 functions)
+│   ├── pipeline_validator.py: Pipeline-level monitoring
+│   └── validator.py: Comprehensive quality validation
+│
+└── [AVAILABLE FOR DEBUGGING] src.validation.comprehensive_audit
+    └─→ Deep validation: feature quality, graph connectivity, training readiness
 
 Legend:
   ✓ Integrated: Module is called by run_pipeline.py (or invoked as subprocess)
   ✗ Not Integrated: Module exists but is never called
   (imports X) Dependency not exposed through orchestrator
-  ✨ NEW/UPDATED: Recently added or consolidated (January 20, 2026)
+  ✨ NEW/UPDATED: Recently added or consolidated (Feb 11, 2026)
 ```
 
