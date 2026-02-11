@@ -73,7 +73,8 @@ LOBE_NAMES = {
     11: 'Brainstem'
 }
 NUM_LOBES = 12  # Updated from 5 to 12 regions
-NUM_TEMPORAL_FEATURES = 8  # Mean, Std, Skew, Kurtosis, PSD, MSSD, Range, Autocorr per ROI
+NUM_TEMPORAL_FEATURES = 20  # 8 basic + 12 frequency (delta, theta, alpha, beta, gamma power/peak + spectral entropy + phase std)
+NUM_FREQUENCY_FEATURES = 12  # Frequency-domain features per ROI
 NUM_SPATIAL_FEATURES = 6   # x, y, z_depth, size, conf_std, detection_count per lobe
 
 # --- TEMPORAL FEATURE EXTRACTION PARAMETERS ---
@@ -132,8 +133,16 @@ YOLO_TRAIN_CONFIG = {
 CAUSAL_LAG = 1           # 1 TR lag for temporal precedence
 SPARSITY_QUANTILE = 0.60 # Keep top 40% strongest causal edges (v1.2: MORE edges for better GNN learning)
 
+# Phase 1 Enhancements (Feb 2026)
+CAUSALITY_METHOD = 'granger'  # Options: 'granger', 'transfer_entropy', 'lagged_pearson'
+GRANGER_MAX_LAG = 5  # Test lags 1-5 TRs for Granger causality
+GRANGER_SIGNIFICANCE_LEVEL = 0.05  # Statistical significance threshold
+
+SPARSITY_METHOD = 'adaptive_proportional'  # Options: 'adaptive_proportional', 'adaptive_statistical', 'fixed'
+MIN_EDGES_PER_GRAPH = 3  # Ensure minimum connectivity
+
 # --- GNN MODEL PARAMETERS ---
-GNN_IN_CHANNELS = 14     # Keep as 14 (existing features from spatial+temporal)
+GNN_IN_CHANNELS = 26     # 20 temporal + 6 spatial (Phase 1: expanded from 14 to 26)
 GNN_HIDDEN_CHANNELS = 128  # INCREASED from 64 to 128 for better capacity
 GNN_NUM_HEADS = 4
 GNN_NUM_CLASSES = 2      # 0: Control, 1: ASD
