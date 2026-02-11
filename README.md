@@ -4,15 +4,19 @@
 
 A Graph Neural Network framework for brain disorder classification (ASD vs Control) using causal inference and explainable AI (XAI) on fMRI data. Combines YOLO-based ROI detection, causal graph construction, and Graph Attention Networks for interpretable neuroimaging analysis.
 
-## Key Features
+**Key Features**
 
 - **YOLO-based ROI Detection**: Automated detection of 12 brain anatomical regions in 2D MRI slices using YOLO26n
-- **Causal Graph Construction**: 12×12 directed graphs from fMRI time series using lagged Pearson correlation
-- **Graph Neural Networks**: GATv2-based architecture (2 heads, 3 layers, 128 hidden channels) for classification with interpretable edge weights
-- **Batch Effect Harmonization**: neuroCombat integration for multi-site data harmonization (safe NaN/Inf handling)
-- **Stratified k-fold Validation**: 5-fold CV balanced by diagnosis and scanner site (2D stratification)
-- **Explainability**: Gradient-based node importance and causal edge weight analysis via `get_node_importance()`
-- **Unified Pipeline**: Single `run_pipeline.py` orchestrates all stages with validation and diagnostics
+- **Advanced Feature Engineering**: 26 features per region (20 temporal + 6 spatial)
+  - 8 basic temporal: mean, std, skew, kurtosis, PSD, MSSD, range, autocorr
+  - 12 frequency-domain: delta/theta/alpha/beta/gamma power + peak frequencies + spectral entropy + phase std
+  - 6 spatial: x, y, z_depth, size, conf_std, detection_count
+- **Causal Graph Construction**: 12×12 directed graphs with Granger causality or lagged correlation
+- **Graph Neural Networks**: GATv2-based architecture (4 heads, 3 layers, 128 hidden channels) for classification
+- **Batch Effect Harmonization**: neuroCombat integration for multi-site data harmonization
+- **Stratified k-fold Validation**: 5-fold CV balanced by diagnosis and scanner site
+- **Explainability**: Gradient-based node importance and causal edge weight analysis
+- **Unified Pipeline**: Single `run_pipeline.py` orchestrates all stages
 
 
 ### Setup
@@ -61,16 +65,21 @@ python -m src.pipelines.roi_detection
 
 ### 3. Feature Extraction
 
-Extract temporal and spatial features from detected ROIs:
+Extract temporal, frequency-domain, and spatial features from detected ROIs:
 
 ```bash
 # Extract 3D spatial coordinates from YOLO detections
 python -m src.features.extract_features
 # Outputs: data/processed/metadata/node_features_3d.csv
 
-# Extract temporal features (mean, std, skew, kurtosis, PSD, MSSD)
+# Extract temporal features (8 basic stats per ROI)
 python -m src.utils.compute_roi
 # Outputs: data/processed/metadata/node_attributes_temporal.csv
+
+# Extract frequency-domain features (12 spectral features per ROI)
+python -m src.features.frequency_features
+# Outputs: 12 features - delta/theta/alpha/beta/gamma power + peaks + entropy + phase
+# Combined into temporal CSV: 20 total temporal features
 ```
 
 ### 4. Batch Effect Harmonization
@@ -90,7 +99,9 @@ Build directed causal graphs from time series:
 ```bash
 python -m src.features.construct_causal
 # Outputs: data/processed/causal_graphs/{subject_id}_graph.pt
-# Graphs: 5 nodes (lobes), directed edges, causal correlation weights
+# Graphs: 12 nodes (regions), directed edges, causal weights
+# Methods: Granger causality (default) or lagged Pearson correlation
+# Sparsification: Adaptive (~3-8 edges/graph for interpretability)
 ```
 
 ### 6. Model Training
@@ -215,8 +226,10 @@ Neuro-CXG/
 │   │   └── validator.py           # ✨ Comprehensive validation: YOLO quality, sparsity, stratification
 │   ├── features/                  # Feature engineering and graph construction
 │   │   ├── extract_features.py    # YOLO inference → 3D spatial aggregation
+│   │   ├── frequency_features.py  # ✨ NEW: Frequency-domain feature extraction (12 features)
+│   │   ├── causal_inference.py    # ✨ NEW: Granger causality & transfer entropy
 │   │   ├── safe_harmonization.py  # neuroCombat batch effect removal (robust NaN handling)
-│   │   ├── construct_causal.py    # Causal graph construction (lagged correlation)
+│   │   ├── construct_causal.py    # Causal graph construction (Granger or lagged correlation)
 │   │   └── graph_factory.py       # PyTorch Geometric dataset loader
 │   ├── data/                      # Data processing modules
 │   │   ├── split.py               # Stratified splitting (2D: DX_GROUP + SITE_ID)
@@ -252,15 +265,16 @@ All project constants defined in [src/core/config.py](src/core/config.py) (singl
 |-----------|-------|-------|
 | NUM_LOBES | 12 | Frontal_Superior, Frontal_Orbital, Motor_Premotor, Insula, Cingulate, Limbic, Occipital, Parietal, Temporal, Subcortical, Cerebellum, Brainstem |
 | LOBE_MAPPING | 170→12 | AAL3 atlas ROI aggregation (1-indexed to 0-indexed) |
-| GNN_IN_CHANNELS | 14 | 8 temporal + 6 spatial features (updated architecture) |
+| GNN_IN_CHANNELS | 26 | 20 temporal (8 basic + 12 frequency) + 6 spatial |
 | GNN_HIDDEN_CHANNELS | 128 | Hidden dimension for GATv2Conv (increased from 64) |
-| GNN_NUM_HEADS | 2 | Attention heads per GAT layer (sufficient for 12 nodes) |
+| GNN_NUM_HEADS | 4 | Attention heads per GAT layer (increased from 2) |
 | GNN_DROPOUT | 0.5 | High dropout to prevent site-specific memorization |
 | K_FOLDS | 5 | Cross-validation folds |
 | YOLO_BATCH_SIZE | 32 | Optimized for RTX 4060 8GB (v26 training) |
 | YOLO_EPOCHS | 100 | YOLO training epochs (v26 completed 100) |
 | GNN_EPOCHS | 100 | GNN training epochs (early stopping active) |
 | CAUSAL_LAG | 1 | Time lag for temporal precedence (TRs) |
+| CAUSALITY_METHOD | 'granger' | Granger causality (default) or 'lagged_pearson' |
 | SPARSITY_QUANTILE | 0.80 | Keep top 20% causal connections (~5 edges/graph) |
 
 See [src/core/config.py](src/core/config.py) for all 60+ parameters.

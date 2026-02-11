@@ -5,7 +5,7 @@
 
 ## IMPLEMENTATION STATUS (February 11, 2026)
 
-**Latest Update**: YOLO v26 training complete (mAP50-95: 0.94073); GNN retraining with early stopping optimization showing stable convergence; validation folder fully structured with 5 modules
+**Latest Update**: Phase 1 Feature Engineering & Causal Inference enhancements complete - added frequency-domain features (12), Granger causality, expanded GNN to 26 input channels with 4 attention heads
 
 ### COMPLETED PHASES (100%)
 
@@ -24,30 +24,34 @@
 - [x] Status: Production-ready with exceptional detection quality
 
 #### Phase 4: Feature Extraction & Harmonization
-- [x] Temporal feature computation (8 per ROI: mean, std, skew, kurtosis, PSD, MSSD, range, autocorr)
+- [x] Temporal feature computation (8 basic per ROI: mean, std, skew, kurtosis, PSD, MSSD, range, autocorr)
+- [x] ✨ Frequency-domain features (12 per ROI: delta/theta/alpha/beta/gamma power + peak frequencies + spectral entropy + phase std)
 - [x] Spatial coordinate extraction from YOLO detections (6 features: x, y, z_depth, size, conf_std, count)
 - [x] Site harmonization with neuroCombat (DX_GROUP protected)
-- [x] Total 14 node features per brain region (8 temporal + 6 spatial)
+- [x] Total 26 node features per brain region (20 temporal + 6 spatial)
 - [x] Outputs: data/processed/metadata/node_attributes_harmonized.csv
 
 #### Phase 5: Graph Construction
 - [x] Functional connectivity matrices from 170 AAL ROIs
 - [x] Aggregation to 12 brain regions (expanded from 5 lobes for finer granularity)
-- [x] Causal graph construction (lagged Pearson correlation, t-1 -> t with lag=1 TR)
-- [x] Sparsification to top 40% connections (SPARSITY_QUANTILE=0.60)
+- [x] ✨ Causal graph construction with Granger causality (default) or lagged Pearson correlation
+- [x] ✨ Multi-lag causality testing (lags 1-5 TRs) with statistical significance
+- [x] ✨ Adaptive sparsification (proportional method, min 3 edges/graph)
 - [x] PyTorch Geometric Data objects with edge attributes
 - [x] Outputs: data/processed/causal_graphs/{subject_id}_graph.pt (12×12 adjacency matrices)
 
 #### Phase 6: GNN Development
-- [x] CausalBrainGNN architecture (GATv2Conv with 3 layers, 2 heads, 128 hidden channels, skip connections)
+- [x] CausalBrainGNN architecture (GATv2Conv with 3 layers, 4 attention heads, 128 hidden channels, skip connections)
+- [x] ✨ Expanded input channels: 26 features (20 temporal + 6 spatial)
 - [x] Site embeddings and demographic conditioning (age, sex, FIQ)
 - [x] 5-fold stratified cross-validation (by DX_GROUP + SITE_ID)
-- [x] Training loop with early stopping and gradient clipping (max_norm=1.0)
+- [x] Training loop with early stopping (patience=35) and gradient clipping (max_norm=1.0)
 - [x] Metric computation (Accuracy, F1, ROC-AUC, Confusion Matrix per fold)
 - [x] Model checkpointing (best AUC per fold)
 - [x] Outputs: models/checkpoints/best_model_fold{0-4}.pt (7.0MB each, updated Feb 11, 2026)
 - [x] Current Performance (Feb 11, 2026): Mean AUC 0.5593 ± 0.0156, Per-fold: [0.5598, 0.5795, 0.5594, 0.5328, 0.5651]
 - [x] Training characteristics: Quick convergence (3-10 epochs), low variance, stable baseline
+- [ ] ⭕ Next: Retrain with 26-feature input and evaluate improvement
 
 ### COMPLETED SPRINT: CODE REFINEMENT & PRODUCTION-READY (January 15-17, 2026)
 
@@ -152,7 +156,70 @@
 - [x] Clear integration status for all validation modules
 - [x] Unified command interface: python src/validation/integrity.py [--dataset|--distribution|--class-analysis|--health]
 
-### COMPLETED SPRINT: YOLO v26 & GNN OPTIMIZATION (February 1-11, 2026) ✨ NEW
+### COMPLETED SPRINT: PHASE 1 FEATURE ENGINEERING & CAUSAL INFERENCE (February 11, 2026) ✨ NEW
+
+#### Feature Expansion: 14 → 26 Input Dimensions (✅ Complete)
+
+**Frequency-Domain Features Added:**
+- [x] Created `src/features/frequency_features.py` module
+- [x] Implemented spectral feature extraction:
+  - 5 frequency bands: delta (0.01-0.04 Hz), theta (0.04-0.08 Hz), alpha (0.08-0.13 Hz), beta (0.13-0.30 Hz), gamma (0.30-0.50 Hz)
+  - Power features: Total power per band (5 features)
+  - Peak frequency features: Dominant frequency per band (5 features)
+  - Spectral entropy: Shannon entropy of power spectrum (1 feature)
+  - Phase std: Standard deviation of instantaneous phase (1 feature)
+- [x] Total: 12 frequency features per ROI
+- [x] Updated config: `NUM_TEMPORAL_FEATURES = 20` (8 basic + 12 frequency)
+- [x] Updated config: `GNN_IN_CHANNELS = 26` (20 temporal + 6 spatial)
+
+**Scientific Rationale:**
+- Gamma-band abnormalities documented in ASD (Rojas et al., 2008)
+- Enhanced gamma oscillations in ASD (Orekhova et al., 2007)
+- Spectral entropy for disorder classification (Bruña et al., 2012)
+
+#### Causal Inference Enhancement (✅ Complete)
+
+**Granger Causality Implementation:**
+- [x] Created `src/features/causal_inference.py` module
+- [x] Implemented multivariate Granger causality:
+  - Tests: Does past of region i improve prediction of region j?
+  - Multi-lag testing: 1-5 TRs (configurable via `GRANGER_MAX_LAG`)
+  - Statistical significance: p-value threshold (default: 0.05)
+  - Output: -log10(p-value) as edge weights (higher = stronger causality)
+- [x] Updated config: `CAUSALITY_METHOD = 'granger'` (default)
+- [x] Updated config: `SPARSITY_METHOD = 'adaptive_proportional'`
+- [x] Updated config: `MIN_EDGES_PER_GRAPH = 3` (ensure connectivity)
+
+**Alternatives Available:**
+- Transfer entropy: Information-theoretic causality (nonlinear)
+- Lagged Pearson: Simple temporal precedence (baseline)
+
+**Scientific Rationale:**
+- Granger (1969): Temporal precedence for causality
+- Barnett & Seth (2014): MVGC toolbox standard
+- Better captures directed influence vs. symmetric correlation
+
+#### GNN Architecture Upgrade (✅ Complete)
+
+**Model Enhancements:**
+- [x] Increased attention heads: 2 → 4 (`GNN_NUM_HEADS = 4`)
+- [x] Expanded input layer: 14 → 26 channels
+- [x] Maintained: 128 hidden channels, 3 layers, skip connections
+- [x] Early stopping patience: 25 → 35 epochs
+- [x] Focal loss tuned: α=0.70, γ=2.0 (optimal from experiments)
+
+**Rationale:**
+- More attention heads capture complex causal patterns
+- 26 features provide richer representation (~86% increase)
+- 4 heads suitable for 12-node graphs with 26 features
+
+**Next Steps:**
+1. ⭕ Retrain GNN with 26-feature input (expected AUC≥0.62)
+2. 🔄 Evaluate Granger causality vs lagged correlation
+3. 🔄 Ablation study: frequency features impact
+4. 🔄 Compare 2-head vs 4-head attention performance
+
+### COMPLETED SPRINT: YOLO v26 & GNN OPTIMIZATION (February 1-11, 2026)
 
 #### YOLO v26 Training Complete (✅ Feb 2-4, 2026)
 
