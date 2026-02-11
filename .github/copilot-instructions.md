@@ -22,7 +22,8 @@ python -c "from src.core.config import validate_environment; validate_environmen
 
 **YOLO v26**: mAP50-95=0.94073, mAP50=0.9894, 12-region detection (production-ready, exceptional)  
 **GNN Latest Training**: AUC=0.5593±0.016, early stopping (3-10 epochs), stable convergence  
-**Architecture**: 12 regions (AAL 170→12), 14 features (8 temporal + 6 spatial)
+**Architecture**: 12 regions (AAL 170→12), 26 features (20 temporal + 6 spatial)  
+**Phase 1 Enhancements**: Frequency features (12), Granger causality, 4-head attention
 
 ## Data Pipeline (5 Critical Steps)
 
@@ -50,17 +51,19 @@ python -c "from src.core.config import validate_environment; validate_environmen
 
 4. **Graph Construction** → [src/features/construct_causal.py]
    - Aggregates 170 AAL ROIs → 12 regions using `LOBE_MAPPING` from config
-   - Computes **lagged Pearson correlation** (t-1 → t with lag=1 TR for temporal precedence)
-   - Creates 12×12 directed adjacency matrix (matrix[i,j] = correlation between region i at t-1 and region j at t)
-   - Sparsifies to top 40% correlations (`SPARSITY_QUANTILE=0.60`; keeps ~5 edges per graph on average)
-   - Output: PyTorch Geometric Data objects with node features (12, 14) and edge attributes saved as `.pt` files
+   - Computes **Granger causality** (default) or **lagged Pearson correlation** (t-1 → t with lag=1 TR)
+   - Multi-lag testing: 1-5 TRs for temporal precedence
+   - Creates 12×12 directed adjacency matrix with -log10(p-value) or correlation weights
+   - Adaptive sparsification: min 3 edges/graph, proportional method
+   - Output: PyTorch Geometric Data objects with node features (12, 26) and edge attributes saved as `.pt` files
 
 5. **GNN Training** → [src/models/gnn_model.py] + [src/models/causal_gnn.py]
    - Loads graphs via `ABIDECausalDataset` (in [src/features/graph_factory.py])
    - 5-fold stratified CV on full train set (702 subjects)
-   - GATv2Conv with 3 layers, 2 attention heads, 128 hidden channels, skip connections
+   - GATv2Conv with 3 layers, 4 attention heads, 128 hidden channels, skip connections
+   - Input: 26 node features (20 temporal + 6 spatial)
    - Site embeddings and demographic conditioning (age, sex, FIQ)
-   - Label smoothing (0.1) and gradient clipping (1.0) for stable training
+   - Focal loss (α=0.70, γ=2.0) and gradient clipping (1.0) for stable training
    - Saves best-AUC model per fold to `models/checkpoints/best_model_fold{0-4}.pt`
 
 ### Performance Metrics (February 11, 2026) ✨ UPDATED - Latest Training
@@ -143,9 +146,11 @@ python -c "from src.core.config import validate_environment; validate_environmen
 ### 4. Tensor/Data Shapes (Critical for Graph Construction)
 - **Input time series**: `(timepoints, num_rois)` where num_rois ∈ {116, 117, 170} depending on atlas
 - **After lobe aggregation**: `(timepoints, 12)` (always 12 regions from LOBE_MAPPING)
-- **Graph node features (x)**: `(12, num_features)` where num_features = 8 (temporal) + 6 (spatial) = 14
+- **Graph node features (x)**: `(12, num_features)` where num_features = 20 (temporal) + 6 (spatial) = 26
+  - 20 temporal: 8 basic (mean, std, skew, kurt, PSD, MSSD, range, autocorr) + 12 frequency (delta/theta/alpha/beta/gamma power + peaks + entropy + phase)
+  - 6 spatial: x, y, z_depth, size, conf_std, detection_count
 - **Edge index**: `(2, num_edges)` — 2D tensor for PyTorch Geometric format
-- **Edge attributes**: `(num_edges,)` — causal correlation weights (floats in [-1, 1])
+- **Edge attributes**: `(num_edges,)` — causal weights (Granger: -log10(p), Pearson: correlation [-1, 1])
 - **Batch label (y)**: scalar 0 (Control) or 1 (ASD)
 
 ### 5. AAL3 Neuroanatomy
@@ -170,15 +175,22 @@ python -c "from src.core.config import validate_environment; validate_environmen
 - **Key insight**: Medical image preprocessing is opposite of natural image YOLO—disable all augmentation that breaks anatomical alignment
 
 ### 7. Causal Graph Construction Details
-- **Lag**: t-1 → t (1 TR lag enforces temporal precedence)
-- **Method**: Lagged Pearson correlation (not partial correlation)
-- **Sparsity**: Keep top 40% of correlations by setting `SPARSITY_QUANTILE = 0.60`
+- **Method**: Granger causality (default) or lagged Pearson correlation (baseline)
+- **Granger causality**:
+  - Tests: Does past of region i improve prediction of region j?
+  - Multi-lag: Tests lags 1-5 TRs (`GRANGER_MAX_LAG = 5`)
+  - Statistical significance: p-value < 0.05 (`GRANGER_SIGNIFICANCE_LEVEL`)
+  - Edge weights: -log10(p-value) where higher = stronger causality
+- **Lagged Pearson** (baseline):
+  - Lag: t-1 → t (1 TR lag enforces temporal precedence)
+  - Edge weights: Correlation values in [-1, 1]
+- **Sparsity**: Adaptive proportional method (min 3 edges/graph for connectivity)
 - **Output format**: PyTorch `.pt` files containing `torch_geometric.Data` objects:
   ```python
   Data(
-    x=node_features,           # shape: (12, 14) - 8 temporal + 6 spatial
+    x=node_features,           # shape: (12, 26) - 20 temporal + 6 spatial
     edge_index=edge_indices,   # shape: (2, num_edges)
-    edge_attr=weights,         # shape: (num_edges,)
+    edge_attr=weights,         # shape: (num_edges,) - Granger or correlation
     y=diagnosis_label,         # 0 or 1
     subject_id=string          # for tracking
   )
@@ -187,24 +199,25 @@ python -c "from src.core.config import validate_environment; validate_environmen
 
 ### 8. GNN Architecture & Training
 - **Model**: `CausalBrainGNN` (class in [src/models/causal_gnn.py])
-  - Input embedding: LayerNorm (not BatchNorm—graphs are small; stabilizes 14 features with varying scales)
-  - Layer 1: GATv2Conv with **2 heads**, edge_dim=1 (causal weights; 128 hidden channels)
-  - Layer 2: GATv2Conv with **2 heads**, edge_dim=1 (128 hidden channels)
-  - Layer 3: GATv2Conv with **2 heads**, edge_dim=1 (128 hidden channels)
+  - Input embedding: LayerNorm (not BatchNorm—graphs are small; stabilizes 26 features with varying scales)
+  - Layer 1: GATv2Conv with **4 heads**, edge_dim=1 (causal weights; 128 hidden channels)
+  - Layer 2: GATv2Conv with **4 heads**, edge_dim=1 (128 hidden channels)
+  - Layer 3: GATv2Conv with **4 heads**, edge_dim=1 (128 hidden channels)
   - Skip connections: Residual links prevent over-smoothing in 12-node graphs
   - Readout: Concat mean-pooling (global brain state) + max-pooling (pathological region hub)
   - Output: 2-class softmax (Control vs ASD)
   - Weight initialization: Kaiming normal for Linear layers, zeros for biases
 
 - **Training details**:
-  - Optimizer: AdamW with `lr=0.001, weight_decay=1e-3`
+  - Optimizer: AdamW with `lr=0.0005, weight_decay=1e-3`
   - Scheduler: CosineAnnealingLR over EPOCHS
-  - Loss: Focal Loss (α=0.75, γ=3.0) for class imbalance (replaces CrossEntropyLoss in Hybrid v1)
+  - Loss: Focal Loss (α=0.70, γ=2.0) for class imbalance (tuned from experiments)
   - Gradient clipping: `max_norm=1.0` (prevents explosion in small graphs)
   - K-fold: 5-fold stratified by DX_GROUP
   - Metrics: Accuracy, F1, ROC-AUC (from probs[:,1]), confusion matrix per fold
   - Checkpointing: Save best model per fold (top validation AUC)
   - Dropout: 0.5 (high dropout to prevent memorizing site-specific noise)
+  - Early stopping: patience=35 epochs
 
 - **Current Results** (5-fold CV with 12-region architecture, Feb 11, 2026):
   - Mean AUC: **0.5593 ± 0.0156** (stable baseline with early stopping)
@@ -446,7 +459,9 @@ python src/features/safe_harmonization.py
 | [src/validation/pipeline_validator.py] | ✨ Pipeline-level monitoring and validation orchestration |
 | **Feature Engineering & Graphs** | |
 | [src/features/extract_features.py] | YOLO inference → 3D spatial aggregation; all-5-lobes filter |
-| [src/features/construct_causal.py] | AAL→Lobe aggregation; lagged correlation; graph creation |
+| [src/features/frequency_features.py] | \u2728 NEW: Frequency-domain extraction (12 features: delta/theta/alpha/beta/gamma power+peaks+entropy+phase) |
+| [src/features/causal_inference.py] | \u2728 NEW: Granger causality & transfer entropy for directed graph construction |
+| [src/features/construct_causal.py] | AAL\u2192Lobe aggregation; Granger/lagged correlation; graph creation |
 | [src/features/graph_factory.py] | PyTorch Geometric dataset loader |
 | [src/features/safe_harmonization.py] | Robust feature harmonization with NaN/Inf handling; protects DX_GROUP |
 | **Data Pipeline** | |
@@ -670,14 +685,22 @@ In [src/features/safe_harmonization.py], `DX_GROUP` (diagnosis) is NEVER passed 
 - Reduces scanner-specific noise through within-region averaging
 - Better statistical power with limited samples (n~1000)
 
-**2-Head GAT (not 4-head):**
-- Sufficient attention capacity for 12-node graphs
-- 4+ heads cause redundancy on small graphs
+**4-Head GAT (increased from 2-head):**
+- Increased capacity for 26-feature input (up from 14)
+- 4 heads capture more complex causal patterns
+- Still efficient for 12-node graphs (not redundant like 8+ heads)
 - Maintains edge_attr (causal weights) integration
 - Skip connections prevent over-smoothing
 
-**Lagged Correlation (not Granger):**
-- Scalable to 170 ROIs before aggregation
-- Temporal precedence via lag=1 TR enforces directionality
-- Robust and interpretable compared to VAR models
-- Sparsification (top 40%) keeps strongest connections only
+**Granger Causality (not just lagged correlation):**
+- Statistical rigor: Tests null hypothesis with p-values
+- Multi-lag testing: Captures dynamics across multiple timescales (1-5 TRs)
+- Directed causality: Region i \u2192 j if past of i improves prediction of j
+- Interpretable edge weights: -log10(p-value) where higher = stronger
+- Baseline alternative: Lagged Pearson for computational efficiency
+
+**Frequency-Domain Features (12 new):**
+- Gamma-band abnormalities documented in ASD (Rojas et al., 2008)
+- Spectral entropy captures oscillatory complexity
+- Phase stability metrics for synchrony analysis
+- 86% feature expansion (14 \u2192 26) for richer representation

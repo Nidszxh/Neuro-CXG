@@ -91,8 +91,8 @@ STAGE 5: BATCH EFFECT REMOVAL
 │                                │  - Protect DX_GROUP (diagnosis)
 │                                │  - Fill missing demographics (age,sex)
 └───────────────────┬────────────┘  - Outlier capping (5σ threshold)
-                    │                - 14 features per region maintained
-             ✓ node_attributes_harmonized.csv
+                    │                - 26 features per region maintained
+             ✓ node_attributes_harmonized.csv   (20 temporal + 6 spatial)
                     │
                     ▼
 
@@ -125,15 +125,17 @@ STAGE 7: PRE-GNN INTEGRITY CHECK
 STAGE 8: GRAPH CONSTRUCTION
 ┌──────────────────────────────────┐
 │ Causal Graph Construction        │  src/features/construct_causal.py
-│ Lagged Pearson Correlation       │  - Aggregate 170 AAL → 12 regions
-│ (t-1 → t with lag=1 TR)          │  - Compute lagged correlations
-│                                  │  - Sparsify top 40% edges (0.60 q)
-│                                  │  - 14 node features per region
+│ ✨ Granger Causality (default)   │  src/features/causal_inference.py
+│ OR Lagged Pearson Correlation    │  - Aggregate 170 AAL → 12 regions
+│ (multi-lag 1-5 TRs)              │  - Compute Granger causality or
+│                                  │    lagged correlations
+│                                  │  - Adaptive sparsification (min 3 edges)
+│                                  │  - 26 node features per region
 └──────────────┬───────────────────┘
                │
           ✓ graph_0.pt, graph_1.pt, ..., graph_N.pt
           ✓ Format: PyTorch Geometric Data objects
-          ✓ Shape: (12 nodes, 14 features, ~5 edges)
+          ✓ Shape: (12 nodes, 26 features, ~3-8 edges)
           ✓ Total graphs: 1035 subjects (702 train, 152 val, 152 test)
                │
                ▼
@@ -142,24 +144,26 @@ STAGE 9: GNN TRAINING
 ┌──────────────────────────────────┐
 │ Graph Neural Network Training    │  src/models/gnn_model.py
 │ 5-Fold Stratified Cross-Val      │  - GATv2Conv with 3 layers
-│                                  │  - 2 attention heads per layer
+│ ✨ 26 Input Features              │  - 4 attention heads per layer
 │                                  │  - 128 hidden channels
 │                                  │  - Site embeddings & demographics
-│                                  │  - Label smoothing (0.1)
+│                                  │  - Focal loss (α=0.70, γ=2.0)
 │                                  │  - Early stopping on AUC (patience=35)
 └──────────────┬───────────────────┘  - Dropout 0.5, gradient clip 1.0
-               │                       - Results: AUC=0.5716±0.0280
-          ✓ best_model_fold0.pt
+               │                       - Current: AUC=0.5593±0.0156 (14-feat baseline)
+          ✓ best_model_fold0.pt          ⏱ Next: Retrain with 26 features
           ✓ best_model_fold1.pt
           ✓ best_model_fold2.pt
           ✓ best_model_fold3.pt
           ✓ best_model_fold4.pt
                │
                ▼
-        📊 FINAL PREDICTIONS & METRICS
-        ├─ YOLO mAP50-95: 0.908 (v25, epoch 38) ✅
-        ├─ GNN Mean AUC: 0.5354 ± 0.0562 🔄
-        ├─ GNN Mean F1: 0.6586 ± 0.0164
+        📊 FINAL PREDICTIONS & METRICS (Phase 1 Ready)
+        ├─ YOLO mAP50-95: 0.94073 (v26, epoch 100) ✅
+        ├─ Features: 26 dimensions (20 temporal + 6 spatial) ✨
+        ├─ Causal: Granger + lagged correlation methods ✨
+        ├─ GNN Baseline: AUC 0.5593 ± 0.0156 (14-feature)
+        ├─ GNN Target: AUC ≥ 0.62 (26-feature retraining) ⏱
         ├─ Per-fold confusion matrices
         └─ Feature importance via gradients
 
