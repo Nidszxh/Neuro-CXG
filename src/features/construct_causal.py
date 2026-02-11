@@ -10,7 +10,13 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     LOBE_MAPPING, NUM_LOBES, CAUSAL_LAG, SPARSITY_QUANTILE,
-    DATA_FINAL, MASTER_MANIFEST, CAUSAL_GRAPHS_DIR, DEVICE
+    DATA_FINAL, MASTER_MANIFEST, CAUSAL_GRAPHS_DIR, DEVICE,
+    CAUSALITY_METHOD, GRANGER_MAX_LAG, SPARSITY_METHOD, MIN_EDGES_PER_GRAPH
+)
+from src.features.causal_inference import (
+    compute_granger_causality,
+    compute_transfer_entropy,
+    compute_multilag_causality
 )
 
 # Setup logging
@@ -44,7 +50,11 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> torch.Tensor:
 
 
 def compute_lagged_causality(ts_lobe: torch.Tensor) -> torch.Tensor:
-
+    """
+    Legacy function: Compute lagged Pearson correlation (kept for backward compatibility).
+    
+    For new graphs, use compute_causality_matrix() which supports Granger causality.
+    """
     # Validate input
     if ts_lobe.shape[0] <= CAUSAL_LAG:
         logger.warning("Insufficient timepoints for lagged correlation")
@@ -75,6 +85,165 @@ def compute_lagged_causality(ts_lobe: torch.Tensor) -> torch.Tensor:
     return directed_adj
 
 
+def compute_causality_matrix(ts_lobe: torch.Tensor, method: str = None) -> torch.Tensor:
+    """
+    Compute causal adjacency matrix using configured method.
+    
+    Args:
+        ts_lobe: Time series for lobes (shape: [timepoints, n_lobes])
+        method: Causality method ('granger', 'transfer_entropy', 'lagged_pearson')
+                If None, uses CAUSALITY_METHOD from config
+    
+    Returns:
+        Causal adjacency matrix (shape: [n_lobes, n_lobes])
+    """
+    if method is None:
+        method = CAUSALITY_METHOD
+    
+    # Convert to numpy for causal inference methods
+    ts_numpy = ts_lobe.cpu().numpy()
+    
+    try:
+        if method == 'granger':
+            logger.debug(f"Computing Granger causality (max_lag={GRANGER_MAX_LAG})")
+            causal_matrix_np = compute_granger_causality(
+                ts_numpy,
+                max_lag=GRANGER_MAX_LAG
+            )
+        
+        elif method == 'transfer_entropy':
+            logger.debug("Computing transfer entropy")
+            causal_matrix_np = compute_transfer_entropy(
+                ts_numpy,
+                k=1,
+                bins=10
+            )
+        
+        elif method == 'lagged_pearson':
+            logger.debug(f"Computing lagged Pearson correlation (lag={CAUSAL_LAG})")
+            # Use legacy function
+            return compute_lagged_causality(ts_lobe)
+        
+        else:
+            logger.warning(f"Unknown causality method '{method}', falling back to lagged_pearson")
+            return compute_lagged_causality(ts_lobe)
+        
+        # Convert back to torch tensor
+        causal_matrix = torch.from_numpy(causal_matrix_np).float().to(DEVICE)
+        
+        return causal_matrix
+    
+    except Exception as e:
+        logger.warning(f"Causality computation failed ({method}): {e}, falling back to lagged_pearson")
+        return compute_lagged_causality(ts_lobe)
+
+
+def adaptive_sparsification(
+    causal_matrix: torch.Tensor,
+    method: str = None,
+    min_edges: int = None
+) -> torch.Tensor:
+    """
+    Apply adaptive sparsification to causality matrix.
+    
+    Args:
+        causal_matrix: Causal adjacency matrix
+        method: Sparsification method ('adaptive_proportional', 'adaptive_statistical', 'fixed')
+        min_edges: Minimum number of edges to keep
+    
+    Returns:
+        Sparsified adjacency matrix
+    """
+    if method is None:
+        method = SPARSITY_METHOD
+    
+    if min_edges is None:
+        min_edges = MIN_EDGES_PER_GRAPH
+    
+    abs_matrix = torch.abs(causal_matrix)
+    
+    if method == 'adaptive_proportional':
+        # Keep edges proportional to network strength
+        total_strength = abs_matrix.sum().item()
+        target_edges = max(min_edges, int(np.sqrt(total_strength) * 10))
+        target_edges = min(target_edges, NUM_LOBES * NUM_LOBES)  # Cap at max possible
+        
+        # Keep top target_edges by absolute weight
+        flat_values = abs_matrix.flatten()
+        if target_edges >= len(flat_values):
+            # Keep all edges
+            return causal_matrix
+        
+        threshold_value = torch.topk(flat_values, target_edges).values[-1]
+        adj_matrix = torch.where(
+            abs_matrix >= threshold_value,
+            causal_matrix,
+            torch.tensor(0.0, device=DEVICE)
+        )
+    
+    elif method == 'adaptive_statistical':
+        # Keep edges above statistical significance threshold
+        # For Granger causality: -log10(p) > -log10(0.05) ≈ 1.3
+        # For other methods: use median + 1 std as threshold
+        if CAUSALITY_METHOD == 'granger':
+            threshold_value = 1.3  # p < 0.05
+        else:
+            non_zero = abs_matrix[abs_matrix > 0]
+            if len(non_zero) > 0:
+                threshold_value = non_zero.median() + non_zero.std()
+            else:
+                threshold_value = 0.0
+        
+        adj_matrix = torch.where(
+            abs_matrix >= threshold_value,
+            causal_matrix,
+            torch.tensor(0.0, device=DEVICE)
+        )
+        
+        # Ensure minimum edges
+        num_edges = (adj_matrix != 0).sum().item()
+        if num_edges < min_edges:
+            # Fall back to keeping top min_edges
+            flat_values = abs_matrix.flatten()
+            threshold_value = torch.topk(flat_values, min_edges).values[-1]
+            adj_matrix = torch.where(
+                abs_matrix >= threshold_value,
+                causal_matrix,
+                torch.tensor(0.0, device=DEVICE)
+            )
+    
+    elif method == 'fixed':
+        # Use fixed quantile threshold (original method)
+        thresh = torch.quantile(abs_matrix, SPARSITY_QUANTILE)
+        adj_matrix = torch.where(
+            abs_matrix >= thresh,
+            causal_matrix,
+            torch.tensor(0.0, device=DEVICE)
+        )
+        
+        # Ensure minimum edges
+        num_edges = (adj_matrix != 0).sum().item()
+        if num_edges < min_edges:
+            flat_values = abs_matrix.flatten()
+            threshold_value = torch.topk(flat_values, min_edges).values[-1]
+            adj_matrix = torch.where(
+                abs_matrix >= threshold_value,
+                causal_matrix,
+                torch.tensor(0.0, device=DEVICE)
+            )
+    
+    else:
+        logger.warning(f"Unknown sparsity method '{method}', using fixed")
+        thresh = torch.quantile(abs_matrix, SPARSITY_QUANTILE)
+        adj_matrix = torch.where(
+            abs_matrix >= thresh,
+            causal_matrix,
+            torch.tensor(0.0, device=DEVICE)
+        )
+    
+    return adj_matrix
+
+
 def construct_graph(subject_id: str, split: str) -> bool:
 
     ts_path = DATA_FINAL / split / "time_series" / f"{subject_id}_ts.npy"
@@ -96,8 +265,8 @@ def construct_graph(subject_id: str, split: str) -> bool:
         # 1. Aggregate to 12 Regions
         ts_lobes = aggregate_to_lobes(ts_data)
         
-        # 2. Compute 12x12 Causal Matrix
-        causal_matrix = compute_lagged_causality(ts_lobes)
+        # 2. Compute 12x12 Causal Matrix (Phase 1: Granger causality)
+        causal_matrix = compute_causality_matrix(ts_lobes)
         
         #  CRITICAL FIX: VALIDATE BEFORE SPARSIFICATION 
         # Check if matrix is all zeros (this would cause issues)
@@ -112,16 +281,8 @@ def construct_graph(subject_id: str, split: str) -> bool:
             'non_zero': int((causal_matrix != 0).sum())
         }
         
-        # 3. Sparsification (Keep strongest 20% of directed edges)
-        abs_matrix = torch.abs(causal_matrix)
-        thresh = torch.quantile(abs_matrix, SPARSITY_QUANTILE)
-        
-        # Zero out weak connections
-        adj_matrix = torch.where(
-            abs_matrix >= thresh, 
-            causal_matrix, 
-            torch.tensor(0.0, device=DEVICE)
-        )
+        # 3. Adaptive Sparsification (Phase 1: subject-specific thresholding)
+        adj_matrix = adaptive_sparsification(causal_matrix)
         
         #  CRITICAL FIX: VALIDATE AFTER SPARSIFICATION 
         num_edges = (adj_matrix != 0).sum().item()
@@ -133,7 +294,7 @@ def construct_graph(subject_id: str, split: str) -> bool:
                 f"Pre-sparse: max={pre_sparse_stats['max']:.4f}, "
                 f"mean={pre_sparse_stats['mean']:.4f}, "
                 f"non_zero={pre_sparse_stats['non_zero']} | "
-                f"Threshold: {float(thresh):.4f}"
+                f"Method: {CAUSALITY_METHOD}, Sparsity: {SPARSITY_METHOD}"
             )
             return False
         

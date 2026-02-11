@@ -17,6 +17,7 @@ from src.core.config import (
     NODE_ATTRIBUTES_TEMPORAL,
     DEFAULT_TR
 )
+from src.features.frequency_features import extract_frequency_features_batch
 
 # Expected ROI count range for validation (AAL3v1 atlas)
 # Note: Some AAL3v1 templates have 2 unused/empty ROIs, so 164-170 are all valid
@@ -74,22 +75,26 @@ def calculate_band_power(ts: np.ndarray, tr: float, freq_band: tuple) -> float:
     
     return float(band_power / total_power) if total_power > 0 else 0.0
 
-def extract_single_roi_features(ts: np.ndarray, tr: float, include_bands: bool = False):
+def extract_single_roi_features(ts: np.ndarray, tr: float, include_frequency: bool = True):
     """
     Computes temporal metrics for one ROI.
     
     Base features (8): mean, std, skew, kurtosis, psd, mssd, range, autocorr
-    Optional band features (4): delta, theta, alpha, beta power
+    Frequency features (12): 5 bands × (power + peak_freq) + spectral_entropy + phase_std
     
     Args:
         ts: Time series signal
         tr: Repetition time
-        include_bands: If True, adds 4 frequency band features (12 total)
+        include_frequency: If True, adds 12 frequency features (20 total)
+    
+    Returns:
+        List of features (8 or 20 depending on include_frequency)
     """
     if not np.isfinite(ts).all() or np.std(ts) < 1e-6:
-        n_features = 12 if include_bands else 8
+        n_features = 20 if include_frequency else 8
         return [0.0] * n_features
 
+    # Base temporal features (8)
     base_features = [
         float(np.mean(ts)),
         float(np.std(ts)),
@@ -101,19 +106,34 @@ def extract_single_roi_features(ts: np.ndarray, tr: float, include_bands: bool =
         calculate_autocorr(ts, lag=1)       # Autocorr
     ]
     
-    if include_bands:
-        # Add frequency band powers (ASD biomarkers)
-        band_features = [
-            calculate_band_power(ts, tr, (0.5, 4)),    # Delta
-            calculate_band_power(ts, tr, (4, 8)),      # Theta
-            calculate_band_power(ts, tr, (8, 13)),     # Alpha
-            calculate_band_power(ts, tr, (13, 30))     # Beta
+    if include_frequency:
+        # Add comprehensive frequency-domain features (12)
+        from src.features.frequency_features import extract_band_power
+        
+        fs = 1.0 / tr  # Sampling frequency
+        freq_features = extract_band_power(ts, fs=fs)
+        
+        # Extract in consistent order
+        frequency_values = [
+            freq_features['delta_power'],
+            freq_features['delta_peak_freq'],
+            freq_features['theta_power'],
+            freq_features['theta_peak_freq'],
+            freq_features['alpha_power'],
+            freq_features['alpha_peak_freq'],
+            freq_features['beta_power'],
+            freq_features['beta_peak_freq'],
+            freq_features['gamma_power'],
+            freq_features['gamma_peak_freq'],
+            freq_features['spectral_entropy'],
+            freq_features['phase_std']
         ]
-        return base_features + band_features
+        
+        return base_features + frequency_values
     
     return base_features
 
-def main(add_bands: bool = False):
+def main(add_frequency: bool = True):
     if not MASTER_MANIFEST.exists():
         logger.error("Master manifest missing. Run manifest.py first.")
         return
@@ -133,9 +153,9 @@ def main(add_bands: bool = False):
     all_subject_data = []
     failed_subjects = []
     
-    features_per_roi = 12 if add_bands else 8
+    features_per_roi = 20 if add_frequency else 8
     logger.info(f"🚀 Extracting temporal features for {len(manifest)} subjects...")
-    logger.info(f"Features per ROI: {features_per_roi} ({'with' if add_bands else 'without'} frequency bands)")
+    logger.info(f"Features per ROI: {features_per_roi} ({'with' if add_frequency else 'without'} frequency features)")
 
     for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Subjects"):
         sub_id = str(row["subject_id"])
@@ -172,11 +192,11 @@ def main(add_bands: bool = False):
             for i in range(num_rois):
                 roi_signal = ts_data[:, i]
                 try:
-                    roi_feats = extract_single_roi_features(roi_signal, tr, include_bands=add_bands)
+                    roi_feats = extract_single_roi_features(roi_signal, tr, include_frequency=add_frequency)
                     subject_features.extend(roi_feats)
                 except Exception as e:
                     logger.warning(f"{sub_id} ROI {i}: Feature extraction failed: {e}")
-                    subject_features.extend([0.0] * features_per_roi)  # Fallback: 8 features per ROI (mean, std, skew, kurt, psd, mssd, range, autocorr)
+                    subject_features.extend([0.0] * features_per_roi)  # Fallback: features_per_roi (8 or 20 depending on add_frequency)
             
             all_subject_data.append(subject_features)
 
@@ -223,8 +243,15 @@ def main(add_bands: bool = False):
     # Create Fixed Column Names (always 170 ROIs after normalization)
     columns = ['subject_id']
     stats = ["mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr"]
-    if add_bands:
-        stats.extend(["delta", "theta", "alpha", "beta"])
+    if add_frequency:
+        stats.extend([
+            "delta_power", "delta_peak",
+            "theta_power", "theta_peak",
+            "alpha_power", "alpha_peak",
+            "beta_power", "beta_peak",
+            "gamma_power", "gamma_peak",
+            "spectral_entropy", "phase_std"
+        ])
     
     for r in range(1, 171):  # Always 170 ROIs, even if some are zero-padded
         for s in stats:
@@ -250,14 +277,23 @@ def main(add_bands: bool = False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Extract temporal features from fMRI time series")
     parser.add_argument(
-        "--add-bands",
+        "--add-frequency",
         action="store_true",
-        help="Add frequency band features (delta, theta, alpha, beta) - increases features from 8 to 12 per ROI"
+        default=True,
+        help="Add comprehensive frequency-domain features (5 bands + spectral/phase) - increases features from 8 to 20 per ROI"
+    )
+    parser.add_argument(
+        "--no-frequency",
+        dest="add_frequency",
+        action="store_false",
+        help="Disable frequency features (use only 8 basic temporal features)"
     )
     args = parser.parse_args()
     
-    if args.add_bands:
-        logger.info("🎵 Including frequency band features (delta, theta, alpha, beta)")
-        logger.info("This will increase features per ROI: 8 → 12")
+    if args.add_frequency:
+        logger.info("🎵 Including comprehensive frequency-domain features")
+        logger.info("Features per ROI: 8 → 20 (delta, theta, alpha, beta, gamma + spectral entropy + phase)")
+    else:
+        logger.info("Using basic temporal features only (8 per ROI)")
     
-    main(add_bands=args.add_bands)
+    main(add_frequency=args.add_frequency)
