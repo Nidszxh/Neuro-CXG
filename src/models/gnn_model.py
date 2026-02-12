@@ -347,7 +347,7 @@ def run_training():
     logger.info(f"Total subjects: {len(labels)}")
     logger.info(f"Learning rate: {GNN_LEARNING_RATE_TUNED}")
     logger.info(f"Hidden channels: {GNN_HIDDEN_CHANNELS_TUNED}")
-    logger.info(f"Input features: {GNN_IN_CHANNELS} (8 temporal + 6 spatial)")
+    logger.info(f"Input features: {GNN_IN_CHANNELS} (20 temporal + 6 spatial)")
     logger.info(f"Site conditioning: {GNN_USE_SITE_EMBEDDING}")
     logger.info(f"Demographics: {GNN_USE_DEMOGRAPHICS}")
     logger.info(f"Early stopping patience: {GNN_EARLY_STOPPING_PATIENCE}")
@@ -501,7 +501,7 @@ def run_training():
                     break
         
         # Final evaluation with best checkpoint
-        checkpoint = checkpoint_manager.load(model, fold=fold)
+                checkpoint = checkpoint_manager.load(model, fold=fold, allow_partial=True)
         final_threshold = checkpoint['threshold']
         final_metrics = evaluate(model, val_loader, threshold=final_threshold)
         
@@ -565,9 +565,25 @@ def run_training():
             
             # Define feature names (8 temporal + 6 spatial)
             feature_names = [
-                'mean', 'std', 'skew', 'kurtosis', 'entropy', 'hurst',  # 6 temporal
-                'x_coord', 'y_coord', 'z_coord',  # 3 spatial
+                'mean', 'std', 'skew', 'kurtosis', 'psd', 'mssd', 'range', 'autocorr',
+                'delta_power', 'delta_peak_freq',
+                'theta_power', 'theta_peak_freq',
+                'alpha_power', 'alpha_peak_freq',
+                'beta_power', 'beta_peak_freq',
+                'gamma_power', 'gamma_peak_freq',
+                'spectral_entropy', 'phase_std',
+                'x', 'y', 'z_depth', 'size', 'conf_std', 'detection_count'
             ]
+            if len(feature_names) != GNN_IN_CHANNELS:
+                logger.warning(
+                    f"Feature name count ({len(feature_names)}) does not match "
+                    f"GNN_IN_CHANNELS ({GNN_IN_CHANNELS}). Adjusting list for attribution."
+                )
+                if len(feature_names) > GNN_IN_CHANNELS:
+                    feature_names = feature_names[:GNN_IN_CHANNELS]
+                else:
+                    missing = GNN_IN_CHANNELS - len(feature_names)
+                    feature_names.extend([f"feature_{i+1}" for i in range(missing)])
             
             # Load best model (fold 0 as representative)
             best_model = CausalBrainGNN(
@@ -580,7 +596,7 @@ def run_training():
                 use_site_embedding=GNN_USE_SITE_EMBEDDING,
                 use_demographics=GNN_USE_DEMOGRAPHICS,
             ).to(DEVICE)
-            checkpoint_manager.load(best_model, fold=0)
+            checkpoint_manager.load(best_model, fold=0, allow_partial=True)
             
             # Compute feature attributions
             feature_analyzer = FeatureAttributionAnalyzer(

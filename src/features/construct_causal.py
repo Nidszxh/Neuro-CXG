@@ -15,6 +15,7 @@ from src.core.config import (
 )
 from src.features.causal_inference import (
     compute_granger_causality,
+    compute_granger_causality_gpu,
     compute_transfer_entropy,
     compute_multilag_causality
 )
@@ -105,11 +106,28 @@ def compute_causality_matrix(ts_lobe: torch.Tensor, method: str = None) -> torch
     
     try:
         if method == 'granger':
-            logger.debug(f"Computing Granger causality (max_lag={GRANGER_MAX_LAG})")
-            causal_matrix_np = compute_granger_causality(
-                ts_numpy,
-                max_lag=GRANGER_MAX_LAG
-            )
+            # Check for GPU
+            use_gpu = torch.cuda.is_available() and DEVICE.type == 'cuda'
+            if use_gpu:
+                logger.debug(f"Computing Granger causality on GPU (max_lag={GRANGER_MAX_LAG})")
+                try:
+                    causal_matrix_np = compute_granger_causality_gpu(
+                        ts_numpy,
+                        max_lag=GRANGER_MAX_LAG,
+                        device=DEVICE
+                    )
+                except Exception as e:
+                    logger.warning(f"GPU Granger failed: {e}. Falling back to CPU.")
+                    causal_matrix_np = compute_granger_causality(
+                        ts_numpy,
+                        max_lag=GRANGER_MAX_LAG
+                    )
+            else:
+                logger.debug(f"Computing Granger causality on CPU (max_lag={GRANGER_MAX_LAG})")
+                causal_matrix_np = compute_granger_causality(
+                    ts_numpy,
+                    max_lag=GRANGER_MAX_LAG
+                )
         
         elif method == 'transfer_entropy':
             logger.debug("Computing transfer entropy")

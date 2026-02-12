@@ -37,8 +37,13 @@ def aggregate_rois_to_lobes(df: pd.DataFrame) -> pd.DataFrame:
     """
     logger.info("Aggregating 170 ROIs to 12 regions...")
     
-    # Identify feature types (8 temporal features per ROI)
-    feature_types = ["mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr"]
+    # Identify feature types (20 temporal features per ROI)
+    feature_types = [
+        "mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr",
+        "delta_power", "theta_power", "alpha_power", "beta_power", "gamma_power",
+        "delta_peak_freq", "theta_peak_freq", "alpha_peak_freq", "beta_peak_freq", "gamma_peak_freq",
+        "spectral_entropy", "phase_std"
+    ]
     
     # Build aggregated dataframe
     aggregated_data = []

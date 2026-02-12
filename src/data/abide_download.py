@@ -141,6 +141,13 @@ if __name__ == "__main__":
     save_atlas_metadata()
     
     # Load Phenotypic data
+    if not PHENO_PATH.exists():
+        print("Downloading Phenotypic data...")
+        import urllib.request
+        url = "https://s3.amazonaws.com/fcp-indi/data/Projects/ABIDE_Initiative/Phenotypic_V1_0b_preprocessed1.csv"
+        urllib.request.urlretrieve(url, PHENO_PATH)
+        print("Phenotypic data downloaded.")
+
     df = pd.read_csv(PHENO_PATH)
     # Strip whitespace from FILE_ID to prevent match failures
     df['FILE_ID'] = df['FILE_ID'].astype(str).str.strip()
@@ -164,7 +171,16 @@ if __name__ == "__main__":
     with ProcessPoolExecutor(max_workers=8) as exe:
         futures = [exe.submit(process_subject, row[0], row[1]) for row in tasks]
         
+    DOWNLOAD_LOG = META_DIR / "download_log.csv"
+    with open(DOWNLOAD_LOG, 'w') as log_file:
+        log_file.write("subject_id,status,error\n")
+        
         for fut in tqdm(as_completed(futures), total=len(tasks)):
             sub_id, status, err = fut.result()
+            clean_err = str(err).replace(',', ';') if err else ""
+            log_file.write(f"{sub_id},{status.lower()},{clean_err}\n")
+            
             if status == "Failed":
                 print(f"Error on {sub_id}: {err}")
+    
+    print(f"Download log saved to {DOWNLOAD_LOG}")

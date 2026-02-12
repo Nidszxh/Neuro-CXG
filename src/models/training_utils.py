@@ -294,7 +294,7 @@ class CheckpointManager:
             logger.info(f"✓ Saved checkpoint: {filename} (epoch {epoch}, {self.monitor}={score:.4f})")
     
     def load(self, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None,
-             fold: Optional[int] = None) -> Dict[str, Any]:
+             fold: Optional[int] = None, allow_partial: bool = False) -> Dict[str, Any]:
         """
         Load model checkpoint.
         
@@ -313,7 +313,25 @@ class CheckpointManager:
             raise FileNotFoundError(f"Checkpoint not found: {filepath}")
         
         checkpoint = torch.load(filepath, weights_only=False)
-        model.load_state_dict(checkpoint['model_state'])
+        if allow_partial:
+            model_state = model.state_dict()
+            checkpoint_state = checkpoint['model_state']
+            compatible_state = {}
+            skipped_keys = []
+            for key, value in checkpoint_state.items():
+                if key in model_state and model_state[key].shape == value.shape:
+                    compatible_state[key] = value
+                else:
+                    skipped_keys.append(key)
+
+            model.load_state_dict(compatible_state, strict=False)
+            if skipped_keys:
+                logger.warning(
+                    f"Loaded checkpoint with {len(skipped_keys)} incompatible keys skipped. "
+                    "This is expected when comparing models with different input dimensions."
+                )
+        else:
+            model.load_state_dict(checkpoint['model_state'])
         
         if optimizer is not None and 'optimizer_state' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer_state'])

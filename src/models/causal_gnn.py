@@ -5,9 +5,9 @@ from torch.nn import Linear, Sequential, ReLU, Dropout, LayerNorm
 
 class CausalBrainGNN(torch.nn.Module):
     """
-    GNN for 5-Node Lobe Graphs with architectural improvements.
+    GNN for 12-Node Lobe Graphs with architectural improvements.
     
-    Input: 14 Features (8 Temporal + 6 Spatial)
+    Input: 26 Features (20 Temporal + 6 Spatial)
     Architecture: 
     - 3 GATv2 layers with skip connections
     - Layer normalization after each layer
@@ -17,7 +17,7 @@ class CausalBrainGNN(torch.nn.Module):
     """
     def __init__(
         self, 
-        num_node_features=14,  
+        num_node_features=26,  
         hidden_channels=64, 
         num_classes=2,
         dropout=0.5,
@@ -153,10 +153,13 @@ class CausalBrainGNN(torch.nn.Module):
                     f"{self.lin_in.in_features + self.yolo_metadata_dim} (full)."
                 )
         # Optional: site_id tensor (num_graphs,) for site conditioning
-        if self.use_site_embedding and site_id is not None:
-            # Map site embeddings to nodes using batch index
-            site_emb = self.site_embedding(site_id)  # (num_graphs, 16)
-            site_per_node = site_emb[batch]          # (num_nodes, 16)
+        if self.use_site_embedding:
+            if site_id is not None:
+                # Map site embeddings to nodes using batch index
+                site_emb = self.site_embedding(site_id)  # (num_graphs, 16)
+                site_per_node = site_emb[batch]          # (num_nodes, 16)
+            else:
+                site_per_node = x.new_zeros((x.shape[0], self.site_embedding.embedding_dim))
             x = torch.cat([x, site_per_node], dim=1)
 
         # A. Input Projection
@@ -193,9 +196,12 @@ class CausalBrainGNN(torch.nn.Module):
         
         g = torch.cat([g_mean, g_max, g_sum], dim=1)
 
-        # Append demographics (age, sex, fiq) if available
-        if self.use_demographics and age is not None and sex is not None and fiq is not None:
-            demo = torch.stack([age, sex, fiq], dim=1)  # (num_graphs, 3)
+        # Append demographics (age, sex, fiq) if enabled
+        if self.use_demographics:
+            if age is not None and sex is not None and fiq is not None:
+                demo = torch.stack([age, sex, fiq], dim=1)  # (num_graphs, 3)
+            else:
+                demo = g.new_zeros((g.shape[0], 3))
             g = torch.cat([g, demo], dim=1)
 
         # G. Final Classification
@@ -239,24 +245,24 @@ class CausalBrainGNN(torch.nn.Module):
 
 
 if __name__ == "__main__":
-    """Test the  architecture."""
+    """Test the GNN architecture."""
     print("="*60)
     print("TESTING  GNN ARCHITECTURE")
     print("="*60)
     
     # Create dummy data
-    num_nodes = 5
+    num_nodes = 12
     num_edges = 8
     batch_size = 4
     
-    x = torch.randn(num_nodes * batch_size, 14)
+    x = torch.randn(num_nodes * batch_size, 26)
     edge_index = torch.randint(0, num_nodes * batch_size, (2, num_edges * batch_size))
     edge_attr = torch.randn(num_edges * batch_size, 1)
     batch = torch.repeat_interleave(torch.arange(batch_size), num_nodes)
     
     # Initialize model
     model = CausalBrainGNN(
-        num_node_features=14,
+        num_node_features=26,
         hidden_channels=64,
         num_classes=2,
         dropout=0.5,
