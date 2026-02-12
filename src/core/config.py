@@ -73,8 +73,8 @@ LOBE_NAMES = {
     11: 'Brainstem'
 }
 NUM_LOBES = 12  # Updated from 5 to 12 regions
-NUM_TEMPORAL_FEATURES = 20  # 8 basic + 12 frequency (delta, theta, alpha, beta, gamma power/peak + spectral entropy + phase std)
-NUM_FREQUENCY_FEATURES = 12  # Frequency-domain features per ROI
+NUM_FREQUENCY_FEATURES = 12  # 5 bands x 2 features + 2 global
+NUM_TEMPORAL_FEATURES = 20  # 8 basic + 12 frequency
 NUM_SPATIAL_FEATURES = 6   # x, y, z_depth, size, conf_std, detection_count per lobe
 
 # --- TEMPORAL FEATURE EXTRACTION PARAMETERS ---

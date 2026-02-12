@@ -129,8 +129,9 @@ def check_download_status():
     try:
         log_df = pd.read_csv(DOWNLOAD_LOG)
         total = len(log_df)
-        successful = len(log_df[log_df.get('status', '') == 'success'])
-        logger.info(f"Download status: {successful}/{total} subjects successful")
+        # Success includes both 'success' and 'skipped' (already downloaded)
+        successful = len(log_df[log_df.get('status', '').str.lower().isin(['success', 'skipped'])])
+        logger.info(f"Download status: {successful}/{total} subjects ready (downloaded/skipped)")
         return successful > 0
     except Exception as e:
         logger.warning(f"Could not parse download log: {e}")
@@ -320,7 +321,8 @@ Examples:
             "should_run": not NODE_ATTRIBUTES_TEMPORAL.exists() or args.force_reset or args.regenerate_features,
             "reason": "Missing features" if not NODE_ATTRIBUTES_TEMPORAL.exists() else ("Force reset" if args.force_reset else "Regenerating"),
             "module": "src.utils.compute_roi",
-            "function": None
+            "function": None,
+            "args": ["--add-frequency"]  # Pass arguments to module
         },
         "harmonization": {
             "name": "Feature Harmonization",
@@ -434,7 +436,8 @@ Examples:
         
         # Execute with function name if specified
         function_name = stage.get("function", None)
-        run_module(stage["module"], description=stage["name"], function_name=function_name)
+        args_list = stage.get("args", None)
+        run_module(stage["module"], args_list=args_list, description=stage["name"], function_name=function_name)
     
     # COMPLETION
     
