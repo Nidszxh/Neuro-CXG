@@ -221,7 +221,7 @@ def main(add_frequency: bool = True):
     # Subjects may have 164-170 ROIs; we pad to 170 for consistent downstream processing
     all_subject_data_normalized = []
     max_rois = 170
-    features_per_roi = 12 if add_bands else 8
+    features_per_roi = 20 if add_frequency else 8  # Fixed bug: add_bands -> add_frequency
     expected_features = 1 + (max_rois * features_per_roi)  # subject_id + (170 * features_per_roi)
     
     for row in all_subject_data:
@@ -264,12 +264,13 @@ def main(add_frequency: bool = True):
         # (NeuroCombat will fail if NaNs exist)
         df = df.fillna(0.0)
 
-        NODE_ATTRIBUTES_TEMPORAL.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(NODE_ATTRIBUTES_TEMPORAL, index=False)
+        output_path = args.output if args.output else NODE_ATTRIBUTES_TEMPORAL
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(output_path, index=False)
         
         logger.info(f"✅ Extracted features for {len(df)} subjects.")
         logger.info(f"ROI Count: 170 (standardized; subjects with <170 ROIs zero-padded) | Features per subject: {len(columns)-1}")
-        logger.info(f"Output saved to: {NODE_ATTRIBUTES_TEMPORAL}")
+        logger.info(f"Output saved to: {output_path}")
     except Exception as e:
         logger.error(f"Failed to save output: {e}")
         raise
@@ -288,8 +289,26 @@ if __name__ == "__main__":
         action="store_false",
         help="Disable frequency features (use only 8 basic temporal features)"
     )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Path to output CSV file (if not provided, uses NODE_ATTRIBUTES_TEMPORAL)"
+    )
+    parser.add_argument(
+        "--manifest",
+        type=str,
+        default=None,
+        help="Path to manifest file (if not provided, uses MASTER_MANIFEST)"
+    )
     args = parser.parse_args()
     
+    if args.manifest:
+        logger.info(f"📂 Using custom manifest: {args.manifest}")
+        from pathlib import Path
+        global MASTER_MANIFEST
+        MASTER_MANIFEST = Path(args.manifest)
+
     if args.add_frequency:
         logger.info("🎵 Including comprehensive frequency-domain features")
         logger.info("Features per ROI: 8 → 20 (delta, theta, alpha, beta, gamma + spectral entropy + phase)")

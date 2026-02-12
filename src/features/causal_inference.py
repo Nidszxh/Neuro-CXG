@@ -17,6 +17,7 @@ import logging
 from typing import Tuple, Dict
 from statsmodels.tsa.stattools import grangercausalitytests
 from scipy.stats import f as f_dist
+import torch
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -100,6 +101,129 @@ def compute_granger_causality(
                 logger.debug(f"Granger test failed for {i}→{j}: {e}")
                 gc_matrix[i, j] = 0.0
     
+    return gc_matrix
+
+
+def compute_granger_causality_gpu(
+    ts_matrix: np.ndarray,
+    max_lag: int = 5,
+    device: str = 'cuda'
+) -> np.ndarray:
+    """
+    Compute Granger causality using GPU-accelerated OLS (PyTorch).
+    
+    Args:
+        ts_matrix: Time series matrix (shape: [timepoints, n_regions])
+        max_lag: Maximum lag to test
+        device: 'cuda' or 'cpu'
+    
+    Returns:
+        Causality matrix (shape: [n_regions, n_regions])
+    """
+    n, n_regions = ts_matrix.shape
+    
+    if n < max_lag + 10:
+        return np.zeros((n_regions, n_regions))
+    
+    # Move to GPU
+    try:
+        data = torch.from_numpy(ts_matrix).float().to(device)
+    except Exception as e:
+        logger.warning(f"Failed to move data to {device}: {e}. Falling back to CPU Granger.")
+        return compute_granger_causality(ts_matrix, max_lag)
+        
+    gc_matrix = np.zeros((n_regions, n_regions))
+    
+    # 1. Prepare Lagged Data (All regions)
+    # Shape: (n - max_lag, n_regions * max_lag)
+    effective_n = n - max_lag
+    
+    if effective_n < 2 * max_lag + 2:
+        return np.zeros((n_regions, n_regions))
+
+    # Pre-compute all lags for all regions
+    # X_lags[t] = [r0_t-1...r0_t-p, r1_t-1...r1_t-p, ...]
+    X_lags = torch.zeros(effective_n, n_regions * max_lag, device=device)
+    
+    for r in range(n_regions):
+        for l in range(1, max_lag + 1):
+            # Column index: r * max_lag + (l-1)
+            col_idx = r * max_lag + (l - 1)
+            X_lags[:, col_idx] = data[max_lag-l : -l, r]
+            
+    # Target variables (current time)
+    Y_targets = data[max_lag:, :]  # Shape: (effective_n, n_regions)
+    
+    # Add bias term (column of ones)
+    ones = torch.ones(effective_n, 1, device=device)
+    
+    # Loop over pairs
+    # Optimize: Could batch this, but strict pair loop is safer for OLS stability
+    for j in range(n_regions): # Target
+        
+        # Restricted Model: Y_j ~ Y_j_past
+        # Design matrix: Bias + Lags of Y_j
+        start_idx = j * max_lag
+        end_idx = (j + 1) * max_lag
+        X_restricted = torch.cat([ones, X_lags[:, start_idx:end_idx]], dim=1)
+        
+        # Fit Restricted
+        # w = (X^T X)^-1 X^T y
+        try:
+            # RSS_restricted
+            # Use lstsq for stability
+            w_r = torch.linalg.lstsq(X_restricted, Y_targets[:, j]).solution
+            preds_r = X_restricted @ w_r
+            resid_r = Y_targets[:, j] - preds_r
+            rss_r = (resid_r ** 2).sum()
+        except RuntimeError:
+            continue
+
+        for i in range(n_regions): # Source
+            if i == j: continue
+            
+            # Unrestricted Model: Y_j ~ Y_j_past + X_i_past
+            # Design matrix: Bias + Lags of Y_j + Lags of X_i
+            i_start = i * max_lag
+            i_end = (i + 1) * max_lag
+            
+            X_unrestricted = torch.cat([
+                X_restricted, 
+                X_lags[:, i_start:i_end]
+            ], dim=1)
+            
+            try:
+                # RSS_unrestricted
+                w_u = torch.linalg.lstsq(X_unrestricted, Y_targets[:, j]).solution
+                preds_u = X_unrestricted @ w_u
+                resid_u = Y_targets[:, j] - preds_u
+                rss_u = (resid_u ** 2).sum()
+                
+                # F-test
+                # p1 = max_lag (params in restricted excluding bias) -> actually max_lag + 1
+                # p2 = 2*max_lag (params in unrestricted)
+                # Number of restrictions = p2 - p1 = max_lag
+                num_params_u = 2 * max_lag + 1
+                dof_u = effective_n - num_params_u
+                
+                if dof_u <= 0 or rss_u < 1e-6:
+                    continue
+                    
+                mse_u = rss_u / dof_u
+                f_stat = ((rss_r - rss_u) / max_lag) / mse_u
+                
+                # P-value (using scipy on CPU as PyTorch doesn't have f.cdf)
+                f_val = f_stat.item()
+                if f_val > 0:
+                    p_val = f_dist.sf(f_val, max_lag, dof_u)
+                    if p_val > 0:
+                        gc_matrix[i, j] = -np.log10(p_val + 1e-10)
+                    else:
+                        gc_matrix[i, j] = 10.0
+                
+            except RuntimeError:
+                continue
+
     return gc_matrix
 
 

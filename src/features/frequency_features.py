@@ -46,14 +46,21 @@ def extract_band_power(
         >>> features = extract_band_power(ts, fs=0.5)
         >>> print(features['gamma_power'])
     """
-    # Default frequency bands (adjusted for fMRI sampling rate)
+    # Default frequency bands (adjusted for fMRI sampling rate ~0.5 Hz / TR=2s)
+    # Note: Standard EEG bands (Gamma > 30Hz) are not visible in fMRI.
+    # We map "Slow" oscillation bands to these names for compatibility:
+    # - delta: 0.01 - 0.027 Hz (Slow-5)
+    # - theta: 0.027 - 0.073 Hz (Slow-4)
+    # - alpha: 0.073 - 0.15 Hz (Slow-3 lower)
+    # - beta:  0.15 - 0.20 Hz (Slow-3 upper)
+    # - gamma: 0.20 - 0.25 Hz (Slow-2) - encroaching on Nyquist
     if bands is None:
         bands = {
-            'delta': (0.01, 0.08),   # Slow oscillations (BOLD range)
-            'theta': (0.08, 0.15),   # Memory, attention
-            'alpha': (0.15, 0.25),   # Resting state
-            'beta': (0.25, 0.35),    # Motor, cognitive
-            'gamma': (0.35, 0.5)     # Local processing (limited by Nyquist)
+            'delta': (0.01, 0.027),
+            'theta': (0.027, 0.073),
+            'alpha': (0.073, 0.15),
+            'beta': (0.15, 0.20),
+            'gamma': (0.20, 0.25)
         }
     
     # Validate input
