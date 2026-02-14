@@ -39,10 +39,10 @@ from src.models.training_utils import (
 )
 
 # Analysis modules
-from src.analysis.gradients.training_monitor import TrainingMonitor
-from src.analysis.gradients.graph_analysis import CausalGraphAnalyzer
+from src.analysis.training_diagnostics import TrainingMonitor
+from src.analysis.graph_topology import CausalGraphAnalyzer
 try:
-    from src.analysis.feature_importance import FeatureAttributionAnalyzer
+    from src.analysis.feature_attribution import FeatureAttributionAnalyzer
     FEATURE_ANALYSIS_AVAILABLE = True
 except ImportError:
     FEATURE_ANALYSIS_AVAILABLE = False

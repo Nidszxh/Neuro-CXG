@@ -285,21 +285,21 @@ Examples:
             "name": "Pipeline Validation (Comprehensive Health Check)",
             "should_run": not args.skip_validation,
             "reason": "Full pipeline validation (environment, data, features, graphs, models)",
-            "module": "src.validation.pipeline_validator",
+            "module": "src.validation.pipeline_checks",
             "function": None
         },
         "post_download_integrity": {
             "name": "Post-Download Integrity Check",
             "should_run": not args.skip_integrity and data_downloaded,
             "reason": "Validate downloaded images",
-            "module": "src.validation.integrity",
+            "module": "src.validation.pipeline_checks",
             "function": "check_dataset_integrity"
         },
         "annotate": {
             "name": "Atlas-Based Label Annotation",
             "should_run": not args.skip_annotate and data_split,
             "reason": "Generate YOLO training labels",
-            "module": "src.utils.annotate",
+            "module": "src.pipelines.generate_labels",
             "function": None
         },
         "yolo": {
@@ -313,14 +313,14 @@ Examples:
             "name": "Spatial Feature Extraction (12-region)",
             "should_run": not NODE_FEATURES_3D.exists() or args.force_reset or args.regenerate_features,
             "reason": "Missing features" if not NODE_FEATURES_3D.exists() else ("Force reset" if args.force_reset else "Regenerating"),
-            "module": "src.features.extract_features",
+            "module": "src.features.extract_spatial",
             "function": None
         },
         "temporal_features": {
             "name": "Temporal Feature Extraction",
             "should_run": not NODE_ATTRIBUTES_TEMPORAL.exists() or args.force_reset or args.regenerate_features,
             "reason": "Missing features" if not NODE_ATTRIBUTES_TEMPORAL.exists() else ("Force reset" if args.force_reset else "Regenerating"),
-            "module": "src.utils.compute_roi",
+            "module": "src.features.extract_temporal",
             "function": None,
             "args": ["--add-frequency"]  # Pass arguments to module
         },
@@ -335,22 +335,22 @@ Examples:
             "name": "Pre-GNN Integrity Check",
             "should_run": not args.skip_integrity,
             "reason": "Validate intermediate outputs",
-            "module": "src.validation.integrity",
+            "module": "src.validation.pipeline_checks",
             "function": "check_distribution"
         },
         "diagnostics": {
             "name": "Pipeline Diagnostics",
             "should_run": not args.skip_diagnostics,
             "reason": "Comprehensive health check",
-            "module": "src.validation.integrity",
+            "module": "src.validation.pipeline_checks",
             "function": "generate_health_report"
         },
         "quality_validation": {
             "name": "Quality Validation (YOLO & Graph Sparsity)",
             "should_run": not args.skip_comprehensive_validation,
             "reason": "YOLO quality, sparsity, stratification checks",
-            "module": "src.validation.validator",
-            "function": None
+            "module": "src.validation.pipeline_checks",
+            "function": "run_quality_validation"
         },
         "causal_graphs": {
             "name": "Causal Graph Construction (12×12)",
@@ -370,7 +370,7 @@ Examples:
             "name": "Generate Visualizations",
             "should_run": not args.skip_visualizations,  # Run by default unless skipped
             "reason": "Generate comprehensive visualizations",
-            "module": "src.analysis.visualize_results",
+            "module": "src.analysis.visualizations",
             "function": None
         }
     }
