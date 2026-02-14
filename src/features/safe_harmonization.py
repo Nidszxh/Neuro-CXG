@@ -486,7 +486,7 @@ if __name__ == "__main__":
     # Load data
     if not NODE_ATTRIBUTES_TEMPORAL.exists():
         logger.error(f"Temporal features not found: {NODE_ATTRIBUTES_TEMPORAL}")
-        logger.error("Run compute_roi.py first!")
+        logger.error("Run extract_temporal.py first!")
         sys.exit(1)
     
     if not MASTER_MANIFEST.exists():

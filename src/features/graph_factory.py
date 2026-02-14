@@ -47,13 +47,13 @@ class ABIDECausalDataset(Dataset):
             if temporal is not None and temporal.shape != (NUM_LOBES, NUM_TEMPORAL_FEATURES):
                 raise ValueError(
                     f"Temporal feature mismatch! Expected ({NUM_LOBES}, {NUM_TEMPORAL_FEATURES}), "
-                    f"got {temporal.shape}. Check compute_roi.py output."
+                    f"got {temporal.shape}. Check extract_temporal.py output."
                 )
             
             if spatial is not None and spatial.shape != (NUM_LOBES, NUM_SPATIAL_FEATURES):
                 raise ValueError(
                     f"Spatial feature mismatch! Expected ({NUM_LOBES}, {NUM_SPATIAL_FEATURES}), "
-                    f"got {spatial.shape}. Check extract_features.py output."
+                    f"got {spatial.shape}. Check extract_spatial.py output."
                 )
             
             logger.info(f"✓ Feature dimensions validated")
