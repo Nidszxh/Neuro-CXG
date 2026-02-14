@@ -77,13 +77,37 @@ NUM_FREQUENCY_FEATURES = 12  # 5 bands x 2 features + 2 global
 NUM_TEMPORAL_FEATURES = 20  # 8 basic + 12 frequency
 NUM_SPATIAL_FEATURES = 6   # x, y, z_depth, size, conf_std, detection_count per lobe
 
+# --- FEATURE REGISTRY (The Golden Standard) ---
+# Explicit feature definitions. GNN_IN_CHANNELS is calculated dynamically from this.
+FEATURE_GROUPS = {
+    'temporal': ["mean", "std", "skew", "kurtosis", "psd", "mssd", "range", "autocorr"],
+    'frequency': [
+        "delta_power", "delta_peak", "theta_power", "theta_peak",
+        "alpha_power", "alpha_peak", "beta_power", "beta_peak",
+        "gamma_power", "gamma_peak", "spectral_entropy", "phase_std"
+    ],
+    'internal': ["coherence", "spatial_variance"],  # NEW: PCA/ReHo features from Phase 2
+    'spatial': ["x", "y", "z_depth", "size", "conf_std", "detection_count"]
+}
+
+# ALL_FEATURE_NAMES: Concatenation order used everywhere (temporal + frequency + internal + spatial)
+ALL_FEATURE_NAMES = (
+    FEATURE_GROUPS['temporal'] + 
+    FEATURE_GROUPS['frequency'] + 
+    FEATURE_GROUPS['internal'] + 
+    FEATURE_GROUPS['spatial']
+)
+
+# Dynamic calculation - should be 28
+GNN_IN_CHANNELS = len(ALL_FEATURE_NAMES)
+
 # --- TEMPORAL FEATURE EXTRACTION PARAMETERS ---
 DEFAULT_TR = 2.0  # Default TR (seconds) for fMRI—fallback if not in phenotype CSV
 
 # --- YOLO DETECTION PARAMETERS (Fixed for Medical Integrity) ---
 YOLO_MODEL_SIZE = "yolo26n.pt"
-YOLO_PROJECT_NAME = "ROI_Detection_v26"  # Output directory name from training
-YOLO_WEIGHTS_PATH = RESULTS_DIR / "experiments" / "detection" / "ROI_Detection_v26" / "weights" / "best.pt"
+YOLO_PROJECT_NAME = "ROI_Detection_v27"  # Output directory name from training
+YOLO_WEIGHTS_PATH = RESULTS_DIR / "experiments" / "detection" / "ROI_Detection_v27" / "weights" / "best.pt"
 YOLO_IMGSZ = 640
 YOLO_BATCH_SIZE = 32
 YOLO_EPOCHS = 100
@@ -125,41 +149,40 @@ YOLO_TRAIN_CONFIG = {
     'degrees': YOLO_DEGREES,
     'fliplr': YOLO_FLIPLR,
     'flipud': YOLO_FLIPUD,
-    'mosaic': YOLO_MOSAIC,
+    'mosaic': YOLO_MOSAIC,  
     'mixup': 0.0
 }
 
 # --- CAUSAL GRAPH PARAMETERS ---
 CAUSAL_LAG = 1           # 1 TR lag for temporal precedence
-SPARSITY_QUANTILE = 0.60 # Keep top 40% strongest causal edges (v1.2: MORE edges for better GNN learning)
+SPARSITY_QUANTILE = 0.70 # Keep top 30% edges (High Selectivity - Phase 3)
 
 # Phase 1 Enhancements (Feb 2026)
-CAUSALITY_METHOD = 'granger'  # Options: 'granger', 'transfer_entropy', 'lagged_pearson'
+CAUSALITY_METHOD = 'granger'  # Directed causality (options: 'granger', 'transfer_entropy', 'lagged_pearson')
 GRANGER_MAX_LAG = 5  # Test lags 1-5 TRs for Granger causality
 GRANGER_SIGNIFICANCE_LEVEL = 0.05  # Statistical significance threshold
 
-SPARSITY_METHOD = 'adaptive_proportional'  # Options: 'adaptive_proportional', 'adaptive_statistical', 'fixed'
-MIN_EDGES_PER_GRAPH = 3  # Ensure minimum connectivity
+SPARSITY_METHOD = 'adaptive_statistical'  # Options: 'adaptive_proportional', 'adaptive_statistical', 'fixed'
+MIN_EDGES_PER_GRAPH = 12  # Ensure minimum connectivity for 12-region graphs
 
-# --- GNN MODEL PARAMETERS ---
-GNN_IN_CHANNELS = 26     # 20 temporal + 6 spatial (Phase 1: expanded from 14 to 26)
-GNN_HIDDEN_CHANNELS = 128  # INCREASED from 64 to 128 for better capacity
-GNN_NUM_HEADS = 4
+# --- GNN MODEL PARAMETERS (Phase 3: Regularized for Small Graphs) ---
+# Reduced from 256 to 64 channels to prevent overfitting on 12-node graphs
+GNN_HIDDEN_CHANNELS = 64        # Reduced for regularization (was 256)
+GNN_IN_CHANNELS_DYNAMIC = len(ALL_FEATURE_NAMES)  # Should be 28
+GNN_NUM_HEADS = 4               # Multi-head attention is crucial
 GNN_NUM_CLASSES = 2      # 0: Control, 1: ASD
-GNN_DROPOUT = 0.5
-GNN_LEARNING_RATE = 0.0005  # Lower LR for stable training with larger model
+GNN_DROPOUT = 0.6               # Increased from 0.5 for stronger regularization
+GNN_WEIGHT_DECAY = 1e-4         # L2 Regularization (NEW)
+GNN_LEARNING_RATE = 0.0001      # Stable learning rate
 GNN_BATCH_SIZE = 32
 GNN_EPOCHS = 100  # More epochs with early stopping
 K_FOLDS = 5
 
-GNN_LEARNING_RATE_TUNED = 0.0005  # Optimal LR for 128 hidden channels
-GNN_HIDDEN_CHANNELS_TUNED = 128   # Suitable for 12-region graphs (128 channels)
-GNN_USE_SITE_EMBEDDING = True      # Reduce site bias
-GNN_USE_DEMOGRAPHICS = True        # Add age/sex/IQ conditioning
-GNN_ENSEMBLE_MODE = True           # Average 5-fold predictions
-GNN_EARLY_STOPPING_PATIENCE = 35   # Patience for early stopping (increased)
-GNN_NUM_GNN_LAYERS = 3             # 3 GATv2 layers for deeper representation
-GNN_SKIP_CONNECTIONS = True        # Enable residual connections
+GNN_NUM_GNN_LAYERS = 2          # Reduced from 3 to 2 layers (simpler for 12 nodes)
+GNN_SKIP_CONNECTIONS = True     # Enable residual connections
+GNN_USE_SITE_EMBEDDING = True   # Reduce site bias
+GNN_USE_DEMOGRAPHICS = True     # Add age/sex/IQ conditioning
+GNN_EARLY_STOPPING_PATIENCE = 35
 
 # --- HARDWARE ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -167,8 +190,8 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # CLASS IMBALANCE HANDLING (ADD TO src/config.py)
 
-# Focal Loss Parameters (Experiment v1.2: Balanced focus on hard examples)
-FOCAL_LOSS_ALPHA = 0.70  # Weight for minority class (ASD) - slightly reduced
+# Focal Loss Parameters (Experiment v1.3: Prioritize underrepresented Control class)
+FOCAL_LOSS_ALPHA = 0.35  # Weight for ASD (gives 0.65 to Control class)
 FOCAL_LOSS_GAMMA = 2.0   # OPTIMAL: 2.0 (stable training, proven effective)
 
 # Classification Threshold

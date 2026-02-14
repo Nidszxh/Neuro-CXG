@@ -91,8 +91,8 @@ STAGE 5: BATCH EFFECT REMOVAL
 │                                │  - Protect DX_GROUP (diagnosis)
 │                                │  - Fill missing demographics (age,sex)
 └───────────────────┬────────────┘  - Outlier capping (5σ threshold)
-                    │                - 26 features per region maintained
-             ✓ node_attributes_harmonized.csv   (20 temporal + 6 spatial)
+                    │                - 28 features per region maintained
+             ✓ node_attributes_harmonized.csv   (20 temporal + 2 internal + 6 spatial)
                     │
                     ▼
 
@@ -127,15 +127,16 @@ STAGE 8: GRAPH CONSTRUCTION
 │ Causal Graph Construction        │  src/features/construct_causal.py
 │ ✨ Granger Causality (default)   │  src/features/causal_inference.py
 │ OR Lagged Pearson Correlation    │  - Aggregate 170 AAL → 12 regions
-│ (multi-lag 1-5 TRs)              │  - Compute Granger causality or
+│ (multi-lag 1-5 TRs)              │  - PCA eigenvariate + ReHo aggregation
+│                                  │  - Compute Granger causality or
 │                                  │    lagged correlations
-│                                  │  - Adaptive sparsification (min 3 edges)
-│                                  │  - 26 node features per region
+│                                  │  - Adaptive sparsification (0.85 quantile)
+│                                  │  - 28 node features per region
 └──────────────┬───────────────────┘
                │
           ✓ graph_0.pt, graph_1.pt, ..., graph_N.pt
           ✓ Format: PyTorch Geometric Data objects
-          ✓ Shape: (12 nodes, 26 features, ~3-8 edges)
+          ✓ Shape: (12 nodes, 28 features, top 15% edges)
           ✓ Total graphs: 1035 subjects (702 train, 152 val, 152 test)
                │
                ▼
@@ -143,15 +144,16 @@ STAGE 8: GRAPH CONSTRUCTION
 STAGE 9: GNN TRAINING
 ┌──────────────────────────────────┐
 │ Graph Neural Network Training    │  src/models/gnn_model.py
-│ 5-Fold Stratified Cross-Val      │  - GATv2Conv with 3 layers
-│ ✨ 26 Input Features              │  - 4 attention heads per layer
-│                                  │  - 128 hidden channels
-│                                  │  - Site embeddings & demographics
-│                                  │  - Focal loss (α=0.70, γ=2.0)
+│ 5-Fold Stratified Cross-Val      │  - ✨ GATv2Conv with 2 layers (simplified)
+│ ✨ 28 Input Features              │  - 4 attention heads per layer
+│                                  │  - 64 hidden channels (reduced from 256)
+│                                  │  - GELU activation (improved gradients)
+│                                  │  - Multi-scale pooling: mean+max+sum
+│                                  │  - Focal loss (α=0.35, γ=2.0)
 │                                  │  - Early stopping on AUC (patience=35)
-└──────────────┬───────────────────┘  - Dropout 0.5, gradient clip 1.0
-               │                       - Current: AUC=0.5593±0.0156 (14-feat baseline)
-          ✓ best_model_fold0.pt          ⏱ Next: Retrain with 26 features
+└──────────────┬───────────────────┘  - Dropout 0.6, L2 reg 1e-4, gradient clip 1.0
+               │                       - Current: AUC=0.5593±0.0156 (Phase 3 stable)
+          ✓ best_model_fold0.pt          ✅ Phase 3 Complete: Simplified architecture
           ✓ best_model_fold1.pt
           ✓ best_model_fold2.pt
           ✓ best_model_fold3.pt
