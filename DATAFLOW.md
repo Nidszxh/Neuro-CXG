@@ -99,8 +99,8 @@ STAGE 5: BATCH EFFECT REMOVAL
 STAGE 6: COMPREHENSIVE VALIDATION & TUNING ✨ UPDATED (Jan 28)
 ┌────────────────────────────────────────────────────┐
 │ Multi-Level Validation Suite     │  src/validation/
-│ Quality & Distribution Analysis  │  - validator.py: YOLO quality, sparsity
-│                                  │  - comprehensive_audit.py: Deep checks
+│ Quality & Distribution Analysis  │  - pipeline_checks.py: YOLO quality, sparsity
+│                                  │  - code_audit.py: Deep checks
 │                                  │  - Feature distribution validation
 │                                  │  - Stratification correctness
 │                                  │  - Training readiness checks
@@ -112,7 +112,7 @@ STAGE 6: COMPREHENSIVE VALIDATION & TUNING ✨ UPDATED (Jan 28)
 
 STAGE 7: PRE-GNN INTEGRITY CHECK
 ┌────────────────────────────────────────────────────┐
-│ Pre-GNN Integrity Check          │  src/validation/integrity.py
+│ Pre-GNN Integrity Check          │  src/validation/pipeline_checks.py
 │ Dataset Completeness             │  - Verify split distribution
 │                                  │  - Check label file matching
 │                                  │  - Validate 12-region graphs
@@ -173,14 +173,14 @@ STAGE 9: GNN TRAINING
 ├────────────────────────────────────────────────────────────────────────┤
 │                                                                        │
 │ AFTER DOWNLOAD: Post-Download Integrity Check                        │
-│   src/validation/integrity.py → check_dataset_integrity()            │
+│   src/validation/pipeline_checks.py → check_dataset_integrity()      │
 │   - Verify PNG files valid                                           │
 │   - Verify NPY files valid                                           │
 │   - Check subject slice counts                                       │
 │   └─→ (Currently integrated ✓)                                        │
 │                                                                        │
 │ AFTER FEATURE EXTRACTION: Comprehensive Validation & Tuning ✨ NEW   │
-│   src/validation/validator.py                                         │
+│   src/validation/pipeline_checks.py                                   │
 │   - Check YOLO detection quality (survival rate, confidence)         │
 │   - Analyze graph sparsity distribution                              │
 │   - Verify stratification correctness                                │
@@ -189,7 +189,7 @@ STAGE 9: GNN TRAINING
 │   └─→ (NOW INTEGRATED ✓ - stage 6, triggered by --run-diagnostics)   │
 │                                                                        │
 │ ANYTIME: Diagnostics & Health Check                                  │
-│   src/validation/pipeline_diagnostics.py                              │
+│   src/validation/pipeline_checks.py                                   │
 │   - Comprehensive health check for all stages                        │
 │   - Actionable fix recommendations                                   │
 │   └─→ (Currently integrated - optional flag ✓)                        │
@@ -250,15 +250,14 @@ VALIDATION MODULE INTEGRATION STATUS (JANUARY 20, 2026):
 Module                              Invoked?  When?                        Status
 ─────────────────────────────────── ────────  ─────────────────────────────────────────
 atlas_validator.py                  ✓ YES     Stage 4                    ✓ Integrated
-pipeline_diagnostics.py             ✓ YES     Optional (--run-diagnostics) ✓ Integrated
-integrity.py ✨ NEW                 ✓ YES     Stage 7 (pre-GNN check)    ✓ Consolidated*
-  ├─ check_dataset_integrity()      ✓ YES     Stage 1 (post-download)    ✓ Combined module
-  └─ check_distribution()           ✓ YES     Stage 7 (pre-GNN)          ✓ Combined module
-validator.py [COMPREHENSIVE] ✨     ✓ YES     Stage 6 (after features)   ✓ NOW INTEGRATED!
+pipeline_checks.py ✨ NEW           ✓ YES     Stage 6/7                  ✓ Consolidated*
+     ├─ check_dataset_integrity()      ✓ YES     Stage 1 (post-download)    ✓ Combined module
+     └─ check_distribution()           ✓ YES     Stage 7 (pre-GNN)          ✓ Combined module
+code_audit.py                        ○ NO     Manual                      ✓ Available
 
-* integrity.py consolidates integrity_check.py + integrity_check2.py into single module
-  (Deleted: integrity_check.py, integrity_check2.py)
-  (Created: integrity.py with both validation functions)
+* pipeline_checks.py consolidates integrity_check.py + integrity_check2.py into single module
+     (Deleted: integrity_check.py, integrity_check2.py)
+     (Created: pipeline_checks.py with both validation functions)
 
 
 COMMAND EXAMPLES:
@@ -277,7 +276,7 @@ python src/run_pipeline.py --dry-run
 python src/run_pipeline.py --force-reset
 
 # Manual comprehensive validation (workaround for missing integration)
-python src/validation/validator.py
+python src/validation/pipeline_checks.py --quality
 
 ```
 
@@ -295,21 +294,21 @@ src.run_pipeline (ORCHESTRATOR)
 │   └─→ Outputs: master_manifest.csv
 ├── src.validation.atlas_validator
 │   └─→ Validates: atlas files
-├── src.validation.integrity ✨ UPDATED (consolidated, Feb 11, 2026)
+├── src.validation.pipeline_checks ✨ UPDATED (consolidated, Feb 11, 2026)
 │   ├─→ check_dataset_integrity(): Validates PNG/NPY files
 │   └─→ check_distribution(): Validates dataset distribution
-├── src.utils.annotate
+├── src.pipelines.generate_labels
 │   └─→ Outputs: YOLO labels
 ├── src.pipelines.roi_detection
 │   └─→ Outputs: best.pt weights
-├── src.features.extract_features
+├── src.features.extract_spatial
 │   └─→ Outputs: node_features_3d.csv
 │       └── imports: src.features.graph_factory
-├── src.utils.compute_roi
+├── src.features.extract_temporal
 │   └─→ Outputs: node_attributes_temporal.csv
 ├── src.features.safe_harmonization
 │   └─→ Outputs: node_attributes_harmonized.csv
-├── src.validation.validator ✨ NEW (now integrated!)
+├── src.validation.pipeline_checks ✨ NEW (now integrated!)
 │   └─→ Comprehensive validation: YOLO quality, sparsity, stratification
 ├── src.features.construct_causal
 │   └─→ Outputs: causal_graphs/*.pt
@@ -318,15 +317,10 @@ src.run_pipeline (ORCHESTRATOR)
 │       └── imports: src.features.graph_factory
 │       └── imports: src.models.causal_gnn
 │
-├── [VALIDATION SUITE] src.validation.* (5 modules)
+├── [VALIDATION SUITE] src.validation.* (3 modules)
 │   ├── atlas_validator.py: Atlas file validation
-│   ├── comprehensive_audit.py: Deep validation checks
-│   ├── integrity.py: Post-download and pre-GNN checks (4 functions)
-│   ├── pipeline_validator.py: Pipeline-level monitoring
-│   └── validator.py: Comprehensive quality validation
-│
-└── [AVAILABLE FOR DEBUGGING] src.validation.comprehensive_audit
-    └─→ Deep validation: feature quality, graph connectivity, training readiness
+│   ├── code_audit.py: Deep validation checks
+│   └── pipeline_checks.py: Post-download and pre-GNN checks (4 functions)
 
 Legend:
   ✓ Integrated: Module is called by run_pipeline.py (or invoked as subprocess)

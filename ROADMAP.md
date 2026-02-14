@@ -79,7 +79,7 @@
 - [x] integrity_check.py (6 print statements → logging)
 
 **Error Handling Hardening (100% Complete):**
-- [x] Add try-catch to extract_features.py (YOLO inference with specific errors)
+- [x] Add try-catch to extract_spatial.py (YOLO inference with specific errors)
 - [x] Add try-catch to safe_harmonization.py (CSV loading, merge failures)
 - [x] Add try-catch to compute_roi.py (file I/O with fallback)
 - [x] CSV parsing: FileNotFoundError, pd.errors.ParserError caught separately
@@ -344,7 +344,7 @@
 - [x] integrity_check.py (6 print statements → logging)
 
 **Error Handling Hardening (100% Complete):**
-- [x] Add try-catch to extract_features.py (YOLO inference with specific errors)
+- [x] Add try-catch to extract_spatial.py (YOLO inference with specific errors)
 - [x] Add try-catch to safe_harmonization.py (CSV loading, merge failures)
 - [x] Add try-catch to compute_roi.py (file I/O with fallback)
 - [x] CSV parsing: FileNotFoundError, pd.errors.ParserError caught separately

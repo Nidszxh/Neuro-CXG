@@ -69,11 +69,11 @@ Extract temporal, frequency-domain, and spatial features from detected ROIs:
 
 ```bash
 # Extract 3D spatial coordinates from YOLO detections
-python -m src.features.extract_features
+python -m src.features.extract_spatial
 # Outputs: data/processed/metadata/node_features_3d.csv
 
 # Extract temporal features (8 basic stats per ROI)
-python -m src.utils.compute_roi
+python -m src.features.extract_temporal
 # Outputs: data/processed/metadata/node_attributes_temporal.csv
 
 # Extract frequency-domain features (12 spectral features per ROI)
@@ -220,12 +220,11 @@ Neuro-CXG/
 │   ├── run_pipeline.py            # Unified pipeline orchestrator (15 stages)
 │   ├── validation/                # ✨ Validation modules (updated Feb 11, 2026)
 │   │   ├── atlas_validator.py     # AAL atlas validation tool
-│   │   ├── comprehensive_audit.py # ✨ Deep validation: feature quality, graph metrics, training readiness
-│   │   ├── integrity.py           # ✨ Complete validation suite: post-download, pre-GNN, health reports
-│   │   ├── pipeline_validator.py  # ✨ Pipeline-level validation and monitoring
-│   │   └── validator.py           # ✨ Comprehensive validation: YOLO quality, sparsity, stratification
+│   │   ├── code_audit.py          # ✨ Deep validation: feature quality, graph metrics, training readiness
+│   │   └── pipeline_checks.py     # ✨ Complete validation suite: post-download, pre-GNN, health reports
 │   ├── features/                  # Feature engineering and graph construction
-│   │   ├── extract_features.py    # YOLO inference → 3D spatial aggregation
+│   │   ├── extract_spatial.py     # YOLO inference → 3D spatial aggregation
+│   │   ├── extract_temporal.py    # Temporal feature extraction from time series
 │   │   ├── frequency_features.py  # ✨ NEW: Frequency-domain feature extraction (12 features)
 │   │   ├── causal_inference.py    # ✨ NEW: Granger causality & transfer entropy
 │   │   ├── safe_harmonization.py  # neuroCombat batch effect removal (robust NaN handling)
@@ -239,11 +238,10 @@ Neuro-CXG/
 │   │   ├── gnn_model.py           # k-fold training loop
 │   │   └── training_utils.py      # Training utilities (EarlyStopping, WarmupScheduler)
 │   ├── pipelines/
-│   │   └── roi_detection.py       # YOLO training entry point
+│   │   ├── roi_detection.py       # YOLO training entry point
+│   │   └── generate_labels.py     # Atlas-based label annotation
 │   └── utils/                     # Utility functions
-│       ├── manifestor.py          # Master manifest generation
-│       ├── compute_roi.py         # Temporal feature extraction
-│       └── annotate.py            # Atlas-based label annotation
+│       └── manifestor.py          # Master manifest generation
 ├── notebooks/
 │   └── eda1.ipynb                 # Exploratory data analysis
 ├── results/                       # YOLO training outputs
@@ -320,7 +318,7 @@ Data(
 
 ```bash
 # Run comprehensive health report on all pipeline stages
-python src/validation/integrity.py --health
+python src/validation/pipeline_checks.py --health
 
 # Outputs:
 # - Environment validation (paths, CUDA, dependencies)
