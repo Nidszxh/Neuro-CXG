@@ -9,7 +9,7 @@ import sys
 # Setup paths
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
-    LOBE_MAPPING, NUM_LOBES, CAUSAL_LAG, SPARSITY_QUANTILE,
+    LOBE_MAPPING, NUM_LOBES, LOBE_NAMES, CAUSAL_LAG, SPARSITY_QUANTILE,
     DATA_FINAL, MASTER_MANIFEST, CAUSAL_GRAPHS_DIR, DEVICE,
     CAUSALITY_METHOD, GRANGER_MAX_LAG, SPARSITY_METHOD, MIN_EDGES_PER_GRAPH
 )
@@ -28,26 +28,88 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def aggregate_to_lobes(ts_raw: torch.Tensor) -> torch.Tensor:
-
+def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
+    """
+    Smart Aggregation with Regional Homogeneity (ReHo) and Eigenvariate Extraction.
+    
+    Instead of simple averaging (which cancels anti-correlated signals), we extract:
+    1. Dominant Signal (PCA/Eigenvariate): Captures main driver without cancellation
+    2. Intra-Lobe Coherence: Local connectivity within lobe (ASD biomarker)
+    
+    Returns:
+        lobe_signals: (Timepoints, 12) - The cleaned time series for graph edges
+        lobe_features: (12, 2) - Internal features (Coherence, Variance)
+    """
     num_rois = ts_raw.shape[1]
     lobe_signals = []
+    lobe_internal_features = []
     
     for lobe_id in range(NUM_LOBES):
-        # Convert AAL 1-based indices to 0-based Python indices
-        # Filter indices to ensure they exist in the current time-series file
+        # Get ROIs belonging to this lobe (convert 1-based AAL indices to 0-based)
         indices = [i-1 for i in LOBE_MAPPING[lobe_id] if i <= num_rois]
         
         if not indices:
-            logger.warning(f"Lobe {lobe_id} has no matching ROIs in this atlas. Using zero-signal.")
-            lobe_ts = torch.zeros(ts_raw.shape[0], device=ts_raw.device)
-        else:
-            # Average the BOLD signals of all ROIs in this lobe
-            lobe_ts = ts_raw[:, indices].mean(dim=1)
+            logger.warning(f"Lobe {lobe_id} ({LOBE_NAMES[lobe_id]}): No matching ROIs in atlas. Using zero-signal.")
+            lobe_signals.append(torch.zeros(ts_raw.shape[0], device=ts_raw.device))
+            lobe_internal_features.append(torch.tensor([0.0, 0.0], device=ts_raw.device))
+            continue
         
-        lobe_signals.append(lobe_ts)
+        # Extract raw ROIs for this lobe: Shape (Timepoints, Num_ROIs_in_Lobe)
+        roi_data = ts_raw[:, indices]
+        
+        # --- 1. DOMINANT SIGNAL EXTRACTION (PCA/EIGENVARIATE) ---
+        # Instead of mean(), use first principal component to avoid signal cancellation
+        try:
+            # Center the data
+            centered = roi_data - roi_data.mean(dim=0)
+            # Perform SVD (Singular Value Decomposition) for PCA
+            u, s, vh = torch.linalg.svd(centered, full_matrices=False)
+            # First Principal Component captures max variance
+            # This preserves the magnitude of activity even when signals are out-of-sync
+            dominant_signal = u[:, 0] * s[0]
+        except Exception as e:
+            logger.debug(f"Lobe {lobe_id}: SVD failed ({str(e)}), falling back to mean")
+            dominant_signal = roi_data.mean(dim=1)
+        
+        lobe_signals.append(dominant_signal)
+        
+        # --- 2. INTRA-LOBE SYNCHRONY (Regional Homogeneity - ReHo) ---
+        # Measure how synchronized ROIs within this lobe are
+        # ASD hypothesis: Local over-connectivity means HIGH coherence within lobes
+        if len(indices) > 1:
+            try:
+                # Compute correlation matrix of ROIs within this lobe
+                intra_corr = torch.corrcoef(roi_data.T)
+                # Average off-diagonal correlation (all pairs)
+                mask = ~torch.eye(intra_corr.shape[0], dtype=torch.bool, device=ts_raw.device)
+                coherence = intra_corr[mask].mean()
+                coherence = torch.clamp(coherence, -1.0, 1.0)  # Ensure valid range
+                
+                # Spatial heterogeneity (variance across ROIs over time)
+                # Measures how much activation spreads within the lobe
+                spatial_variance = roi_data.std(dim=1).mean()
+            except Exception as e:
+                logger.debug(f"Lobe {lobe_id}: ReHo computation failed ({str(e)})")
+                coherence = torch.tensor(0.0, device=ts_raw.device)
+                spatial_variance = torch.tensor(0.0, device=ts_raw.device)
+        else:
+            # Single ROI in lobe: trivial values
+            coherence = torch.tensor(1.0, device=ts_raw.device)  # Perfect self-correlation
+            spatial_variance = torch.tensor(0.0, device=ts_raw.device)
+        
+        # SAFETY: Replace NaN/Inf with 0 to prevent downstream crashes
+        if torch.isnan(coherence) or torch.isinf(coherence):
+            coherence = torch.tensor(0.0, device=ts_raw.device)
+        if torch.isnan(spatial_variance) or torch.isinf(spatial_variance):
+            spatial_variance = torch.tensor(0.0, device=ts_raw.device)
+        
+        lobe_internal_features.append(torch.stack([coherence, spatial_variance]))
     
-    return torch.stack(lobe_signals, dim=1)  # Output Shape: (Timepoints, 5)
+    # Stack results
+    ts_lobes = torch.stack(lobe_signals, dim=1)           # (Timepoints, 12)
+    features_internal = torch.stack(lobe_internal_features, dim=0)  # (12, 2)
+    
+    return ts_lobes, features_internal
 
 
 def compute_lagged_causality(ts_lobe: torch.Tensor) -> torch.Tensor:
@@ -280,10 +342,10 @@ def construct_graph(subject_id: str, split: str) -> bool:
             logger.warning(f"{subject_id}: Insufficient timepoints ({ts_data.shape[0]})")
             return False
         
-        # 1. Aggregate to 12 Regions
-        ts_lobes = aggregate_to_lobes(ts_data)
+        # 1. Smart Aggregation (PCA + Regional Homogeneity)
+        ts_lobes, internal_features = aggregate_to_lobes(ts_data)
         
-        # 2. Compute 12x12 Causal Matrix (Phase 1: Granger causality)
+        # 2. Compute 12x12 Causal Matrix (Phase 1: Granger causality with cleaned signals)
         causal_matrix = compute_causality_matrix(ts_lobes)
         
         #  CRITICAL FIX: VALIDATE BEFORE SPARSIFICATION 
@@ -334,8 +396,9 @@ def construct_graph(subject_id: str, split: str) -> bool:
         # 4. Save structured data for Graph Factory
         graph_package = {
             'adj': adj_matrix.cpu(),
+            'internal_features': internal_features.cpu(),  # (12, 2) ReHo features
             'subject_id': subject_id,
-            'lobe_order': ['Frontal', 'Temporal', 'Parietal', 'Occipital', 'Limbic'],
+            'lobe_order': [LOBE_NAMES[i] for i in range(NUM_LOBES)],
             'stats': post_sparse_stats  # Useful for debugging
         }
         

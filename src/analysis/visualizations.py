@@ -21,9 +21,12 @@ from src.core.config import (
     CAUSAL_GRAPHS_DIR,
     CHECKPOINT_DIR,
     GNN_IN_CHANNELS,
+    GNN_HIDDEN_CHANNELS,
     LOBE_NAMES,
     MASTER_MANIFEST,
     NUM_LOBES,
+    NUM_SPATIAL_FEATURES,
+    NUM_TEMPORAL_FEATURES,
     RESULTS_DIR,
 )
 from src.features.graph_factory import ABIDECausalDataset
@@ -55,12 +58,35 @@ except ImportError:
 
 
 def create_feature_names():
-    """Create list of 14 feature names (8 temporal + 6 spatial)."""
+    """Create list of temporal + spatial feature names."""
     temporal_names = ["mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr"]
+    if NUM_TEMPORAL_FEATURES > 8:
+        temporal_names.extend(
+            [
+                "delta_power",
+                "delta_peak",
+                "theta_power",
+                "theta_peak",
+                "alpha_power",
+                "alpha_peak",
+                "beta_power",
+                "beta_peak",
+                "gamma_power",
+                "gamma_peak",
+                "spectral_entropy",
+                "phase_std",
+            ]
+        )
+
     spatial_names = ["x", "y", "z_depth", "size", "conf_std", "detection_count"]
 
-    feature_names = temporal_names + spatial_names
+    feature_names = temporal_names[:NUM_TEMPORAL_FEATURES] + spatial_names[:NUM_SPATIAL_FEATURES]
     return feature_names
+
+
+def _parse_fold_id(history_file: Path) -> int:
+    fold_str = history_file.stem.split("fold")[-1].strip("_")
+    return int(fold_str)
 
 
 def visualize_basic_statistics(output_dir: Path):
@@ -150,7 +176,7 @@ def visualize_accuracy_metrics(output_dir: Path):
             fold_epochs = {}
 
             for history_file in history_files:
-                fold_id = int(history_file.stem.split("fold")[1])
+                fold_id = _parse_fold_id(history_file)
                 with open(history_file, "r") as f:
                     history_data = json.load(f)
                     if "val_accuracy" in history_data:
@@ -308,11 +334,11 @@ def generate_simple_feature_importance(output_dir: Path):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = CausalBrainGNN(
             num_node_features=GNN_IN_CHANNELS,
-            hidden_channels=128,
+            hidden_channels=GNN_HIDDEN_CHANNELS,
             num_classes=2,
-            num_heads=2,
-            use_site_embedding=True,
-            use_demographics=True,
+            num_heads=4,
+            use_site_embedding=False,
+            use_demographics=False,
         ).to(device)
 
         checkpoint_path = CHECKPOINT_DIR / "best_model_fold0.pt"
@@ -401,11 +427,11 @@ def run_visualization_pipeline(output_dir: Path):
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             model = CausalBrainGNN(
                 num_node_features=GNN_IN_CHANNELS,
-                hidden_channels=128,
+                hidden_channels=GNN_HIDDEN_CHANNELS,  # 64 channels (simplified)
                 num_classes=2,
-                num_heads=2,
-                use_site_embedding=True,
-                use_demographics=True,
+                num_heads=4,
+                use_site_embedding=False,
+                use_demographics=False,
             ).to(device)
 
             checkpoint = torch.load(CHECKPOINT_DIR / "best_model_fold0.pt", map_location=device, weights_only=False)
@@ -424,7 +450,8 @@ def run_visualization_pipeline(output_dir: Path):
                 device=device,
             )
 
-            analyzer.visualize_feature_importance(output_dir / "feature_importance_ig.png")
+            attributions = analyzer.compute_attributions()
+            analyzer.visualize_feature_importance(attributions, output_dir / "feature_importance_ig.png")
             analyzer.visualize_per_class(output_dir / "feature_importance_per_class.png")
 
             logger.info("Advanced feature importance completed")
@@ -447,14 +474,17 @@ def run_visualization_pipeline(output_dir: Path):
                 import json
 
                 for history_file in history_files:
-                    fold_id = int(history_file.stem.split("fold")[1])
+                    fold_id = _parse_fold_id(history_file)
                     with open(history_file, "r") as f:
                         history_data = json.load(f)
                         for key in history_data:
                             if key in monitor.fold_histories[fold_id]:
                                 monitor.fold_histories[fold_id][key] = history_data[key]
 
-                monitor.plot_training_curves()
+                for fold_id, history in monitor.fold_histories.items():
+                    if history["train_loss"]:
+                        monitor.plot_training_curves(fold_id)
+
                 monitor.plot_fold_comparison()
 
                 logger.info("Training history visualizations completed")

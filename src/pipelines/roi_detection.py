@@ -12,7 +12,7 @@ from src.core.config import (
 )
 
 def main():
-    # 1. Load YOLO11s 
+    # 1. Load YOLO26n
     model = YOLO(YOLO_MODEL_SIZE) 
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -21,9 +21,9 @@ def main():
 
     # 3. Training Parameters (consolidated from config.YOLO_TRAIN_CONFIG)
     results = model.train(
-        data="configs/brain.yaml",
-        project="results/experiments/detection",  # Points to your new structure
-        name="ROI_Detection_v27",                # Incremental versioning
+        data=str(CONFIG_BRAIN_YAML),
+        project=str(RESULTS_DIR / "experiments" / "detection"),
+        name=YOLO_PROJECT_NAME,
         exist_ok=True,
         **YOLO_TRAIN_CONFIG  # All training hyperparameters from config
     )

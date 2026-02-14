@@ -30,8 +30,8 @@ def aggregate_rois_to_lobes(df: pd.DataFrame) -> pd.DataFrame:
     """
     Aggregate 170 ROI features to 12 region features.
     
-    Input: subject_id + (170 ROIs × 8 features) = 1361 columns
-    Output: subject_id + (12 regions × 8 features) = 97 columns
+    Input: subject_id + (170 ROIs × 20 features) = 3401 columns
+    Output: subject_id + (12 regions × 20 features) = 241 columns
     
     For each region, averages the features of all ROIs belonging to that region.
     """
@@ -41,7 +41,7 @@ def aggregate_rois_to_lobes(df: pd.DataFrame) -> pd.DataFrame:
     feature_types = [
         "mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr",
         "delta_power", "theta_power", "alpha_power", "beta_power", "gamma_power",
-        "delta_peak_freq", "theta_peak_freq", "alpha_peak_freq", "beta_peak_freq", "gamma_peak_freq",
+        "delta_peak", "theta_peak", "alpha_peak", "beta_peak", "gamma_peak",
         "spectral_entropy", "phase_std"
     ]
     
@@ -80,7 +80,7 @@ def aggregate_rois_to_lobes(df: pd.DataFrame) -> pd.DataFrame:
     aggregated_df = pd.DataFrame(aggregated_data)
     
     # Validate output shape
-    expected_cols = 1 + (NUM_LOBES * NUM_TEMPORAL_FEATURES)  # subject_id + 12*8
+    expected_cols = 1 + (NUM_LOBES * NUM_TEMPORAL_FEATURES)  # subject_id + 12*20
     if len(aggregated_df.columns) != expected_cols:
         logger.warning(
             f"Unexpected column count: {len(aggregated_df.columns)} vs expected {expected_cols}"

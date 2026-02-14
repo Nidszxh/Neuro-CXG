@@ -134,8 +134,24 @@ class ABIDECausalDataset(Dataset):
                 logger.error(f"Subject {sub_id}: Adjacency matrix contains NaN/Inf")
                 return None
 
-            # 2. Load 12-Region Temporal Features (8 per region)
+            # 2. Load 12-Region Temporal Features (20 per region after encoding)
             temporal_features = self._get_subject_temporal(sub_id)
+            
+            # 2b. Load Internal Features from graph (Coherence + Variance)
+            internal_features = graph_dict.get('internal_features')  # (12, 2)
+            if internal_features is None:
+                logger.warning(f"Subject {sub_id}: Missing internal_features in graph, using zeros")
+                internal_features = torch.zeros((NUM_LOBES, 2), dtype=torch.float32)
+            else:
+                # SAFETY: Clean NaN/Inf in internal features
+                internal_features = internal_features.float()
+                if torch.isnan(internal_features).any() or torch.isinf(internal_features).any():
+                    logger.warning(f"Subject {sub_id}: Internal features contain NaN/Inf, replacing with 0")
+                    internal_features = torch.where(
+                        torch.isnan(internal_features) | torch.isinf(internal_features),
+                        torch.tensor(0.0, dtype=torch.float32),
+                        internal_features
+                    )
             
             # 3. Load 12-Region Spatial Features (6 per region)
             spatial_features = self._get_subject_spatial(sub_id)
@@ -144,11 +160,19 @@ class ABIDECausalDataset(Dataset):
                 logger.error(f"Subject {sub_id}: Missing features")
                 return None
 
-            # 4. Combine (12, 8) temporal and (12, 6) spatial -> (12, 14) ✓
+            # 4. Combine all features: (12, 20) temporal + (12, 2) internal + (12, 6) spatial = (12, 28)
             x = torch.cat([
-                torch.tensor(temporal_features, dtype=torch.float32),
-                torch.tensor(spatial_features, dtype=torch.float32)
+                torch.tensor(temporal_features, dtype=torch.float32),  # (12, 20)
+                internal_features,                                    # (12, 2) <-- ADDED
+                torch.tensor(spatial_features, dtype=torch.float32)   # (12, 6)
             ], dim=1)
+            
+            # SAFETY: Check final feature tensor for NaN/Inf
+            if torch.isnan(x).any() or torch.isinf(x).any():
+                logger.error(f"Subject {sub_id}: Combined features contain NaN/Inf after concatenation")
+                nan_mask = torch.isnan(x) | torch.isinf(x)
+                x = torch.where(nan_mask, torch.tensor(0.0, dtype=torch.float32), x)
+                logger.warning(f"Subject {sub_id}: Replaced {nan_mask.sum().item()} NaN/Inf values with 0")
             
             # Validate final shape
             if x.shape != (NUM_LOBES, GNN_IN_CHANNELS):

@@ -21,11 +21,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     K_FOLDS, GNN_BATCH_SIZE, GNN_EPOCHS, 
     CHECKPOINT_DIR, DEVICE, GNN_IN_CHANNELS,
-    GNN_LEARNING_RATE_TUNED,
-    GNN_HIDDEN_CHANNELS_TUNED,
+    GNN_LEARNING_RATE,
+    GNN_HIDDEN_CHANNELS,
+    GNN_DROPOUT,
+    GNN_WEIGHT_DECAY,
     GNN_USE_SITE_EMBEDDING,
     GNN_USE_DEMOGRAPHICS,
-    GNN_ENSEMBLE_MODE,
     GNN_EARLY_STOPPING_PATIENCE,
     CAUSAL_GRAPHS_DIR,
     DATA_METADATA,
@@ -62,11 +63,13 @@ class FocalLoss(nn.Module):
     Args:
         alpha: Weight for positive class (ASD)
         gamma: Focusing parameter (higher = more focus on hard examples)
+        pos_weight: Additional weight for positive class (multiplicative with alpha)
     """
-    def __init__(self, alpha=0.75, gamma=3.0):
+    def __init__(self, alpha=0.75, gamma=3.0, pos_weight=None):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
+        self.pos_weight = pos_weight
     
     def forward(self, inputs, targets):
         """
@@ -81,7 +84,11 @@ class FocalLoss(nn.Module):
         focal_weight = (1 - pt) ** self.gamma
         alpha_weight = targets_one_hot[:, 1] * self.alpha + targets_one_hot[:, 0] * (1 - self.alpha)
         
-        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        if self.pos_weight is not None:
+            weight = targets_one_hot[:, 1] * self.pos_weight + targets_one_hot[:, 0]
+            ce_loss = F.cross_entropy(inputs, targets, reduction='none') * weight
+        else:
+            ce_loss = F.cross_entropy(inputs, targets, reduction='none')
         focal_loss = alpha_weight * focal_weight * ce_loss
         
         return focal_loss.mean()
@@ -180,6 +187,17 @@ def evaluate(model, loader, threshold=0.5):
     
     probs_array = np.concatenate(all_probs)
     labels_array = np.concatenate(all_labels)
+    
+    # SAFETY: Check for NaN in probs before computing metrics
+    if np.isnan(probs_array).any():
+        logger.error(f"Predictions contain NaN values! Skipping AUC computation.")
+        logger.error(f"  NaN count: {np.isnan(probs_array).sum()} / {len(probs_array)}")
+        return {
+            'acc': 0.0, 'f1': 0.0, 'auc': 0.5,
+            'cm': np.zeros((2, 2)),
+            'probs': probs_array, 'labels': labels_array
+        }
+    
     preds_array = (probs_array > threshold).astype(int)
     
     auc = roc_auc_score(labels_array, probs_array)
@@ -232,10 +250,10 @@ def evaluate_ensemble(tracker: TrainingTracker, checkpoint_manager: CheckpointMa
             # Initialize model
             model = CausalBrainGNN(
                 num_node_features=GNN_IN_CHANNELS,
-                hidden_channels=GNN_HIDDEN_CHANNELS_TUNED,
+                hidden_channels=GNN_HIDDEN_CHANNELS,
                 num_classes=2,
-                dropout=0.5,
-                num_heads=2,
+                dropout=GNN_DROPOUT,
+                num_heads=4,
                 num_sites=20,
                 use_site_embedding=GNN_USE_SITE_EMBEDDING,
                 use_demographics=GNN_USE_DEMOGRAPHICS,
@@ -345,8 +363,8 @@ def run_training():
     logger.info("GNN TRAINING - 5-FOLD CROSS-VALIDATION")
     logger.info(f"{'='*70}")
     logger.info(f"Total subjects: {len(labels)}")
-    logger.info(f"Learning rate: {GNN_LEARNING_RATE_TUNED}")
-    logger.info(f"Hidden channels: {GNN_HIDDEN_CHANNELS_TUNED}")
+    logger.info(f"Learning rate: {GNN_LEARNING_RATE}")
+    logger.info(f"Hidden channels: {GNN_HIDDEN_CHANNELS}")
     logger.info(f"Input features: {GNN_IN_CHANNELS} (20 temporal + 6 spatial)")
     logger.info(f"Site conditioning: {GNN_USE_SITE_EMBEDDING}")
     logger.info(f"Demographics: {GNN_USE_DEMOGRAPHICS}")
@@ -380,10 +398,10 @@ def run_training():
         # Initialize model
         model = CausalBrainGNN(
             num_node_features=GNN_IN_CHANNELS,
-            hidden_channels=GNN_HIDDEN_CHANNELS_TUNED,
+            hidden_channels=GNN_HIDDEN_CHANNELS,
             num_classes=2,
-            dropout=0.5,
-            num_heads=2,
+            dropout=GNN_DROPOUT,
+            num_heads=4,
             num_sites=20,
             use_site_embedding=GNN_USE_SITE_EMBEDDING,
             use_demographics=GNN_USE_DEMOGRAPHICS,
@@ -392,18 +410,20 @@ def run_training():
         # Optimizer and schedulers
         optimizer = torch.optim.AdamW(
             model.parameters(),
-            lr=GNN_LEARNING_RATE_TUNED,
-            weight_decay=1e-3
+            lr=GNN_LEARNING_RATE,
+            weight_decay=GNN_WEIGHT_DECAY
         )
         
-        warmup = WarmupScheduler(optimizer, warmup_epochs=5, base_lr=GNN_LEARNING_RATE_TUNED)
+        warmup = WarmupScheduler(optimizer, warmup_epochs=5, base_lr=GNN_LEARNING_RATE)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=GNN_EPOCHS - 5)
         
         # Loss and early stopping
-        criterion = FocalLoss(alpha=0.75, gamma=3.0)
+        # Compute pos_weight based on class distribution (Control=272, ASD=290)
+        pos_weight = 272.0 / 290.0  # ~0.93
+        criterion = FocalLoss(alpha=0.35, gamma=2.0, pos_weight=pos_weight)
         early_stopping = EarlyStopping(
             patience=GNN_EARLY_STOPPING_PATIENCE, 
-            min_delta=0.001, 
+            min_delta=0.0001, 
             mode='max'
         )
         checkpoint_manager.reset()
@@ -458,7 +478,7 @@ def run_training():
                     epoch=epoch,
                     metrics={
                         'train_loss': loss,
-                        'val_loss': metrics['auc'],  # We don't have val loss, use 1-AUC as proxy
+                        'val_loss': 1.0 - metrics['auc'],  # Use 1-AUC as proxy (lower is better)
                         'val_auc': metrics['auc'],
                         'val_f1': metrics_opt['f1'],
                         'val_acc': metrics_opt['acc'],
@@ -541,9 +561,8 @@ def run_training():
     # Log cross-validation summary
     tracker.log_summary()
     
-    # Ensemble evaluation on test set
-    if GNN_ENSEMBLE_MODE:
-        evaluate_ensemble(tracker, checkpoint_manager)
+    # Ensemble evaluation on test set (combine all folds)
+    evaluate_ensemble(tracker, checkpoint_manager)
     
     # POST-TRAINING ANALYSIS
     logger.info(f"\n{'='*70}")
@@ -588,10 +607,10 @@ def run_training():
             # Load best model (fold 0 as representative)
             best_model = CausalBrainGNN(
                 num_node_features=GNN_IN_CHANNELS,
-                hidden_channels=GNN_HIDDEN_CHANNELS_TUNED,
+                hidden_channels=GNN_HIDDEN_CHANNELS,
                 num_classes=2,
-                dropout=0.5,
-                num_heads=2,
+                dropout=GNN_DROPOUT,
+                num_heads=4,
                 num_sites=20,
                 use_site_embedding=GNN_USE_SITE_EMBEDDING,
                 use_demographics=GNN_USE_DEMOGRAPHICS,
