@@ -12,6 +12,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _to_json_safe(obj):
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.floating, np.integer)):
+        return obj.item()
+    if isinstance(obj, dict):
+        return {k: _to_json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_json_safe(v) for v in obj]
+    return obj
+
+
 class TrainingMonitor:
     """
     Real-time and post-hoc training visualization.
@@ -269,6 +281,22 @@ class TrainingMonitor:
         for fold_id, history in self.fold_histories.items():
             output_path = output_dir / f"training_history_fold{fold_id}.json"
             with open(output_path, "w") as f:
-                json.dump(history, f)
+                json.dump(_to_json_safe(history), f)
 
         logger.info(f"Training histories saved to {output_dir}")
+
+    def save_history(self, fold_id: int, output_dir: Optional[Path] = None) -> Optional[Path]:
+        """Save a single fold history to JSON and return the path."""
+        if fold_id not in self.fold_histories:
+            logger.warning(f"Invalid fold_id for save_history: {fold_id}")
+            return None
+
+        output_dir = Path(output_dir) if output_dir else self.output_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        output_path = output_dir / f"training_history_fold{fold_id}.json"
+        with open(output_path, "w") as f:
+            json.dump(_to_json_safe(self.fold_histories[fold_id]), f)
+
+        logger.info(f"Training history saved to {output_path}")
+        return output_path

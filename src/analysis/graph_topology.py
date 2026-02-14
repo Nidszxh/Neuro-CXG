@@ -201,6 +201,9 @@ class CausalGraphAnalyzer:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        graph_metrics = graph_metrics.copy()
+        graph_metrics["dx_group"] = graph_metrics["dx_group"].astype(int)
+
         significant_metrics = [k for k, v in comparison_results.items() if v["significant"]][:6]
         if not significant_metrics:
             significant_metrics = list(comparison_results.keys())[:6]
@@ -211,6 +214,13 @@ class CausalGraphAnalyzer:
         asd = graph_metrics[graph_metrics["dx_group"] == 1]
         control = graph_metrics[graph_metrics["dx_group"] == 2]
 
+        palette_map = {
+            0: "#3498db",
+            1: "#e74c3c",
+            2: "#3498db",
+        }
+        palette = {k: v for k, v in palette_map.items() if k in graph_metrics["dx_group"].unique()}
+
         for idx, metric in enumerate(significant_metrics):
             ax = axes[idx]
             sns.boxplot(
@@ -218,10 +228,10 @@ class CausalGraphAnalyzer:
                 x="dx_group",
                 y=metric,
                 ax=ax,
-                palette={1: "#e74c3c", 2: "#3498db"},
+                palette=palette,
             )
             ax.set_title(metric.replace("_", " ").title())
-            ax.set_xlabel("Diagnosis (1=ASD, 2=Control)")
+            ax.set_xlabel("Diagnosis (0/2=Control, 1=ASD)")
             ax.set_ylabel(metric.replace("_", " ").title())
 
         plt.tight_layout()
@@ -229,3 +239,58 @@ class CausalGraphAnalyzer:
         plt.close()
 
         logger.info(f"Topology comparison saved to {output_dir / 'topology_comparison.png'}")
+
+    def visualize_average_causal_graph(self, output_path: Path, max_graphs: Optional[int] = None) -> Optional[Path]:
+        """Visualize the average causal adjacency matrix across subjects."""
+        graph_files = list(self.graphs_dir.glob("*_graph.pt"))
+
+        if not graph_files:
+            logger.warning("No causal graphs found for average visualization")
+            return None
+
+        if max_graphs is not None:
+            graph_files = np.random.choice(graph_files, min(max_graphs, len(graph_files)), replace=False)
+
+        adj_matrices = []
+        for graph_file in graph_files:
+            try:
+                graph_data = torch.load(graph_file, weights_only=False)
+                if "adj" not in graph_data:
+                    continue
+                adj = graph_data["adj"].detach().cpu().numpy()
+                adj_matrices.append(adj)
+            except Exception as e:
+                logger.warning(f"Failed to load {graph_file.name}: {e}")
+                continue
+
+        if not adj_matrices:
+            logger.warning("No adjacency matrices loaded for average visualization")
+            return None
+
+        avg_adj = np.mean(np.stack(adj_matrices, axis=0), axis=0)
+        labels = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
+
+        fig, ax = plt.subplots(figsize=(10, 8))
+        sns.heatmap(
+            avg_adj,
+            xticklabels=labels,
+            yticklabels=labels,
+            cmap="RdYlBu_r",
+            center=0,
+            linewidths=0.5,
+            ax=ax,
+        )
+        ax.set_title("Average Causal Adjacency Matrix", fontsize=14, fontweight="bold")
+        ax.set_xlabel("Target Region")
+        ax.set_ylabel("Source Region")
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+        plt.setp(ax.get_yticklabels(), rotation=0)
+
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close()
+
+        logger.info(f"Average causal graph saved to {output_path}")
+        return output_path

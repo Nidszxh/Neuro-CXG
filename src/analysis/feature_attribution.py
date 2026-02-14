@@ -11,7 +11,7 @@ import sys
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src.core.config import LOBE_NAMES
+from src.core.config import LOBE_NAMES, NUM_LOBES, NUM_SPATIAL_FEATURES, NUM_TEMPORAL_FEATURES
 
 # Captum for interpretability
 try:
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 class FeatureAttributionAnalyzer:
     """
-    Analyze which of the 14 node features drive GNN predictions.
+    Analyze which node features drive GNN predictions.
 
     Uses Integrated Gradients for cleaner attributions than raw gradients.
     Provides both global (dataset-level) and local (subject-level) explanations.
@@ -46,7 +46,7 @@ class FeatureAttributionAnalyzer:
         Args:
             model: Trained GNN model
             test_loader: DataLoader with test data
-            feature_names: List of 14 feature names (e.g., ['mean', 'std', ..., 'x', 'y', 'z'])
+            feature_names: List of feature names (length must match model input features)
             device: Device to run analysis on
         """
         if not CAPTUM_AVAILABLE:
@@ -58,8 +58,10 @@ class FeatureAttributionAnalyzer:
         self.feature_names = feature_names
         self.device = device
 
-        if len(feature_names) != 14:
-            raise ValueError(f"Expected 14 feature names, got {len(feature_names)}")
+        if len(feature_names) == 0:
+            raise ValueError("feature_names must be non-empty")
+
+        self.feature_dim = len(feature_names)
 
         logger.info("FeatureAttributionAnalyzer initialized")
         logger.info(f"  Device: {device}")
@@ -98,7 +100,7 @@ class FeatureAttributionAnalyzer:
             use_integrated_gradients: If True, use slower but more accurate IG method
 
         Returns:
-            attributions: (num_samples, 12 regions, 14 features) array
+            attributions: (num_samples, NUM_LOBES regions, feature_dim features) array
         """
         logger.info("Computing feature attributions...")
         logger.info(
@@ -140,7 +142,7 @@ class FeatureAttributionAnalyzer:
             if target_class is not None:
                 target = target_class
             else:
-                target = pred_class.item()
+                target = pred_class
 
             try:
                 if use_integrated_gradients and CAPTUM_AVAILABLE:
@@ -161,12 +163,17 @@ class FeatureAttributionAnalyzer:
                         None,
                         None,
                     )
-                    loss = out[0, target]
+                    if isinstance(target, torch.Tensor):
+                        target = target.to(out.device)
+                        target_idx = torch.arange(out.shape[0], device=out.device)
+                        loss = out[target_idx, target].sum()
+                    else:
+                        loss = out[0, target]
                     loss.backward()
                     attr = input_features.grad.abs()
 
                 num_graphs = batch_tensor.max().item() + 1 if batch_tensor.max() >= 0 else 1
-                attr_reshaped = attr.reshape(num_graphs, 12, 14)
+                attr_reshaped = attr.reshape(num_graphs, NUM_LOBES, self.feature_dim)
 
                 all_attributions.append(attr_reshaped.cpu().detach().numpy())
                 all_labels.append(data.y.cpu().numpy())
@@ -222,7 +229,7 @@ class FeatureAttributionAnalyzer:
         logger.info("Creating feature importance heatmap...")
 
         mean_attr = np.abs(attributions).mean(axis=0)
-        region_names = LOBE_NAMES
+        region_names = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 
         fig, ax = plt.subplots(figsize=figsize)
 
@@ -256,8 +263,8 @@ class FeatureAttributionAnalyzer:
     def compare_temporal_vs_spatial(
         self,
         attributions: np.ndarray,
-        temporal_indices: List[int] = list(range(8)),
-        spatial_indices: List[int] = list(range(8, 14)),
+        temporal_indices: Optional[List[int]] = None,
+        spatial_indices: Optional[List[int]] = None,
         output_path: Optional[Path] = None,
     ) -> Dict[str, float]:
         """
@@ -267,6 +274,11 @@ class FeatureAttributionAnalyzer:
             Dict with temporal and spatial contribution percentages
         """
         mean_attr = np.abs(attributions).mean(axis=0)
+
+        if temporal_indices is None:
+            temporal_indices = list(range(NUM_TEMPORAL_FEATURES))
+        if spatial_indices is None:
+            spatial_indices = list(range(NUM_TEMPORAL_FEATURES, NUM_TEMPORAL_FEATURES + NUM_SPATIAL_FEATURES))
 
         temporal_contrib = mean_attr[:, temporal_indices].mean()
         spatial_contrib = mean_attr[:, spatial_indices].mean()
@@ -312,7 +324,7 @@ class FeatureAttributionAnalyzer:
         asd_mean = np.abs(asd_attr).mean(axis=0)
         control_mean = np.abs(control_attr).mean(axis=0)
 
-        region_names = LOBE_NAMES
+        region_names = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 
         fig, axes = plt.subplots(1, 2, figsize=figsize)
 
