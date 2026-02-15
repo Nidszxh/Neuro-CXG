@@ -73,7 +73,7 @@ PATH A: SPATIAL FEATURES          PATH B: TEMPORAL FEATURES
 │ - Detections per region │  │ - 8 features per ROI    │
 │ - Mean coordinates      │  │   (mean,std,skew,kurt,  │
 │ - 3D aggregation        │  │   PSD,MSSD,range,auto)  │
-│ - Filter: all 12 lobes  │  │ - 170 AAL ROIs          │
+│ - Filter: all 12 regions│  │ - 170 AAL ROIs          │
 │ - 6 spatial features    │  │ - Aggregated to 12      │
 │   per region            │  │   regions               │
 └──────────────┬──────────┘  └──────────┬──────────────┘
@@ -86,15 +86,16 @@ PATH A: SPATIAL FEATURES          PATH B: TEMPORAL FEATURES
 
 STAGE 5: BATCH EFFECT REMOVAL
 ┌────────────────────────────────┐
-│ Feature Harmonization          │  src/features/safe_harmonization.py
-│ neuroCombat with NaN handling  │  - Remove scanner batch effects
+│ Fold-Safe Harmonization        │  src/features/fold_safe_harmonization.py
+│ neuroHarmonize (CV-safe)       │  - Remove scanner batch effects
 │                                │  - Protect DX_GROUP (diagnosis)
 │                                │  - Fill missing demographics (age,sex)
 └───────────────────┬────────────┘  - Outlier capping (5σ threshold)
-                    │                - 28 features per region maintained
-             ✓ node_attributes_harmonized.csv   (20 temporal + 2 internal + 6 spatial)
-                    │
-                    ▼
+                │                - 28 features per region maintained
+           ✓ node_attributes_harmonized.csv   (20 temporal + 2 internal + 6 spatial)
+           ✓ data/metadata/harmonized_folds_cv/fold*_*.csv
+                │
+                ▼
 
 STAGE 6: COMPREHENSIVE VALIDATION & TUNING ✨ UPDATED (Jan 28)
 ┌────────────────────────────────────────────────────┐
@@ -130,13 +131,14 @@ STAGE 8: GRAPH CONSTRUCTION
 │ (multi-lag 1-5 TRs)              │  - PCA eigenvariate + ReHo aggregation
 │                                  │  - Compute Granger causality or
 │                                  │    lagged correlations
-│                                  │  - Adaptive sparsification (0.85 quantile)
+│                                  │  - Adaptive sparsification (0.70 quantile)
+│                                  │  - Min 12 edges per graph
 │                                  │  - 28 node features per region
 └──────────────┬───────────────────┘
                │
           ✓ graph_0.pt, graph_1.pt, ..., graph_N.pt
           ✓ Format: PyTorch Geometric Data objects
-          ✓ Shape: (12 nodes, 28 features, top 15% edges)
+          ✓ Shape: (12 nodes, 28 features, top 30% edges)
           ✓ Total graphs: 1035 subjects (702 train, 152 val, 152 test)
                │
                ▼
@@ -144,30 +146,29 @@ STAGE 8: GRAPH CONSTRUCTION
 STAGE 9: GNN TRAINING
 ┌──────────────────────────────────┐
 │ Graph Neural Network Training    │  src/models/gnn_model.py
-│ 5-Fold Stratified Cross-Val      │  - ✨ GATv2Conv with 2 layers (simplified)
+│ 5-Fold Stratified Cross-Val      │  - ✨ GATv2Conv with 3 layers (current default)
 │ ✨ 28 Input Features              │  - 4 attention heads per layer
-│                                  │  - 64 hidden channels (reduced from 256)
+│                                  │  - 128 hidden channels
 │                                  │  - GELU activation (improved gradients)
-│                                  │  - Multi-scale pooling: mean+max+sum
-│                                  │  - Focal loss (α=0.35, γ=2.0)
-│                                  │  - Early stopping on AUC (patience=35)
-└──────────────┬───────────────────┘  - Dropout 0.6, L2 reg 1e-4, gradient clip 1.0
+│                                  │  - Attention pooling (GlobalAttention)
+│                                  │  - Focal loss (α=0.62, γ=2.0)
+│                                  │  - Early stopping on AUC (patience=20)
+└──────────────┬───────────────────┘  - Dropout 0.45, L2 reg 1e-4, gradient clip 1.0
                │                       - Current: AUC=0.5593±0.0156 (Phase 3 stable)
           ✓ best_model_fold0.pt          ✅ Phase 3 Complete: Simplified architecture
           ✓ best_model_fold1.pt
           ✓ best_model_fold2.pt
           ✓ best_model_fold3.pt
-          ✓ best_model_fold4.pt
-               │
-               ▼
-        📊 FINAL PREDICTIONS & METRICS (Phase 1 Ready)
-        ├─ YOLO mAP50-95: 0.94073 (v26, epoch 100) ✅
-        ├─ Features: 26 dimensions (20 temporal + 6 spatial) ✨
-        ├─ Causal: Granger + lagged correlation methods ✨
-        ├─ GNN Baseline: AUC 0.5593 ± 0.0156 (14-feature)
-        ├─ GNN Target: AUC ≥ 0.62 (26-feature retraining) ⏱
-        ├─ Per-fold confusion matrices
-        └─ Feature importance via gradients
+                ✓ best_model_fold4.pt
+                         │
+                         ▼
+            📊 FINAL PREDICTIONS & METRICS (Phase 3 Stable)
+            ├─ YOLO mAP50-95: 0.94073 (v26, epoch 100) ✅
+            ├─ Features: 28 dimensions (20 temporal + 2 internal + 6 spatial) ✨
+            ├─ Causal: Granger + lagged correlation methods ✨
+            ├─ GNN Baseline: AUC 0.5593 ± 0.0156 (28-feature model)
+            ├─ Per-fold confusion matrices
+            └─ Feature importance via gradients
 
 
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -188,7 +189,7 @@ STAGE 9: GNN TRAINING
 │   - Verify stratification correctness                                │
 │   - Feature distribution analysis                                    │
 │   - Setup evaluation metrics                                         │
-│   └─→ (NOW INTEGRATED ✓ - stage 6, triggered by --run-diagnostics)   │
+│   └─→ (Integrated by default; skip with --skip-comprehensive-validation) │
 │                                                                        │
 │ ANYTIME: Diagnostics & Health Check                                  │
 │   src/validation/pipeline_checks.py                                   │
@@ -214,7 +215,7 @@ KEY DECISION POINTS IN PIPELINE:
    └─ Any failure → skip harmonization/graphs/training
 
 3. Graph Construction Filter
-   ├─ CRITICAL: Requires all 5 lobes detected for EACH subject
+     ├─ CRITICAL: Requires all 12 lobes detected for EACH subject
    ├─ If any subject missing lobes → filtered out
    ├─ This defines final training set size
    └─ Impact: ~1033/1035 subjects typically pass
@@ -265,17 +266,17 @@ code_audit.py                        ○ NO     Manual                      ✓ 
 COMMAND EXAMPLES:
 ════════════════════════════════════════════════════════════════════════
 
-# Full pipeline with diagnostics
-python src/run_pipeline.py --run-diagnostics
+# Full pipeline (auto-run missing stages)
+python src/run_pipeline.py --auto
 
 # Skip slow stages, run rest
-python src/run_pipeline.py --skip-download --skip-yolo
+python src/run_pipeline.py --auto --skip-download --skip-yolo
 
 # Dry run (show plan, don't execute)
 python src/run_pipeline.py --dry-run
 
 # Force complete rebuild
-python src/run_pipeline.py --force-reset
+python src/run_pipeline.py --auto --force-reset
 
 # Manual comprehensive validation (workaround for missing integration)
 python src/validation/pipeline_checks.py --quality
@@ -308,7 +309,7 @@ src.run_pipeline (ORCHESTRATOR)
 │       └── imports: src.features.graph_factory
 ├── src.features.extract_temporal
 │   └─→ Outputs: node_attributes_temporal.csv
-├── src.features.safe_harmonization
+├── src.features.fold_safe_harmonization
 │   └─→ Outputs: node_attributes_harmonized.csv
 ├── src.validation.pipeline_checks ✨ NEW (now integrated!)
 │   └─→ Comprehensive validation: YOLO quality, sparsity, stratification

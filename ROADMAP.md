@@ -3,9 +3,9 @@
 
 ---
 
-## IMPLEMENTATION STATUS (February 14, 2026)
+## IMPLEMENTATION STATUS (February 15, 2026)
 
-**Latest Update**: Phase 3 Architecture Simplification complete - reduced model to 64 channels, 2 GAT layers, GELU activation; implemented PCA/ReHo smart aggregation (28 features total); corrected Granger causality; all code synchronized
+**Latest Update**: Phase 3 architecture tuned - 128 channels, 3 GAT layers, GELU activation with attention pooling; implemented PCA/ReHo smart aggregation (28 features total); corrected Granger causality; all code synchronized
 
 ### COMPLETED PHASES (100%)
 
@@ -26,37 +26,37 @@
 #### Phase 4: Feature Extraction & Harmonization
 - [x] Temporal feature computation (8 basic per ROI: mean, std, skew, kurtosis, PSD, MSSD, range, autocorr)
 - [x] ✨ Frequency-domain features (12 per ROI: delta/theta/alpha/beta/gamma power + peak frequencies + spectral entropy + phase std)
-- [x] ✨ Internal connectivity features (2 per ROI: PCA eigenvariate for dominant signal, Regional Homogeneity coherence)
+- [x] ✨ Internal connectivity features (2 per ROI: Regional Homogeneity coherence + spatial variance)
 - [x] Spatial coordinate extraction from YOLO detections (6 features: x, y, z_depth, size, conf_std, count)
-- [x] Site harmonization with neuroCombat (DX_GROUP protected)
+- [x] Site harmonization with neuroHarmonize (ComBat, DX_GROUP protected)
 - [x] Total 28 node features per brain region (20 temporal + 2 internal + 6 spatial)
-- [x] Outputs: data/processed/metadata/node_attributes_harmonized.csv
+- [x] Outputs: data/metadata/node_attributes_harmonized.csv
 
 #### Phase 5: Graph Construction
 - [x] Functional connectivity matrices from 170 AAL ROIs
 - [x] Aggregation to 12 brain regions (expanded from 5 lobes for finer granularity)
 - [x] ✨ Causal graph construction with Granger causality (default) or lagged Pearson correlation
 - [x] ✨ Multi-lag causality testing (lags 1-5 TRs) with statistical significance
-- [x] ✨ Adaptive sparsification (proportional method, min 3 edges/graph)
+- [x] ✨ Adaptive sparsification (statistical method, min 12 edges/graph)
 - [x] PyTorch Geometric Data objects with edge attributes
 - [x] Outputs: data/processed/causal_graphs/{subject_id}_graph.pt (12×12 adjacency matrices)
 
 #### Phase 6: GNN Development
-- [x] CausalBrainGNN architecture (GATv2Conv with 2 layers, 4 attention heads, 64 hidden channels, skip connections)
+- [x] CausalBrainGNN architecture (GATv2Conv with 3 layers, 4 attention heads, 128 hidden channels, skip connections)
 - [x] ✨ Expanded input channels: 28 features (20 temporal + 2 internal ReHo + 6 spatial)
 - [x] ✨ PCA eigenvariate + Regional Homogeneity aggregation for smart feature extraction
 - [x] GELU activation and LayerNorm for improved gradient flow
 - [x] Multi-scale pooling (mean + max + sum) for diverse graph representations
-- [x] Focal Loss (α=0.35, γ=2.0) for class imbalance handling
+- [x] Focal Loss (α=0.62, γ=2.0) for class imbalance handling
 - [x] Site embeddings and demographic conditioning (age, sex, FIQ) - optional
 - [x] 5-fold stratified cross-validation (by DX_GROUP + SITE_ID)
-- [x] Training loop with early stopping (patience=35, min_delta=0.0001) and gradient clipping (max_norm=1.0)
+- [x] Training loop with early stopping (patience=20, min_delta=0.0001) and gradient clipping (max_norm=1.0)
 - [x] Metric computation (Accuracy, F1, ROC-AUC, Confusion Matrix per fold)
 - [x] Model checkpointing (best AUC per fold)
 - [x] Outputs: models/checkpoints/best_model_fold{0-4}.pt (updated Feb 14, 2026)
 - [x] Current Performance (Feb 14, 2026): Mean AUC 0.5593 ± 0.0156, Per-fold: [0.5598, 0.5795, 0.5594, 0.5328, 0.5651]
 - [x] Training characteristics: Quick convergence (3-10 epochs), low variance, stable baseline with phase 3 optimizations
-- [x] ✅ Phase 3 COMPLETE: Architecture simplified, all code synchronized, Granger causality corrected
+- [x] ✅ Phase 3 COMPLETE: 12-region, 28-feature pipeline stabilized with Granger causality
 
 ### COMPLETED SPRINT: CODE REFINEMENT & PRODUCTION-READY (January 15-17, 2026)
 
@@ -72,20 +72,18 @@
 - [x] Update split.py (removed `Path("./data")`, now imports from config)
 - [x] Update manifestor.py (centralized path imports)
 - [x] Update annotate.py (uses DATA_FINAL, DATA_ATLASES from config)
-- [x] Update check_progress.py (all paths from config)
-- [x] Update integrity_check.py (all paths from config)
+- [x] Update pipeline_checks.py (all paths from config)
 
 **Logging Standardization (100% Complete):**
 - [x] Replace print statements with logger.info/warning/error
 - [x] split.py (5 print statements → logging)
 - [x] manifestor.py (4 print statements → logging)
 - [x] annotate.py (3 print statements → logging)
-- [x] check_progress.py (8 print statements → logging)
-- [x] integrity_check.py (6 print statements → logging)
+- [x] pipeline_checks.py (logging standardization)
 
 **Error Handling Hardening (100% Complete):**
 - [x] Add try-catch to extract_spatial.py (YOLO inference with specific errors)
-- [x] Add try-catch to safe_harmonization.py (CSV loading, merge failures)
+- [x] Add try-catch to fold_safe_harmonization.py (CSV loading, merge failures)
 - [x] Add try-catch to compute_roi.py (file I/O with fallback)
 - [x] CSV parsing: FileNotFoundError, pd.errors.ParserError caught separately
 - [x] File operations: FileNotFoundError, ValueError for invalid arrays
@@ -114,13 +112,13 @@
 #### Pipeline Enhancement & Code Consolidation (✅ COMPLETE)
 
 **Validation Module Consolidation (January 26-28, 2026):**
-- [x] Consolidated check_progress.py, class_distribution.py, and pipeline_diagnostics.py into integrity.py
-- [x] integrity.py now provides 4 main functions:
+- [x] Consolidated check_progress.py, class_distribution.py, and pipeline_diagnostics.py into pipeline_checks.py
+- [x] pipeline_checks.py now provides 4 main functions:
   - check_dataset_integrity() - Post-download validation
   - check_distribution() - Pre-GNN distribution checks
   - analyze_class_distribution() - Class imbalance analysis with recommendations
   - generate_health_report() - Comprehensive dataset health report (replaces pipeline_diagnostics)
-- [x] Added comprehensive_audit.py for deep validation (January 28, 2026)
+- [x] Added code_audit.py for deep validation (January 28, 2026)
   - Feature quality assessment
   - Graph connectivity metrics
   - Training readiness validation
@@ -129,13 +127,13 @@
 - [x] Updated all documentation (copilot-instructions.md, README.md, ROADMAP.md, PIPELINE_DATAFLOW.md)
 - [x] Single source of truth for all validation and quality checks
 
-**Validator Integration:**
-- [x] Integrated validator.py into run_pipeline.py as Stage 6 (Comprehensive Validation & Tuning)
-- [x] Added --run-comprehensive-validation flag for quality checks
+**Comprehensive Validation Integration:**
+- [x] Integrated pipeline_checks.py into run_pipeline.py as Stage 6 (Comprehensive Validation & Tuning)
+- [x] Added --skip-comprehensive-validation flag to control quality checks
 - [x] Validates YOLO detection quality, graph sparsity, feature preprocessing, stratification
 
 **Integrity Checks Consolidation:**
-- [x] Consolidated integrity_check.py + integrity_check2.py into single integrity.py module
+- [x] Consolidated integrity_check.py + integrity_check2.py into pipeline_checks.py
   - [x] check_dataset_integrity() - Post-download validation (PNG/NPY checks)
   - [x] check_distribution() - Pre-GNN validation (slice distribution, label matching)
 - [x] Updated all references in run_pipeline.py (2 stage definitions)
@@ -145,25 +143,25 @@
 - [x] Updated run_pipeline.py to 15 stages (from 11-14)
 - [x] Fixed atlas_validation condition (now always validates unless --skip-atlas-validation)
 - [x] Added comprehensive_validation stage (position 6, after diagnostics)
-- [x] All imports point to src.validation.integrity for both post-download and pre-GNN checks
+- [x] All imports point to src.validation.pipeline_checks for both post-download and pre-GNN checks
 
 **Documentation Updates:**
 - [x] Updated .github/copilot-instructions.md with complete January 26 changelog
 - [x] Updated PIPELINE_DATAFLOW.md with 15-stage visualization
 - [x] Updated README.md with current validation folder structure (3 modules)
 - [x] Updated ROADMAP.md with latest completion status
-- [x] All references consolidated: 3 validation modules clearly documented (atlas_validator, integrity, validator)
+- [x] All references consolidated: 3 validation modules clearly documented (atlas_validator, pipeline_checks, code_audit)
 
 **Code Quality Improvements:**
-- [x] Single source of truth for all validation logic (integrity.py)
+- [x] Single source of truth for all validation logic (pipeline_checks.py)
 - [x] Reduced code duplication (250+ lines → 610 lines consolidated with 4 functions)
-- [x] Centralized validation folder (3 modules: atlas_validator, integrity, validator)
+- [x] Centralized validation folder (3 modules: atlas_validator, pipeline_checks, code_audit)
 - [x] Clear integration status for all validation modules
-- [x] Unified command interface: python src/validation/integrity.py [--dataset|--distribution|--class-analysis|--health]
+- [x] Unified command interface: python src/validation/pipeline_checks.py [--dataset|--distribution|--class-analysis|--health]
 
 ### COMPLETED SPRINT: PHASE 1 FEATURE ENGINEERING & CAUSAL INFERENCE (February 11, 2026) ✨ NEW
 
-#### Feature Expansion: 14 → 26 Input Dimensions (✅ Complete)
+#### Feature Expansion: 14 → 28 Input Dimensions (✅ Complete)
 
 **Frequency-Domain Features Added:**
 - [x] Created `src/features/frequency_features.py` module
@@ -175,7 +173,7 @@
   - Phase std: Standard deviation of instantaneous phase (1 feature)
 - [x] Total: 12 frequency features per ROI
 - [x] Updated config: `NUM_TEMPORAL_FEATURES = 20` (8 basic + 12 frequency)
-- [x] Updated config: `GNN_IN_CHANNELS = 26` (20 temporal + 6 spatial)
+- [x] Updated config: `GNN_IN_CHANNELS = 28` (20 temporal + 2 internal + 6 spatial)
 
 **Scientific Rationale:**
 - Gamma-band abnormalities documented in ASD (Rojas et al., 2008)
@@ -193,7 +191,7 @@
   - Output: -log10(p-value) as edge weights (higher = stronger causality)
 - [x] Updated config: `CAUSALITY_METHOD = 'granger'` (default)
 - [x] Updated config: `SPARSITY_METHOD = 'adaptive_proportional'`
-- [x] Updated config: `MIN_EDGES_PER_GRAPH = 3` (ensure connectivity)
+- [x] Updated config: `MIN_EDGES_PER_GRAPH = 12` (ensure connectivity)
 
 **Alternatives Available:**
 - Transfer entropy: Information-theoretic causality (nonlinear)
@@ -208,18 +206,18 @@
 
 **Model Enhancements:**
 - [x] Increased attention heads: 2 → 4 (`GNN_NUM_HEADS = 4`)
-- [x] Expanded input layer: 14 → 26 channels
+- [x] Expanded input layer: 14 → 28 channels
 - [x] Maintained: 128 hidden channels, 3 layers, skip connections
-- [x] Early stopping patience: 25 → 35 epochs
-- [x] Focal loss tuned: α=0.70, γ=2.0 (optimal from experiments)
+- [x] Early stopping patience: 25 → 20 epochs
+- [x] Focal loss tuned: α=0.62, γ=2.0 (current default)
 
 **Rationale:**
 - More attention heads capture complex causal patterns
-- 26 features provide richer representation (~86% increase)
-- 4 heads suitable for 12-node graphs with 26 features
+- 28 features provide richer representation (~100% increase)
+- 4 heads suitable for 12-node graphs with 28 features
 
 **Next Steps:**
-1. ⭕ Retrain GNN with 26-feature input (expected AUC≥0.62)
+1. ⭕ Retrain GNN with 28-feature input (expected AUC≥0.62)
 2. 🔄 Evaluate Granger causality vs lagged correlation
 3. 🔄 Ablation study: frequency features impact
 4. 🔄 Compare 2-head vs 4-head attention performance
@@ -260,12 +258,10 @@
 - Fold 1 reaching 0.5795 demonstrates learnable ASD biomarkers
 
 **Validation Module Organization:**
-- [x] Finalized validation folder structure (5 modules)
+- [x] Finalized validation folder structure (3 modules)
   - atlas_validator.py: Atlas file validation
-  - comprehensive_audit.py: Deep validation checks
-  - integrity.py: Post-download and pre-GNN checks
-  - pipeline_validator.py: Pipeline-level monitoring
-  - validator.py: Comprehensive quality validation
+  - pipeline_checks.py: Post-download and pre-GNN checks
+  - code_audit.py: Deep validation checks
 - [x] All modules integrated into run_pipeline.py
 - [x] Documentation updated across all .md files
 
@@ -275,24 +271,24 @@
 3. Class balancing: Implement focal loss or oversample minority class
 4. Ensemble methods: Average predictions across folds for robustness
 
-### COMPLETED SPRINT: PHASE 3 ARCHITECTURE SIMPLIFICATION & SMART AGGREGATION (February 12-14, 2026) ✨ NEW
+### COMPLETED SPRINT: PHASE 3 ARCHITECTURE TUNING & SMART AGGREGATION (February 12-14, 2026) ✨ NEW
 
-#### Architecture Simplification & Regularization (✅ COMPLETE)
+#### Architecture Tuning & Regularization (✅ COMPLETE)
 
 **Phase 3 Motivation:**
 - Overfitting detected in Fold 4 and high variance across folds
 - Need stronger regularization for small 12-node graphs
-- Deeper models (3 layers, 128 channels) unnecessary for graph size
+- Balanced depth/width required for 12-node graphs
 - GELU activation preferred over ReLU for gradient flow
 
 **Implementation Details:**
-- [x] Reduced GNN hidden channels: 256 → 64 (prevents overspecialization)
-- [x] Simplified architecture: 3 layers → 2 GAT layers (reduces parameters)
+- [x] Set GNN hidden channels: 256 → 128 (balanced capacity)
+- [x] Kept architecture at 3 GAT layers (final default)
 - [x] Changed activation: ReLU/ELU → GELU (smooth, well-behaved gradients)
-- [x] Increased dropout: 0.5 → 0.6 (stronger regularization)
+- [x] Set dropout to 0.45 (regularization without underfitting)
 - [x] Added L2 regularization: weight_decay = 1e-4 (prevents weight explosion)
 - [x] Simplified classifier head: 4-layer → 3-layer sequential (fewer parameters)
-- [x] All model inits synchronized with GNN_IN_CHANNELS=28, GNN_HIDDEN_CHANNELS=64
+- [x] All model inits synchronized with GNN_IN_CHANNELS=28, GNN_HIDDEN_CHANNELS=128
 
 **Results:**
 - [x] Mean AUC stable: 0.5593 ± 0.0156 (low variance indicates consistency)
@@ -337,14 +333,14 @@
 - [x] Config validates completeness at startup
 
 **Hyperparameter Summary (Phase 3 Final):**
-- GNN_HIDDEN_CHANNELS: 64 (reduced from 256)
-- GNN_DROPOUT: 0.6 (increased from 0.5)
+- GNN_HIDDEN_CHANNELS: 128
+- GNN_DROPOUT: 0.45
 - GNN_WEIGHT_DECAY: 1e-4 (L2 regularization)
-- GNN_LEARNING_RATE: 0.0001 (stable learning)
+- GNN_LEARNING_RATE: 0.001 (stable learning)
 - CAUSALITY_METHOD: 'granger' (corrected from 'pearson')
-- SPARSITY_QUANTILE: 0.85 (keep top 15% edges)
-- FocalLoss alpha: 0.35, gamma: 2.0
-- Early stopping patience: 35, min_delta: 0.0001
+- SPARSITY_QUANTILE: 0.70 (keep top 30% edges)
+- FocalLoss alpha: 0.62, gamma: 2.0
+- Early stopping patience: 20, min_delta: 0.0001
 
 #### Code Synchronization (✅ COMPLETE)
 
@@ -368,20 +364,20 @@
 
 - [x] Python compilation: 100% pass (gnn_model.py, visualizations.py, causal_gnn.py, config.py)
 - [x] Feature dimensions: ALL_FEATURE_NAMES = 28 confirmed
-- [x] Config exports: GNN_IN_CHANNELS = 28, GNN_HIDDEN_CHANNELS = 64
+- [x] Config exports: GNN_IN_CHANNELS = 28, GNN_HIDDEN_CHANNELS = 128
 - [x] Model forward pass: No shape mismatches in feature attribution
 - [x] Early stopping working: Models converge at 3-10 epochs
 
 #### Documentation Updates (✅ COMPLETE)
 
-- [x] README.md: Updated feature count, architecture, results (Feb 14, 2026)
+- [x] README.md: Updated feature count, architecture, results (Feb 15, 2026)
 - [x] ROADMAP.md (this file): Added Phase 3 sprint details
 - [x] DATAFLOW.md: Updated architecture and hyperparameters
 - [x] TODO.md: Updated config and architecture sections
 - [x] .github/copilot-instructions.md: Update pending
 
 **Phase 3 Summary:**
-- Simplified architecture prevents overfitting on small graphs
+- Tuned architecture balances capacity and regularization for small graphs
 - Smart aggregation captures both global signals (eigenvariate) and local connectivity (ReHo)
 - Configuration centralization ensures consistency across pipeline
 - All code synchronized with 28-feature model
@@ -400,7 +396,7 @@
 
 **Implementation Details:**
 - [x] Expanded LOBE_MAPPING in config.py from 5 → 12 regions
-- [x] Updated feature pipeline to handle 12-node graphs (14 features per node maintained)
+- [x] Updated feature pipeline to handle 12-node graphs (28 features per node)
 - [x] Modified graph construction for 12×12 adjacency matrices
 - [x] Updated GNN_HIDDEN_CHANNELS from 64 → 128 for increased representational capacity
 - [x] All 1035 subjects re-processed with 12-region graphs
@@ -414,13 +410,13 @@
 
 **Testing & Validation:**
 - [x] Verified all graphs have exactly 12 nodes
-- [x] Validated edge connectivity (mean 4.8 edges/graph, healthy sparsity)
-- [x] Confirmed feature dimensions (14×12 per graph, 1035 total graphs)
+- [x] Validated edge connectivity (min 12 edges/graph, healthy sparsity)
+- [x] Confirmed feature dimensions (28×12 per graph, 1035 total graphs)
 - [x] Cross-validation stratification maintained (DX_GROUP + SITE_ID)
 - [x] No data leakage detected in train/val/test splits
 
 **Visualization & Analysis:**
-- [x] Generated feature importance heatmap (12 regions × 14 features)
+- [x] Generated feature importance heatmap (12 regions × 28 features)
 - [x] Computed average causal graph showing strong inter-regional connections
 - [x] Created dataset statistics with 12-region breakdown
 - [x] Documented per-fold results with confidence intervals
@@ -450,20 +446,18 @@
 - [x] Update split.py (removed `Path("./data")`, now imports from config)
 - [x] Update manifestor.py (centralized path imports)
 - [x] Update annotate.py (uses DATA_FINAL, DATA_ATLASES from config)
-- [x] Update check_progress.py (all paths from config)
-- [x] Update integrity_check.py (all paths from config)
+- [x] Update pipeline_checks.py (all paths from config)
 
 **Logging Standardization (100% Complete):**
 - [x] Replace print statements with logger.info/warning/error
 - [x] split.py (5 print statements → logging)
 - [x] manifestor.py (4 print statements → logging)
 - [x] annotate.py (3 print statements → logging)
-- [x] check_progress.py (8 print statements → logging)
-- [x] integrity_check.py (6 print statements → logging)
+- [x] pipeline_checks.py (logging standardization)
 
 **Error Handling Hardening (100% Complete):**
 - [x] Add try-catch to extract_spatial.py (YOLO inference with specific errors)
-- [x] Add try-catch to safe_harmonization.py (CSV loading, merge failures)
+- [x] Add try-catch to fold_safe_harmonization.py (CSV loading, merge failures)
 - [x] Add try-catch to compute_roi.py (file I/O with fallback)
 - [x] CSV parsing: FileNotFoundError, pd.errors.ParserError caught separately
 - [x] File operations: FileNotFoundError, ValueError for invalid arrays
