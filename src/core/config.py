@@ -41,21 +41,25 @@ NODE_FEATURES_3D             = DATA_METADATA  / "node_features_3d.csv"
 CAUSAL_GRAPHS_DIR            = DATA_PROCESSED / "causal_graphs"
 
 # --- ANATOMICAL MAPPING (12-Region Neuroanatomical Subdivision) ---
-# Note: ROI IDs are 1-indexed (AAL Standard). Internal code converts to 0-indexed.
+# Note: AAL ROI IDs are 1-indexed; convert to 0-indexed for array access.
 # Updated January 2026: Expanded from 5 lobes to 12 functionally-distinct brain regions
+def _idx(ids):
+    return [i - 1 for i in ids]
+
+
 LOBE_MAPPING = {
-    0: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],  # Frontal_Superior (Left+Right)
-    1: [21, 22, 25, 26, 27, 28],  # Frontal_Orbital (Left+Right)
-    2: [17, 18, 19, 20, 23, 24],  # Motor_Premotor (Central, includes 23-24)
-    3: [29, 30, 31, 32],  # Insula (Left+Right, 29-30 missing previously)
-    4: [33, 34, 35, 36, 37, 38, 151, 152, 153, 154, 155, 156],  # Cingulate + ACC subdivisions
-    5: [39, 40, 41, 42, 91, 92, 93, 94],  # Limbic (Hippocampus, Amygdala)
-    6: [43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56],  # Occipital
-    7: [57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70],  # Parietal
-    8: [79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90],  # Temporal
-    9: [71, 72, 73, 74, 75, 76, 77, 78, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150],  # Subcortical (Thalamus, Basal Ganglia, Subthalamic nucleus, SNpc)
-    10: list(range(95, 121)) + list(range(157, 167)),  # Cerebellum (Vermis + Hemispheres)
-    11: [167, 168, 169, 170]  # Brainstem (Midbrain, Pons, Medulla)
+    0: _idx([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),  # Frontal_Superior (Left+Right)
+    1: _idx([21, 22, 25, 26, 27, 28]),  # Frontal_Orbital (Left+Right)
+    2: _idx([17, 18, 19, 20, 23, 24]),  # Motor_Premotor (Central, includes 23-24)
+    3: _idx([29, 30, 31, 32]),  # Insula (Left+Right, 29-30 missing previously)
+    4: _idx([33, 34, 35, 36, 37, 38, 151, 152, 153, 154, 155, 156]),  # Cingulate + ACC subdivisions
+    5: _idx([39, 40, 41, 42, 91, 92, 93, 94]),  # Limbic (Hippocampus, Amygdala)
+    6: _idx([43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56]),  # Occipital
+    7: _idx([57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70]),  # Parietal
+    8: _idx([79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90]),  # Temporal
+    9: _idx([71, 72, 73, 74, 75, 76, 77, 78, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150]),  # Subcortical (Thalamus, Basal Ganglia, Subthalamic nucleus, SNpc)
+    10: _idx(list(range(95, 121)) + list(range(157, 167))),  # Cerebellum (Vermis + Hemispheres)
+    11: _idx([167, 168, 169, 170])  # Brainstem (Midbrain, Pons, Medulla)
 }
 
 LOBE_NAMES = {
@@ -167,22 +171,29 @@ MIN_EDGES_PER_GRAPH = 12  # Ensure minimum connectivity for 12-region graphs
 
 # --- GNN MODEL PARAMETERS (Phase 3: Regularized for Small Graphs) ---
 # Reduced from 256 to 64 channels to prevent overfitting on 12-node graphs
-GNN_HIDDEN_CHANNELS = 64        # Reduced for regularization (was 256)
+GNN_HIDDEN_CHANNELS = 128       # Increased capacity for 28-feature inputs
 GNN_IN_CHANNELS_DYNAMIC = len(ALL_FEATURE_NAMES)  # Should be 28
 GNN_NUM_HEADS = 4               # Multi-head attention is crucial
 GNN_NUM_CLASSES = 2      # 0: Control, 1: ASD
-GNN_DROPOUT = 0.6               # Increased from 0.5 for stronger regularization
+GNN_DROPOUT = 0.45               # Reduced to prevent underfitting
 GNN_WEIGHT_DECAY = 1e-4         # L2 Regularization (NEW)
-GNN_LEARNING_RATE = 0.0001      # Stable learning rate
+GNN_LEARNING_RATE = 0.001      # Stable learning rate
 GNN_BATCH_SIZE = 32
 GNN_EPOCHS = 100  # More epochs with early stopping
 K_FOLDS = 5
 
-GNN_NUM_GNN_LAYERS = 2          # Reduced from 3 to 2 layers (simpler for 12 nodes)
+GNN_NUM_GNN_LAYERS = 3          # Restore depth for full graph coverage
 GNN_SKIP_CONNECTIONS = True     # Enable residual connections
 GNN_USE_SITE_EMBEDDING = True   # Reduce site bias
 GNN_USE_DEMOGRAPHICS = True     # Add age/sex/IQ conditioning
-GNN_EARLY_STOPPING_PATIENCE = 35
+GNN_EARLY_STOPPING_PATIENCE = 20
+GNN_POOLING = "attention"        # Options: "attention", "mean_max_sum"
+GNN_USE_GRL = True              # Enable gradient reversal site classifier
+GNN_GRL_ALPHA = 1.0             # GRL strength (higher = stronger site invariance)
+GNN_SITE_LOSS_WEIGHT = 0.2      # Weight for site classification loss
+GNN_EDGE_GATE = True            # Soft gate edge_attr before message passing
+GNN_ONECYCLE_MAX_LR = 0.003     # Peak LR for OneCycle schedule
+GNN_ONECYCLE_PATIENCE = 20      # Early stopping patience for OneCycle training
 
 # --- HARDWARE ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -191,8 +202,8 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # CLASS IMBALANCE HANDLING (ADD TO src/config.py)
 
 # Focal Loss Parameters (Experiment v1.3: Prioritize underrepresented Control class)
-FOCAL_LOSS_ALPHA = 0.35  # Weight for ASD (gives 0.65 to Control class)
-FOCAL_LOSS_GAMMA = 2.0   # OPTIMAL: 2.0 (stable training, proven effective)
+FOCAL_LOSS_ALPHA = 0.62  # Weight for ASD (prioritize minority class)
+FOCAL_LOSS_GAMMA = 2.0   # Increase focus on hard examples
 
 # Classification Threshold
 DEFAULT_THRESHOLD = 0.5  # Default classification threshold

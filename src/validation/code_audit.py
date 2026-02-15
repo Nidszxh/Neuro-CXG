@@ -130,7 +130,7 @@ class CodeAuditor:
             "extract_spatial.py",
             "gnn_model.py",
             "graph_factory.py",
-            "safe_harmonization.py",
+            "fold_safe_harmonization.py",
             "causal_gnn.py",
         ]
 

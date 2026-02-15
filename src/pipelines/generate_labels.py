@@ -48,7 +48,7 @@ def generate_atlas_labels():
         bboxes = []
         slice_data = data[:, :, z]
         for class_id in range(NUM_LOBES):
-            aal_ids = LOBE_MAPPING[class_id]
+            aal_ids = [roi_id + 1 for roi_id in LOBE_MAPPING[class_id]]
             mask = np.isin(slice_data, aal_ids)
             if not np.any(mask):
                 continue

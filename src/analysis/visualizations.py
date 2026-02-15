@@ -20,8 +20,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     CAUSAL_GRAPHS_DIR,
     CHECKPOINT_DIR,
+    ALL_FEATURE_NAMES,
     GNN_IN_CHANNELS,
     GNN_HIDDEN_CHANNELS,
+    GNN_NUM_HEADS,
+    GNN_NUM_GNN_LAYERS,
+    GNN_POOLING,
+    GNN_USE_SITE_EMBEDDING,
+    GNN_USE_DEMOGRAPHICS,
+    GNN_USE_GRL,
+    GNN_GRL_ALPHA,
+    GNN_EDGE_GATE,
     LOBE_NAMES,
     MASTER_MANIFEST,
     NUM_LOBES,
@@ -59,29 +68,7 @@ except ImportError:
 
 def create_feature_names():
     """Create list of temporal + spatial feature names."""
-    temporal_names = ["mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr"]
-    if NUM_TEMPORAL_FEATURES > 8:
-        temporal_names.extend(
-            [
-                "delta_power",
-                "delta_peak",
-                "theta_power",
-                "theta_peak",
-                "alpha_power",
-                "alpha_peak",
-                "beta_power",
-                "beta_peak",
-                "gamma_power",
-                "gamma_peak",
-                "spectral_entropy",
-                "phase_std",
-            ]
-        )
-
-    spatial_names = ["x", "y", "z_depth", "size", "conf_std", "detection_count"]
-
-    feature_names = temporal_names[:NUM_TEMPORAL_FEATURES] + spatial_names[:NUM_SPATIAL_FEATURES]
-    return feature_names
+    return ALL_FEATURE_NAMES.copy()
 
 
 def _parse_fold_id(history_file: Path) -> int:
@@ -336,9 +323,14 @@ def generate_simple_feature_importance(output_dir: Path):
             num_node_features=GNN_IN_CHANNELS,
             hidden_channels=GNN_HIDDEN_CHANNELS,
             num_classes=2,
-            num_heads=4,
-            use_site_embedding=False,
-            use_demographics=False,
+            num_heads=GNN_NUM_HEADS,
+            num_layers=GNN_NUM_GNN_LAYERS,
+            pooling=GNN_POOLING,
+            use_site_embedding=GNN_USE_SITE_EMBEDDING,
+            use_demographics=GNN_USE_DEMOGRAPHICS,
+            use_grl=GNN_USE_GRL,
+            grl_alpha=GNN_GRL_ALPHA,
+            edge_gate=GNN_EDGE_GATE,
         ).to(device)
 
         checkpoint_path = CHECKPOINT_DIR / "best_model_fold0.pt"
@@ -348,10 +340,11 @@ def generate_simple_feature_importance(output_dir: Path):
 
         checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
-        if isinstance(checkpoint, dict) and "model_state" in checkpoint:
-            model.load_state_dict(checkpoint["model_state"])
-        else:
-            model.load_state_dict(checkpoint)
+        state_dict = checkpoint["model_state"] if isinstance(checkpoint, dict) and "model_state" in checkpoint else checkpoint
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        if missing or unexpected:
+            logger.warning(f"Checkpoint load had missing keys: {missing}")
+            logger.warning(f"Checkpoint load had unexpected keys: {unexpected}")
 
         model.eval()
 
@@ -427,15 +420,23 @@ def run_visualization_pipeline(output_dir: Path):
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             model = CausalBrainGNN(
                 num_node_features=GNN_IN_CHANNELS,
-                hidden_channels=GNN_HIDDEN_CHANNELS,  # 64 channels (simplified)
+                hidden_channels=GNN_HIDDEN_CHANNELS,
                 num_classes=2,
-                num_heads=4,
-                use_site_embedding=False,
-                use_demographics=False,
+                num_heads=GNN_NUM_HEADS,
+                num_layers=GNN_NUM_GNN_LAYERS,
+                pooling=GNN_POOLING,
+                use_site_embedding=GNN_USE_SITE_EMBEDDING,
+                use_demographics=GNN_USE_DEMOGRAPHICS,
+                use_grl=GNN_USE_GRL,
+                grl_alpha=GNN_GRL_ALPHA,
+                edge_gate=GNN_EDGE_GATE,
             ).to(device)
 
             checkpoint = torch.load(CHECKPOINT_DIR / "best_model_fold0.pt", map_location=device, weights_only=False)
-            model.load_state_dict(checkpoint["model_state"])
+            missing, unexpected = model.load_state_dict(checkpoint["model_state"], strict=False)
+            if missing or unexpected:
+                logger.warning(f"Checkpoint load had missing keys: {missing}")
+                logger.warning(f"Checkpoint load had unexpected keys: {unexpected}")
             model.eval()
 
             test_dataset = ABIDECausalDataset(split="test")

@@ -666,8 +666,8 @@ class PipelineHealthCheck:
                         raise ValueError(f"Duplicate ROI {roi} in lobe {lobe_id}")
                     all_rois.add(roi)
 
-            # Verify range (AAL3: 1-170)
-            expected_rois = set(range(1, 171))
+            # Verify range (AAL3: 0-169 after 0-based conversion)
+            expected_rois = set(range(170))
             if all_rois != expected_rois:
                 missing = expected_rois - all_rois
                 extra = all_rois - expected_rois
@@ -755,7 +755,7 @@ class PipelineHealthCheck:
             self.add_issue(
                 "Harmonization",
                 f"Harmonized features missing: {NODE_ATTRIBUTES_HARMONIZED}",
-                "Run: python -m src.features.safe_harmonization",
+                "Run: python -m src.features.fold_safe_harmonization",
             )
             return False
 
@@ -769,7 +769,7 @@ class PipelineHealthCheck:
                 self.add_issue(
                     "Harmonization",
                     f"CRITICAL: {nan_count} NaNs after harmonization!",
-                    "Re-run safe_harmonization.py",
+                    "Re-run fold_safe_harmonization.py",
                 )
                 return False
 
@@ -1452,7 +1452,7 @@ class PipelineValidator:
                             passed=False,
                             message=f"Harmonized features have {harm_nan} NaN, {harm_inf} Inf",
                             severity="critical",
-                            fix_suggestion="Re-run harmonization with safe_harmonization.py",
+                            fix_suggestion="Re-run harmonization with fold_safe_harmonization.py",
                         )
                     )
                     all_passed = False

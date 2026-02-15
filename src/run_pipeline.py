@@ -328,7 +328,7 @@ Examples:
             "name": "Feature Harmonization",
             "should_run": not NODE_ATTRIBUTES_HARMONIZED.exists() or args.force_reset or args.regenerate_features,
             "reason": "Missing harmonized data" if not NODE_ATTRIBUTES_HARMONIZED.exists() else ("Force reset" if args.force_reset else "Regenerating"),
-            "module": "src.features.safe_harmonization",
+            "module": "src.features.fold_safe_harmonization",
             "function": None
         },
         "pre_gnn_integrity": {

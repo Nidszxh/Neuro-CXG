@@ -12,11 +12,20 @@ while keeping PyTorch raw (no pytorch-lightning dependency).
 """
 
 import torch
+import torch.nn.functional as F
 import numpy as np
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
+from sklearn.metrics import (
+    roc_auc_score,
+    f1_score,
+    accuracy_score,
+    confusion_matrix,
+    precision_recall_curve,
+    average_precision_score,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -260,7 +269,7 @@ class CheckpointManager:
         else:
             return score < self.best_score
     
-    def save(self, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
+    def save(self, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer],
              epoch: int, metrics: Dict[str, Any], fold: Optional[int] = None):
         """
         Save model checkpoint with metadata.
@@ -285,10 +294,11 @@ class CheckpointManager:
             
             checkpoint = {
                 'model_state': model.state_dict(),
-                'optimizer_state': optimizer.state_dict(),
                 'epoch': epoch,
                 **metrics
             }
+            if optimizer is not None:
+                checkpoint['optimizer_state'] = optimizer.state_dict()
             
             torch.save(checkpoint, filepath)
             logger.info(f"✓ Saved checkpoint: {filename} (epoch {epoch}, {self.monitor}={score:.4f})")
@@ -351,7 +361,9 @@ def train_one_epoch_with_accumulation(
     criterion: torch.nn.Module,
     device: torch.device,
     gradient_accumulation_steps: int = 1,
-    max_grad_norm: float = 1.0
+    max_grad_norm: float = 1.0,
+    site_loss_weight: float = 0.0,
+    use_grl: bool = False
 ) -> float:
     """
     Train for one epoch with gradient accumulation.
@@ -380,17 +392,38 @@ def train_one_epoch_with_accumulation(
         data = data.to(device)
         
         # Forward pass
-        out = model(
-            data.x,
-            data.edge_index,
-            data.edge_attr,
-            data.batch,
-            getattr(data, 'site_id', None),
-            getattr(data, 'age', None),
-            getattr(data, 'sex', None),
-            getattr(data, 'fiq', None)
-        )
-        loss = criterion(out, data.y)
+        if use_grl:
+            out, site_logits = model(
+                data.x,
+                data.edge_index,
+                data.edge_attr,
+                data.batch,
+                getattr(data, 'site_id', None),
+                getattr(data, 'age', None),
+                getattr(data, 'sex', None),
+                getattr(data, 'fiq', None),
+                return_site_logits=True
+            )
+            class_loss = criterion(out, data.y)
+            site_targets = getattr(data, 'site_id', None)
+            if site_targets is None:
+                loss = class_loss
+            else:
+                site_targets = site_targets.view(-1)
+                site_loss = F.cross_entropy(site_logits, site_targets)
+                loss = class_loss + site_loss_weight * site_loss
+        else:
+            out = model(
+                data.x,
+                data.edge_index,
+                data.edge_attr,
+                data.batch,
+                getattr(data, 'site_id', None),
+                getattr(data, 'age', None),
+                getattr(data, 'sex', None),
+                getattr(data, 'fiq', None)
+            )
+            loss = criterion(out, data.y)
         
         # Normalize loss for gradient accumulation
         loss = loss / gradient_accumulation_steps
@@ -412,4 +445,175 @@ def train_one_epoch_with_accumulation(
         optimizer.zero_grad()
     
     return total_loss / max(num_batches, 1)
+
+
+def _find_optimal_threshold(y_true: np.ndarray, y_probs: np.ndarray) -> tuple:
+    precision, recall, thresholds = precision_recall_curve(y_true, y_probs)
+    f1_scores = 2 * (precision * recall) / (precision + recall + 1e-10)
+    best_idx = np.argmax(f1_scores)
+    best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
+    best_f1 = f1_scores[best_idx]
+    return best_threshold, best_f1
+
+
+@torch.no_grad()
+def _evaluate_model(model: torch.nn.Module, loader: torch.utils.data.DataLoader, device: torch.device, threshold: float = 0.5) -> Dict[str, Any]:
+    model.eval()
+    all_probs = []
+    all_labels = []
+
+    for data in loader:
+        if data is None:
+            continue
+
+        data = data.to(device)
+        out = model(
+            data.x,
+            data.edge_index,
+            data.edge_attr,
+            data.batch,
+            getattr(data, 'site_id', None),
+            getattr(data, 'age', None),
+            getattr(data, 'sex', None),
+            getattr(data, 'fiq', None)
+        )
+        probs = torch.softmax(out, dim=1)
+        all_probs.append(probs[:, 1].cpu().numpy())
+        all_labels.append(data.y.cpu().numpy())
+
+    if not all_probs:
+        return {
+            'acc': 0.0,
+            'f1': 0.0,
+            'auc': 0.5,
+            'auprc': 0.0,
+            'cm': np.zeros((2, 2)),
+            'probs': np.array([]),
+            'labels': np.array([]),
+        }
+
+    probs_array = np.concatenate(all_probs)
+    labels_array = np.concatenate(all_labels)
+
+    if np.isnan(probs_array).any():
+        return {
+            'acc': 0.0,
+            'f1': 0.0,
+            'auc': 0.5,
+            'auprc': 0.0,
+            'cm': np.zeros((2, 2)),
+            'probs': probs_array,
+            'labels': labels_array,
+        }
+
+    preds_array = (probs_array > threshold).astype(int)
+    auc = roc_auc_score(labels_array, probs_array)
+    auprc = average_precision_score(labels_array, probs_array)
+    f1 = f1_score(labels_array, preds_array, zero_division=0)
+    acc = accuracy_score(labels_array, preds_array)
+    cm = confusion_matrix(labels_array, preds_array)
+
+    return {
+        'acc': acc,
+        'f1': f1,
+        'auc': auc,
+        'auprc': auprc,
+        'cm': cm,
+        'probs': probs_array,
+        'labels': labels_array,
+    }
+
+
+def train_fold_with_onecycle(
+    model: torch.nn.Module,
+    train_loader: torch.utils.data.DataLoader,
+    val_loader: torch.utils.data.DataLoader,
+    criterion: torch.nn.Module,
+    device: torch.device,
+    epochs: int,
+    max_lr: float,
+    patience: int,
+    use_grl: bool,
+    grl_weight: float,
+    fold: int,
+    weight_decay: float = 0.0,
+    gradient_accumulation_steps: int = 2,
+    pct_start: float = 0.3,
+) -> tuple:
+    model.to(device)
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=max_lr / 25.0,
+        weight_decay=weight_decay
+    )
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=max_lr,
+        total_steps=epochs,
+        pct_start=pct_start,
+        anneal_strategy='cos'
+    )
+
+    early_stopping = EarlyStopping(patience=patience, min_delta=0.0001, mode='max')
+    history = []
+    best_state = None
+    best_metrics = {
+        'auc': 0.0,
+        'auprc': 0.0,
+        'f1': 0.0,
+        'acc': 0.0,
+        'threshold': 0.5,
+        'best_epoch': 0,
+    }
+
+    for epoch in range(1, epochs + 1):
+        loss = train_one_epoch_with_accumulation(
+            model,
+            train_loader,
+            optimizer,
+            criterion,
+            device,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            site_loss_weight=grl_weight,
+            use_grl=use_grl
+        )
+        scheduler.step()
+
+        metrics = _evaluate_model(model, val_loader, device, threshold=0.5)
+        opt_threshold, _ = _find_optimal_threshold(metrics['labels'], metrics['probs'])
+        metrics_opt = _evaluate_model(model, val_loader, device, threshold=opt_threshold)
+
+        epoch_metrics = {
+            'epoch': epoch,
+            'loss': loss,
+            'auc': metrics['auc'],
+            'auprc': metrics['auprc'],
+            'f1': metrics_opt['f1'],
+            'acc': metrics_opt['acc'],
+            'threshold': opt_threshold,
+            'cm': metrics_opt['cm'],
+            'lr': optimizer.param_groups[0]['lr'],
+        }
+        history.append(epoch_metrics)
+
+        if metrics['auc'] > best_metrics['auc']:
+            best_metrics = {
+                'auc': metrics['auc'],
+                'auprc': metrics['auprc'],
+                'f1': metrics_opt['f1'],
+                'acc': metrics_opt['acc'],
+                'threshold': opt_threshold,
+                'best_epoch': epoch,
+            }
+            best_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+
+        if early_stopping(metrics['auc']):
+            logger.info(f"Fold {fold}: early stopping at epoch {epoch}")
+            break
+
+    if best_state is None:
+        best_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+
+    return best_state, best_metrics, history
 

@@ -45,8 +45,8 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
     lobe_internal_features = []
     
     for lobe_id in range(NUM_LOBES):
-        # Get ROIs belonging to this lobe (convert 1-based AAL indices to 0-based)
-        indices = [i-1 for i in LOBE_MAPPING[lobe_id] if i <= num_rois]
+        # Get ROIs belonging to this lobe (already 0-based indices)
+        indices = [i for i in LOBE_MAPPING[lobe_id] if i < num_rois]
         
         if not indices:
             logger.warning(f"Lobe {lobe_id} ({LOBE_NAMES[lobe_id]}): No matching ROIs in atlas. Using zero-signal.")

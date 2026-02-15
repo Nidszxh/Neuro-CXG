@@ -1,4 +1,4 @@
-import json, tempfile, numpy as np, pandas as pd, nibabel as nib
+import json, logging, os, tempfile, numpy as np, pandas as pd, nibabel as nib
 from pathlib import Path
 from PIL import Image
 import boto3
@@ -16,6 +16,15 @@ TS_OUTPUT    = PROJECT_ROOT / "data" / "processed"
 META_DIR     = PROJECT_ROOT / "data" / "metadata"
 ATLAS_PATH   = PROJECT_ROOT / "data" / "raw" / "atlases" / "AAL3v1.nii"
 PHENO_PATH   = PROJECT_ROOT / "data" / "processed" / "Phenotypic_V1_0b_preprocessed1.csv"
+MASK_S3_TEMPLATE = "data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/brain_mask/{sub_id}_brain_mask.nii.gz"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+_S3_CLIENT = None
 
 # --- HELPER: ATLAS PREP ---
 def save_atlas_metadata():
@@ -49,18 +58,30 @@ def save_atlas_metadata():
     return atlas_img
 
 # --- THE CORE PROCESS ---
+def init_worker():
+    global _S3_CLIENT
+    _S3_CLIENT = boto3.client("s3", config=Config(signature_version=UNSIGNED))
+
+
+def get_s3_client():
+    if _S3_CLIENT is None:
+        return boto3.client("s3", config=Config(signature_version=UNSIGNED))
+    return _S3_CLIENT
+
+
 def process_subject(sub_id, tr_val):
     # 1. Skip if files already exist (Idempotency)
     final_ts_path = TS_OUTPUT / f"{sub_id}_ts.npy"
     if final_ts_path.exists():
         return sub_id, "Skipped", None
 
-    s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
+    s3 = get_s3_client()
     try:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             f_p = tmp_path / f"{sub_id}_func.nii.gz"
             a_p = tmp_path / f"{sub_id}_alff.nii.gz"
+            m_p = tmp_path / f"{sub_id}_mask.nii.gz"
             
             # Download only if necessary
             s3.download_file("fcp-indi", f"data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/func_preproc/{sub_id}_func_preproc.nii.gz", str(f_p))
@@ -81,14 +102,31 @@ def process_subject(sub_id, tr_val):
             )
 
             # 3. Time Series Extraction with finite check
+            mask_img_obj = None
+            try:
+                s3.download_file(
+                    "fcp-indi",
+                    MASK_S3_TEMPLATE.format(sub_id=sub_id),
+                    str(m_p)
+                )
+                mask_img_obj = resample_to_img(
+                    nib.load(str(m_p)),
+                    func_img,
+                    interpolation="nearest"
+                )
+            except Exception as e:
+                logger.warning("Mask download failed for %s; continuing without mask (%s)", sub_id, e)
+
             masker = NiftiLabelsMasker(
                 labels_img=resampled_atlas, 
+                mask_img=mask_img_obj,
                 t_r=float(tr_val), 
-                standardize='zscore_sample', 
+                standardize="zscore",
                 detrend=True,
                 low_pass=0.08, 
                 high_pass=0.01,
                 ensure_finite=True,  # Safety for NaN values
+                strategy="mean",
                 memory_level=0  # Saves RAM by not caching to disk
             )
             
@@ -106,6 +144,12 @@ def process_subject(sub_id, tr_val):
             # Additional validation: ensure no NaN/Inf after masker processing
             if not np.isfinite(ts).all():
                 raise ValueError(f"Non-finite values detected in time series for {sub_id}")
+
+            if np.any(np.all(ts == 0, axis=0)):
+                zero_rois = np.where(np.all(ts == 0, axis=0))[0]
+                for col in zero_rois:
+                    ts[:, col] = np.random.normal(0, 1e-6, size=ts.shape[0])
+                logger.warning("Subject %s: patched empty ROIs %s", sub_id, zero_rois)
             
             np.save(final_ts_path, ts.astype(np.float32))
 
@@ -137,16 +181,16 @@ if __name__ == "__main__":
     for d in [PNG_OUTPUT, TS_OUTPUT, META_DIR]: 
         d.mkdir(parents=True, exist_ok=True)
     
-    print("Pre-calculating Atlas Metadata...")
+    logger.info("Pre-calculating Atlas Metadata...")
     save_atlas_metadata()
     
     # Load Phenotypic data
     if not PHENO_PATH.exists():
-        print("Downloading Phenotypic data...")
+        logger.info("Downloading Phenotypic data...")
         import urllib.request
         url = "https://s3.amazonaws.com/fcp-indi/data/Projects/ABIDE_Initiative/Phenotypic_V1_0b_preprocessed1.csv"
         urllib.request.urlretrieve(url, PHENO_PATH)
-        print("Phenotypic data downloaded.")
+        logger.info("Phenotypic data downloaded.")
 
     df = pd.read_csv(PHENO_PATH)
     # Strip whitespace from FILE_ID to prevent match failures
@@ -154,7 +198,7 @@ if __name__ == "__main__":
     
     # Handle TR column (may not exist in all phenotype versions)
     if 'TR' not in df.columns:
-        print("⚠️  Warning: 'TR' column not found in phenotype CSV. Using default TR=2.0s for all subjects.")
+        logger.warning("'TR' column not found in phenotype CSV. Using default TR=2.0s for all subjects.")
         df['TR'] = 2.0
     else:
         df['TR'] = pd.to_numeric(df['TR'], errors='coerce').fillna(2.0)
@@ -162,13 +206,17 @@ if __name__ == "__main__":
     # Filter valid subjects
     subjects_df = df[df["FILE_ID"] != "no_filename"].dropna(subset=["FILE_ID"])
     tasks = subjects_df[["FILE_ID", "TR"]].drop_duplicates().values
+    limit = int(os.environ.get("ABIDE_SUBJECT_LIMIT", "0"))
+    if limit > 0:
+        tasks = tasks[:limit]
+        logger.info("Limiting to %s subjects via ABIDE_SUBJECT_LIMIT", limit)
     
-    print(f"Starting processing for {len(tasks)} subjects...")
+    logger.info("Starting processing for %s subjects...", len(tasks))
     
     # Use max_workers=6 or 8 (even if you have 12-16 threads) 
     # fMRI processing is often RAM-bound, not CPU-bound.
     results = []
-    with ProcessPoolExecutor(max_workers=8) as exe:
+    with ProcessPoolExecutor(max_workers=8, initializer=init_worker) as exe:
         futures = [exe.submit(process_subject, row[0], row[1]) for row in tasks]
         
     DOWNLOAD_LOG = META_DIR / "download_log.csv"
@@ -181,6 +229,6 @@ if __name__ == "__main__":
             log_file.write(f"{sub_id},{status.lower()},{clean_err}\n")
             
             if status == "Failed":
-                print(f"Error on {sub_id}: {err}")
+                logger.error("Error on %s: %s", sub_id, err)
     
-    print(f"Download log saved to {DOWNLOAD_LOG}")
+    logger.info("Download log saved to %s", DOWNLOAD_LOG)
