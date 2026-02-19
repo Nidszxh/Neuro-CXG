@@ -9,8 +9,7 @@ from src.core.config import DATA_PROCESSED, DATA_FINAL, DATA_METADATA, MASTER_MA
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
@@ -18,7 +17,7 @@ PHENO_PATH = DATA_PROCESSED / "Phenotypic_V1_0b_preprocessed1.csv"
 
 def create_manifest():
     if not PHENO_PATH.exists():
-        logger.error(f"❌ Error: Phenotypic file not found at {PHENO_PATH}")
+        logger.error(f"[Error]: Phenotypic file not found at {PHENO_PATH}")
         return
         
     # 1. Load and clean phenotypic data (Phase 2.1)
@@ -42,7 +41,7 @@ def create_manifest():
                 manifest_data.append({'subject_id': s, 'split': split})
     
     if not manifest_data:
-        logger.error("❌ Error: No processed data found. Ensure split.py was successful.")
+        logger.error("[Error]: No processed data found. Ensure split.py was successful.")
         return
 
     manifest_df = pd.DataFrame(manifest_data)

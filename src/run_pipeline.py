@@ -31,21 +31,12 @@ logging.basicConfig(
 logger = logging.getLogger("pipeline")
 
 # Path constants for new stages (some imported from config)
-DOWNLOAD_LOG = DATA_METADATA / "download_log.csv"
+DOWNLOAD_LOG    = DATA_METADATA / "download_log.csv"
 MASTER_MANIFEST = DATA_METADATA / "master_manifest.csv"
-ATLAS_DIR = PROJECT_ROOT / "data" / "atlases"
+ATLAS_DIR       = PROJECT_ROOT  / "data" / "atlases"
 
 def prompt_user(message, default=True):
-    """
-    Interactive yes/no prompt.
-    
-    Args:
-        message: Question to ask user
-        default: Default value if user just hits Enter
-    
-    Returns:
-        bool: True for yes, False for no
-    """
+
     suffix = "[Y/n]" if default else "[y/N]"
     while True:
         response = input(f"\n{message} {suffix}: ").strip().lower()
@@ -84,22 +75,14 @@ def clear_old_state():
         logger.info("Reset Causal Graph directory (cleared old 170x170 matrices)")
 
 def run_module(module_path, args_list=None, description="", function_name=None):
-    """
-    Executes a submodule as a separate process to avoid ArgParse conflicts.
-    
-    Args:
-        module_path: Python module path (e.g., 'src.data.split')
-        args_list: Optional command-line arguments
-        description: Human-readable description for logging
-        function_name: Optional specific function to call within the module
-    """
+
     # Use the same Python executable that's running this script
     python_exe = sys.executable
     
     if function_name:
         # Call specific function within module
         cmd = [python_exe, "-c", 
-               f"from {module_path} import {function_name}; {function_name}()"]
+            f"from {module_path} import {function_name}; {function_name}()"]
     else:
         # Run module as script
         cmd = [python_exe, "-m", module_path]

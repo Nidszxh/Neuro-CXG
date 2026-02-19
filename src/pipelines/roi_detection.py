@@ -14,12 +14,11 @@ from src.core.config import (
 def main():
     # 1. Load YOLO26n
     model = YOLO(YOLO_MODEL_SIZE) 
-
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     print("🚀 Initiating Anatomically-Preserving ROI Training...")
 
-    # 3. Training Parameters (consolidated from config.YOLO_TRAIN_CONFIG)
+    # 2. Training Parameters (consolidated from config.YOLO_TRAIN_CONFIG)
     results = model.train(
         data=str(CONFIG_BRAIN_YAML),
         project=str(RESULTS_DIR / "experiments" / "detection"),
