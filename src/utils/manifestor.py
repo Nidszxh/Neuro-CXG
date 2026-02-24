@@ -49,8 +49,8 @@ def create_manifest():
     # 3. Select Causal & Clinical variables (Phase 7.1 & 8.4)
     # We include IQ and Handedness as they are major confounders in ASD research
     required_cols = [
-        'FILE_ID', 'DX_GROUP', 'AGE_AT_SCAN', 'SEX', 
-        'SITE_ID', 'FIQ', 'HANDEDNESS_CATEGORY'
+        'FILE_ID', 'DX_GROUP', 'AGE_AT_SCAN', 'SEX',
+        'SITE_ID', 'FIQ', 'HANDEDNESS_CATEGORY', 'TR'
     ]
     
     # Filter only available columns to avoid merge errors
@@ -67,6 +67,16 @@ def create_manifest():
     
     # 5. Data Integrity Check: Ensure no missing targets
     final_df = final_df.dropna(subset=['DX_GROUP'])
+
+    # 6. TR fallback: if phenotype CSV had no TR column, default to 2.0 s
+    if 'TR' not in final_df.columns:
+        logger.warning("TR column missing from phenotype CSV — defaulting to TR=2.0 s for all subjects")
+        final_df['TR'] = 2.0
+    else:
+        missing_tr = final_df['TR'].isna().sum()
+        if missing_tr > 0:
+            logger.warning(f"{missing_tr} subjects missing TR — filling with default 2.0 s")
+            final_df['TR'] = final_df['TR'].fillna(2.0)
     
     DATA_METADATA.mkdir(parents=True, exist_ok=True)
     final_df.to_csv(MASTER_MANIFEST, index=False)

@@ -37,16 +37,29 @@ def calculate_yolo_bbox(mask, size):
     return f"{x_center:.6f} {y_center:.6f} {(w / size[0]):.6f} {(h / size[1]):.6f}"
 
 
-def generate_atlas_labels():
+def generate_atlas_labels_for_percentiles(z_dim):
+    """
+    Generate atlas labels for specific z-percentiles that match ALFF slice export.
+    """
     atlas_img = nib.as_closest_canonical(nib.load(str(ATLAS_PATH)))
     data = atlas_img.get_fdata()
-    z_dim = data.shape[2]
+    
+    # Match abide_download.py line 236-249: percentiles used during slice export
+    percentiles = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
     atlas_labels = {}
 
-    logger.info("Pre-calculating atlas bounding boxes...")
-    for z in range(z_dim):
+    logger.info(f"Pre-calculating atlas bounding boxes for {len(percentiles)} percentile slices...")
+    
+    for p in percentiles:
+        z = int(z_dim * p)  # Actual z-index in the volume
+        
+        if z >= data.shape[2]:
+            logger.warning(f"Percentile {p} maps to z={z} which exceeds atlas z_dim={data.shape[2]}")
+            continue
+            
         bboxes = []
         slice_data = data[:, :, z]
+        
         for class_id in range(NUM_LOBES):
             aal_ids = [roi_id + 1 for roi_id in LOBE_MAPPING[class_id]]
             mask = np.isin(slice_data, aal_ids)
@@ -57,8 +70,10 @@ def generate_atlas_labels():
             bbox = calculate_yolo_bbox(np.array(mask_img), IMG_SIZE)
             if bbox:
                 bboxes.append(f"{class_id} {bbox}")
+        
         if bboxes:
             atlas_labels[z] = bboxes
+    
     return atlas_labels
 
 
@@ -67,7 +82,17 @@ def main():
         logger.error(f"Error: {DATA_FINAL} not found. Run split.py first!")
         return
 
-    atlas_anno = generate_atlas_labels()
+    # Use atlas z-dimension (ALFF volumes are typically close to this)
+    atlas_img = nib.load(str(ATLAS_PATH))
+    atlas_z_dim = atlas_img.shape[2]
+    
+    # Generate annotations using the same z-dimension as atlas
+    # NOTE: This assumes ALFF volumes have similar z-dimension to atlas.
+    # If ALFF z-dims vary significantly across subjects, per-subject annotation would be needed.
+    atlas_anno = generate_atlas_labels_for_percentiles(atlas_z_dim)
+    
+    logger.info(f"Generated annotations for {len(atlas_anno)} z-slices (atlas z_dim={atlas_z_dim})")
+    
     splits = ["train", "val", "test"]
 
     for split in splits:

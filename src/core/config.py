@@ -34,6 +34,10 @@ ATLAS_METADATA  = DATA_METADATA  / "atlas_metadata.json"
 PHENO_PATH      = DATA_PROCESSED / "Phenotypic_V1_0b_preprocessed1.csv"
 MASTER_MANIFEST = DATA_METADATA  / "master_manifest.csv"
 
+# --- fMRI ACQUISITION DEFAULTS ---
+# Default TR (seconds) when missing in manifest metadata.
+DEFAULT_TR = 2.0
+
 # Output files for the pipeline
 NODE_ATTRIBUTES_TEMPORAL     = DATA_METADATA  / "node_attributes_temporal.csv"
 NODE_ATTRIBUTES_HARMONIZED   = DATA_METADATA  / "node_attributes_harmonized.csv"
@@ -105,13 +109,10 @@ ALL_FEATURE_NAMES = (
 # Dynamic calculation - should be 28
 GNN_IN_CHANNELS = len(ALL_FEATURE_NAMES)
 
-# --- TEMPORAL FEATURE EXTRACTION PARAMETERS ---
-DEFAULT_TR = 2.0  # Default TR (seconds) for fMRI—fallback if not in phenotype CSV
-
 # --- YOLO DETECTION PARAMETERS (Fixed for Medical Integrity) ---
 YOLO_MODEL_SIZE = "yolo26n.pt"
-YOLO_PROJECT_NAME = "ROI_Detection_v27"  # Output directory name from training
-YOLO_WEIGHTS_PATH = RESULTS_DIR / "experiments" / "detection" / "ROI_Detection_v27" / "weights" / "best.pt"
+YOLO_PROJECT_NAME = "ROI_Detection_v28"  # Output directory name from training
+YOLO_WEIGHTS_PATH = RESULTS_DIR / "experiments" / "detection" / "ROI_Detection_v28" / "weights" / "best.pt"
 YOLO_IMGSZ = 640
 YOLO_BATCH_SIZE = 32
 YOLO_EPOCHS = 100

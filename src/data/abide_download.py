@@ -23,7 +23,7 @@ from nilearn.datasets import load_mni152_brain_mask
 # Suppress nilearn FutureWarnings (already addressed in code with explicit parameters)
 warnings.filterwarnings("ignore", category=FutureWarning, module="nilearn")
 
-# --- PATHS ---
+# PATHS 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 from src.core.config import LOBE_MAPPING, LOBE_NAMES 
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 _S3_CLIENT = None
 _MNI_MASK_TEMPLATE = None
 
-# --- HELPER: ATLAS PREP ---
+# HELPER: ATLAS PREP 
 def save_atlas_metadata():
     """Extracts ROI centroids once to avoid 4D overhead later."""
     if not ATLAS_PATH.exists():
@@ -74,7 +74,7 @@ def save_atlas_metadata():
         json.dump(coords, f)
     return atlas_img
 
-# --- THE CORE PROCESS ---
+# THE CORE PROCESS 
 def init_worker():
     global _S3_CLIENT, _MNI_MASK_TEMPLATE
     _S3_CLIENT = boto3.client("s3", config=Config(signature_version=UNSIGNED))
@@ -190,7 +190,7 @@ def process_subject(sub_id, tr_val):
             if not np.isfinite(ts).all():
                 raise ValueError(f"Non-finite values detected in time series for {sub_id}")
 
-            # --- CRITICAL FIX FOR AAL3v1 INDEX SHIFT ---
+            # CRITICAL FIX FOR AAL3v1 INDEX SHIFT 
             full_ts = np.zeros((ts.shape[0], 170), dtype=np.float32)
             for col_idx, roi_id in enumerate(label_ids[: ts.shape[1]]):
                 if 1 <= roi_id <= 170:
@@ -255,7 +255,7 @@ def process_subject(sub_id, tr_val):
     except Exception as e:
         return sub_id, "Failed", str(e)
 
-# --- EXECUTION ---
+# EXECUTION 
 if __name__ == "__main__":
     # Setup folders
     for d in [PNG_OUTPUT, TS_OUTPUT, META_DIR]: 

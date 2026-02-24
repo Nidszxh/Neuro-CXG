@@ -78,6 +78,10 @@ def run_stratified_split():
             if (SOURCE_TS / ts_f).exists():
                 shutil.move(SOURCE_TS / ts_f, ts_dst / ts_f)
 
+            roi_labels_f = f"{sub_id}_roi_labels.npy"
+            if (SOURCE_TS / roi_labels_f).exists():
+                shutil.move(SOURCE_TS / roi_labels_f, ts_dst / roi_labels_f)
+
     logger.info(f"\n✅ SUCCESS: Stratified split complete. Saved to {DATA_FINAL}")
 
 if __name__ == "__main__":
