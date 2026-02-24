@@ -47,6 +47,9 @@ from src.models.training_utils import (
     train_fold_with_onecycle
 )
 
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+logger = logging.getLogger(__name__)
+
 # Analysis modules
 from src.analysis.training_diagnostics import TrainingMonitor
 from src.analysis.graph_topology import CausalGraphAnalyzer
@@ -56,9 +59,6 @@ try:
 except ImportError:
     FEATURE_ANALYSIS_AVAILABLE = False
     logger.warning("FeatureAttributionAnalyzer unavailable (requires Captum)")
-
-logging.basicConfig(level=logging.INFO, format='%(message)s')
-logger = logging.getLogger(__name__)
 
 
 # FOCAL LOSS (Keep - not in training_utils)
@@ -294,7 +294,11 @@ def evaluate_ensemble(tracker: TrainingTracker, checkpoint_manager: CheckpointMa
         if not test_fold_probs:
             logger.warning("No fold predictions collected")
             return
-        
+
+        if test_labels_ref is None or len(test_labels_ref) == 0:
+            logger.warning("No reference labels collected from test set")
+            return
+
         # Compute weighted ensemble
         prob_matrix = np.stack(test_fold_probs, axis=0)  # (K_folds, N_samples)
         
@@ -384,7 +388,7 @@ def run_training():
     logger.info(f"Site conditioning: {GNN_USE_SITE_EMBEDDING}")
     logger.info(f"Demographics: {GNN_USE_DEMOGRAPHICS}")
     logger.info(f"Early stopping patience: {GNN_ONECYCLE_PATIENCE}")
-    logger.info(f"Focal Loss: α=0.75, γ=3.0")
+    logger.info(f"Focal Loss: α={FOCAL_LOSS_ALPHA}, γ={FOCAL_LOSS_GAMMA}")
     logger.info(f"{'='*70}\n")
     
     # K-fold cross-validation

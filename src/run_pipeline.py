@@ -80,9 +80,10 @@ def run_module(module_path, args_list=None, description="", function_name=None):
     python_exe = sys.executable
     
     if function_name:
-        # Call specific function within module
-        cmd = [python_exe, "-c", 
-            f"from {module_path} import {function_name}; {function_name}()"]
+        # Call specific function within module; propagate False return as exit code 1
+        cmd = [python_exe, "-c",
+            f"import sys; from {module_path} import {function_name}; "
+            f"result = {function_name}(); sys.exit(0 if result is not False else 1)"]
     else:
         # Run module as script
         cmd = [python_exe, "-m", module_path]
@@ -280,7 +281,9 @@ Examples:
         },
         "annotate": {
             "name": "Atlas-Based Label Annotation",
-            "should_run": not args.skip_annotate and data_split,
+            # Run if labels are missing OR if split is about to happen (data_split
+            # is evaluated before split runs, so we must also check if split will run).
+            "should_run": not args.skip_annotate and (data_split or not args.skip_split),
             "reason": "Generate YOLO training labels",
             "module": "src.pipelines.generate_labels",
             "function": None
@@ -385,10 +388,13 @@ Examples:
     # Execute stages in order
     
     for stage_key in ["download", "split", "manifest", "atlas_validation",
-                      "pipeline_validation", "post_download_integrity", "annotate", 
-                      "yolo", "spatial_features", "temporal_features", "harmonization", 
-                      "diagnostics", "quality_validation", "pre_gnn_integrity",
-                      "causal_graphs", "gnn_training", "visualizations"]:
+                      "pipeline_validation", "post_download_integrity", "annotate",
+                      "yolo", "spatial_features", "temporal_features", "harmonization",
+                      "pre_gnn_integrity",      # validate features BEFORE building graphs
+                      "causal_graphs",           # build graphs
+                      "diagnostics",             # health report (includes graph status)
+                      "quality_validation",      # graph quality checks (needs graphs to exist)
+                      "gnn_training", "visualizations"]:
         
         if stage_key not in stages:
             continue

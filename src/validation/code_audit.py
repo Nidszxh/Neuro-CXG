@@ -4,8 +4,8 @@ Comprehensive code audit for Neuro-CXG project.
 Checks:
 1. All files use consistent imports from config.py
 2. No hardcoded constants that should be from config
-3. Feature dimensions are correct (14: 8 temporal + 6 spatial)
-4. Graph dimensions are correct (12, 14) for nodes
+3. Feature dimensions are correct (28: 20 temporal + 2 internal + 6 spatial)
+4. Graph dimensions are correct (12, 28) for nodes
 5. LOBE_NAMES consistency across codebase
 6. NUM_LOBES consistency (should be 12)
 """
@@ -29,9 +29,10 @@ SRC_DIR = PROJECT_ROOT / "src"
 # Key constants that should NOT be hardcoded
 CONFIG_CONSTANTS = {
     "NUM_LOBES": 12,
-    "NUM_TEMPORAL_FEATURES": 8,
+    "NUM_TEMPORAL_FEATURES": 20,  # Updated: 8 basic + 12 frequency
     "NUM_SPATIAL_FEATURES": 6,
-    "GNN_IN_CHANNELS": 14,
+    "NUM_INTERNAL_FEATURES": 2,   # NEW: PCA eigenvariate + ReHo
+    "GNN_IN_CHANNELS": 28,        # Updated: 20 temporal + 2 internal + 6 spatial
 }
 
 # Expected hardcoded values that are OK
@@ -84,13 +85,14 @@ class CodeAuditor:
 
         rel_path = filepath.relative_to(SRC_DIR)
 
+        # Patterns reflect the current 12-lobe, 28-feature architecture
         patterns = [
-            (r"\(5\s*,\s*8\)", "Shape (5, 8) should be (12, 8)"),
-            (r"\(5\s*,\s*6\)", "Shape (5, 6) should be (12, 6)"),
-            (r"\(5\s*,\s*14\)", "Shape (5, 14) should be (12, 14)"),
-            (r"\.reshape\s*\(\s*-1\s*,\s*5\s*,\s*14\)", "reshape(-1, 5, 14) should use NUM_LOBES"),
-            (r"\.reshape\s*\(\s*-1\s*,\s*5\s*,\s*8\)", "reshape(-1, 5, 8) should use NUM_LOBES"),
-            (r"range\s*\(\s*5\s*\)", "range(5) should use NUM_LOBES"),
+            (r"\(5\s*,\s*8\)", "Shape (5, 8) is a legacy 5-lobe value; use (NUM_LOBES, NUM_TEMPORAL_FEATURES)"),
+            (r"\(5\s*,\s*6\)", "Shape (5, 6) is a legacy 5-lobe value; use (NUM_LOBES, NUM_SPATIAL_FEATURES)"),
+            (r"\(5\s*,\s*14\)", "Shape (5, 14) is a legacy 5-lobe/feature value; use (NUM_LOBES, GNN_IN_CHANNELS)"),
+            (r"\(12\s*,\s*14\)", "Shape (12, 14) is outdated (14 features); use (NUM_LOBES, GNN_IN_CHANNELS) = (12, 28)"),
+            (r"\.reshape\s*\(\s*-1\s*,\s*5\s*,\s*14\)", "reshape(-1, 5, 14) should use NUM_LOBES and GNN_IN_CHANNELS"),
+            (r"\.reshape\s*\(\s*-1\s*,\s*5\s*,\s*8\)", "reshape(-1, 5, 8) should use NUM_LOBES and NUM_TEMPORAL_FEATURES"),
         ]
 
         for pattern, message in patterns:

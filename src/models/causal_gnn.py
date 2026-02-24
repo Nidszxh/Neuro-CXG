@@ -170,9 +170,17 @@ class CausalBrainGNN(torch.nn.Module):
             age, sex, fiq: Demographics (num_graphs,)
         """
         # 1. Optionally add site embeddings
-        if self.use_site_embedding and site_id is not None:
-            site_emb = self.site_embedding(site_id)  # (num_graphs, 16)
-            site_per_node = site_emb[batch]          # (num_nodes, 16)
+        # When site_id is None (e.g., during attribution/inference without site info),
+        # concatenate zeros so lin_in always receives the same input dimensionality.
+        if self.use_site_embedding:
+            if site_id is not None:
+                site_emb = self.site_embedding(site_id)  # (num_graphs, 16)
+                site_per_node = site_emb[batch]          # (num_nodes, 16)
+            else:
+                site_per_node = torch.zeros(
+                    x.shape[0], self.site_embedding.embedding_dim,
+                    device=x.device, dtype=x.dtype
+                )
             x = torch.cat([x, site_per_node], dim=1)
 
         # 2. Input projection with activation

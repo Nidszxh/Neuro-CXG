@@ -49,7 +49,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Integrity defaults
-TARGET_SLICES = 5
+# abide_download.py saves 7 z-slices per subject (percentiles 0.2-0.8)
+TARGET_SLICES = 7
 VALID_ROI_RANGE = (164, 170)  # AAL3v1 atlas variants
 PNG_DIR = DATA_ROOT / "images"
 TS_DIR = DATA_PROCESSED
@@ -154,21 +155,22 @@ def check_distribution() -> None:
     """
     logger.info("Starting pre-GNN integrity check...")
 
-    processed_root = str(DATA_PROCESSED)
+    # Images are in data/final/{train,val,test}/images/ after splitting
+    final_root = DATA_FINAL
 
-    if not os.path.exists(processed_root):
-        logger.error(f"Path {processed_root} does not exist. Run split.py first.")
+    if not final_root.exists():
+        logger.error(f"Path {final_root} does not exist. Run split.py first.")
         return
 
     splits = ["train", "val", "test"]
 
-    logger.info("Dataset Completeness Report (Target: 5 slices/subject)")
+    logger.info(f"Dataset Completeness Report (Target: {TARGET_SLICES} slices/subject)")
 
     for split in splits:
-        img_path = os.path.join(processed_root, split, "images")
-        lbl_path = os.path.join(processed_root, split, "labels")
+        img_path = final_root / split / "images"
+        lbl_path = final_root / split / "labels"
 
-        if not os.path.exists(img_path):
+        if not img_path.exists():
             logger.warning(f"[!] Split '{split}' images folder missing.")
             continue
 
@@ -190,7 +192,7 @@ def check_distribution() -> None:
             logger.info(f"  {status} {num_slices} slices: {dist[num_slices]} subjects")
 
         # Check for matching labels (Critical for YOLO training)
-        if os.path.exists(lbl_path):
+        if lbl_path.exists():
             labels = [f for f in os.listdir(lbl_path) if f.endswith(".txt")]
             if len(labels) != len(files):
                 logger.warning(
@@ -377,7 +379,6 @@ def generate_health_report(
         run_deep_checks: If True, performs intensive file validation (slower)
     """
     pheno_path = pheno_path or (DATA_PROCESSED / "Phenotypic_V1_0b_preprocessed1.csv")
-    png_dir = DATA_ROOT / "images"
 
     # Load metadata
     if not pheno_path.exists():
@@ -388,12 +389,25 @@ def generate_health_report(
     df["FILE_ID"] = df["FILE_ID"].astype(str).str.strip()
     logger.info(f"Loaded metadata: {len(df)} records")
 
-    # Load images
-    if not png_dir.exists():
-        logger.error(f"Error: Image folder {png_dir} not found.")
-        return False
+    # Collect PNGs from split directories (data/final/{train,val,test}/images/)
+    # Fall back to legacy data/images/ if splits don't exist yet.
+    split_image_dirs = [DATA_FINAL / split / "images" for split in ("train", "val", "test")]
+    split_images_exist = any(d.exists() for d in split_image_dirs)
 
-    downloaded_files = [f for f in os.listdir(png_dir) if f.endswith(".png")]
+    if split_images_exist:
+        downloaded_files = []
+        for d in split_image_dirs:
+            if d.exists():
+                downloaded_files.extend([f.name for f in d.glob("*.png")])
+        png_dir = DATA_FINAL  # used only for deep-check path resolution below
+    else:
+        # Legacy fallback
+        png_dir = DATA_ROOT / "images"
+        if not png_dir.exists():
+            logger.error(f"Error: Image folder {png_dir} not found.")
+            return False
+        downloaded_files = [f for f in os.listdir(png_dir) if f.endswith(".png")]
+
     completed_subs = set([f.rsplit("_z", 1)[0] for f in downloaded_files])
     logger.info(f"Found {len(downloaded_files)} PNG slices from {len(completed_subs)} subjects")
 
@@ -485,22 +499,27 @@ def generate_health_report(
     else:
         logger.info("  All subjects have complete slice sets (5/5)")
 
-    # Time series files
+    # Time series files — search across split directories
     logger.info("-" * 40)
     logger.info("TIME SERIES FILES")
-    ts_dir = DATA_PROCESSED
-    if ts_dir.exists():
-        ts_files = list(ts_dir.glob("*_ts.npy"))
-        logger.info(f"  Time series files:  {len(ts_files)}")
-        ts_subjects = set([f.stem.replace("_ts", "") for f in ts_files])
-        missing_ts = completed_subs - ts_subjects
+    split_ts_dirs = [DATA_FINAL / split / "time_series" for split in ("train", "val", "test")]
+    all_ts_files: List[Path] = []
+    for _td in split_ts_dirs:
+        if _td.exists():
+            all_ts_files.extend(_td.glob("*_ts.npy"))
+    # Fallback to legacy DATA_PROCESSED root
+    if not all_ts_files:
+        all_ts_files = list(DATA_PROCESSED.glob("*_ts.npy"))
+    ts_dir = DATA_FINAL  # for deep-check reference below
 
-        if missing_ts:
-            logger.warning(f"  WARNING: Downloaded subjects missing time series: {len(missing_ts)}")
-        else:
-            logger.info("  All downloaded subjects have time series")
+    logger.info(f"  Time series files:  {len(all_ts_files)}")
+    ts_subjects = set([f.stem.replace("_ts", "") for f in all_ts_files])
+    missing_ts = completed_subs - ts_subjects
+
+    if missing_ts:
+        logger.warning(f"  WARNING: Downloaded subjects missing time series: {len(missing_ts)}")
     else:
-        logger.warning(f"  WARNING: Time series directory not found: {ts_dir}")
+        logger.info("  All downloaded subjects have time series")
 
     # Feature files
     logger.info("-" * 40)
@@ -541,14 +560,23 @@ def generate_health_report(
         logger.info("DEEP INTEGRITY CHECKS")
         logger.info("=" * 40)
 
-        # PNG validation
+        # PNG validation — build a name→Path lookup across all split dirs
+        _png_lookup: dict = {}
+        for _d in (split_image_dirs if split_images_exist else [DATA_ROOT / "images"]):
+            if _d.exists():
+                for _p in _d.glob("*.png"):
+                    _png_lookup[_p.name] = _p
+
         logger.info("\nPNG FILE INTEGRITY (sampling)")
         corrupted_pngs = []
         wrong_size = []
         sample_files = random.sample(downloaded_files, min(sample_png, len(downloaded_files)))
 
         for png_file in sample_files:
-            png_path = png_dir / png_file
+            png_path = _png_lookup.get(png_file)
+            if png_path is None:
+                corrupted_pngs.append((png_file, "file not found in lookup"))
+                continue
             try:
                 img = Image.open(png_path)
                 if img.size != (640, 640):
@@ -565,12 +593,11 @@ def generate_health_report(
                 logger.warning(f"  Wrong dimensions: {len(wrong_size)}")
 
         # Time series validation
-        if ts_dir.exists():
+        if all_ts_files:
             logger.info("\nTIME SERIES VALIDATION (sampling)")
-            ts_files = list(ts_dir.glob("*_ts.npy"))
             invalid_ts = []
             wrong_shape = []
-            sample_ts_files = random.sample(ts_files, min(sample_ts, len(ts_files)))
+            sample_ts_files = random.sample(all_ts_files, min(sample_ts, len(all_ts_files)))
 
             for ts_file in sample_ts_files:
                 try:

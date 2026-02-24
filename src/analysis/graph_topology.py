@@ -202,7 +202,10 @@ class CausalGraphAnalyzer:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         graph_metrics = graph_metrics.copy()
-        graph_metrics["dx_group"] = graph_metrics["dx_group"].astype(int)
+        # Convert dx_group to string labels for seaborn palette compatibility
+        graph_metrics["dx_group"] = graph_metrics["dx_group"].astype(int).map(
+            {1: "ASD", 2: "Control"}
+        ).fillna("Unknown")
 
         significant_metrics = [k for k, v in comparison_results.items() if v["significant"]][:6]
         if not significant_metrics:
@@ -211,15 +214,7 @@ class CausalGraphAnalyzer:
         fig, axes = plt.subplots(2, 3, figsize=(18, 12))
         axes = axes.flatten()
 
-        asd = graph_metrics[graph_metrics["dx_group"] == 1]
-        control = graph_metrics[graph_metrics["dx_group"] == 2]
-
-        palette_map = {
-            0: "#3498db",
-            1: "#e74c3c",
-            2: "#3498db",
-        }
-        palette = {k: v for k, v in palette_map.items() if k in graph_metrics["dx_group"].unique()}
+        palette = {"ASD": "#e74c3c", "Control": "#3498db"}
 
         for idx, metric in enumerate(significant_metrics):
             ax = axes[idx]
@@ -231,7 +226,7 @@ class CausalGraphAnalyzer:
                 palette=palette,
             )
             ax.set_title(metric.replace("_", " ").title())
-            ax.set_xlabel("Diagnosis (0/2=Control, 1=ASD)")
+            ax.set_xlabel("Diagnosis")
             ax.set_ylabel(metric.replace("_", " ").title())
 
         plt.tight_layout()

@@ -154,7 +154,7 @@ def visualize_accuracy_metrics(output_dir: Path):
     logger.info("Generating accuracy metrics visualization...")
 
     try:
-        history_files = sorted(RESULTS_DIR.glob("training_history_fold*.json"))
+        history_files = sorted((RESULTS_DIR / "experiments" / "training").glob("training_history_fold*.json"))
 
         if history_files:
             import json
@@ -254,50 +254,12 @@ def visualize_accuracy_metrics(output_dir: Path):
 
                 return True
 
-        logger.info("No training history files found. Using hardcoded results from latest run...")
-
-        fold_ids = [0, 1, 2, 3, 4]
-        final_accs = [0.5500, 0.5700, 0.5200, 0.5450, 0.5480]
-        mean_acc = np.mean(final_accs)
-        std_acc = np.std(final_accs)
-
-        fig, ax = plt.subplots(figsize=(10, 6))
-        colors = plt.cm.Set2(np.linspace(0, 1, len(fold_ids)))
-
-        bars = ax.bar(range(len(fold_ids)), final_accs, color=colors, alpha=0.8, edgecolor="black", linewidth=1.5)
-        ax.axhline(y=mean_acc, color="red", linestyle="--", linewidth=2.5, label=f"Mean: {mean_acc:.4f}±{std_acc:.4f}")
-        ax.fill_between(range(len(fold_ids)), mean_acc - std_acc, mean_acc + std_acc, alpha=0.2, color="red", label="±1 Std Dev")
-
-        ax.set_xlabel("Fold ID", fontsize=12, fontweight="bold")
-        ax.set_ylabel("Validation Accuracy", fontsize=12, fontweight="bold")
-        ax.set_title("5-Fold Cross-Validation Accuracy\n12-Region Brain Model", fontsize=13, fontweight="bold")
-        ax.set_xticks(range(len(fold_ids)))
-        ax.set_xticklabels([f"Fold {fid}" for fid in fold_ids])
-        ax.set_ylim([0, 1])
-        ax.legend(loc="lower right", fontsize=11)
-        ax.grid(axis="y", alpha=0.3)
-
-        for bar, acc in zip(bars, final_accs):
-            ax.text(
-                bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + 0.02,
-                f"{acc:.3f}",
-                ha="center",
-                va="bottom",
-                fontsize=11,
-                fontweight="bold",
-            )
-
-        plt.tight_layout()
-        output_path = output_dir / "accuracy_metrics.png"
-        plt.savefig(output_path, dpi=300, bbox_inches="tight")
-        plt.close()
-
-        logger.info(f"Saved accuracy metrics to {output_path}")
-        logger.info(f"  Mean Accuracy: {mean_acc:.4f} ± {std_acc:.4f}")
-        logger.info(f"  Per-fold: {[f'{acc:.4f}' for acc in final_accs]}")
-
-        return True
+        logger.warning(
+            "No training history files found. "
+            "Run 5-fold CV with gnn_model.py first to generate history JSONs, "
+            "then call this function again."
+        )
+        return False
 
     except Exception as e:
         logger.error(f"Failed to generate accuracy visualization: {e}")
