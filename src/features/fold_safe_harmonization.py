@@ -287,7 +287,7 @@ class FeatureRepairer:
             if df[col].isna().any():
                 median_val = df[col].median()
                 if pd.notna(median_val):
-                    df[col].fillna(median_val, inplace=True)
+                    df[col] = df[col].fillna(median_val)
         
         nans_after = df[feature_cols].isna().sum().sum()
         imputed_count = nans_before - nans_after
@@ -465,13 +465,35 @@ class HarmonizationEngine:
     
     @staticmethod
     def prepare_covariates(manifest: pd.DataFrame, features_df: pd.DataFrame) -> pd.DataFrame:
-        """Prepare covariate DataFrame for harmonization."""
+        """Prepare covariate DataFrame for harmonization.
+
+        neuroHarmonize (ComBat) requires a 'SITE' column (exact name) plus any
+        continuous/categorical covariates.  We rename 'SITE_ID' → 'SITE' and drop
+        'subject_id' so the returned DataFrame is ready to pass directly to
+        harmonizationLearn / harmonizationApply.
+        """
         covariates = manifest[["subject_id", "SITE_ID", "AGE_AT_SCAN", "SEX"]].copy()
         covariates = covariates.merge(features_df[["subject_id"]], on="subject_id", how="inner")
-        
-        covariates["SITE_ID"] = covariates["SITE_ID"].astype("category")
-        covariates["SEX"] = covariates["SEX"].astype("category")
-        
+
+        # Rename to the column name expected by neuroHarmonize
+        covariates = covariates.rename(columns={"SITE_ID": "SITE"})
+
+        # Fill missing demographics with median/mode before ComBat
+        if covariates["AGE_AT_SCAN"].isna().any():
+            covariates["AGE_AT_SCAN"] = covariates["AGE_AT_SCAN"].fillna(
+                covariates["AGE_AT_SCAN"].median()
+            )
+        if covariates["SEX"].isna().any():
+            covariates["SEX"] = covariates["SEX"].fillna(
+                covariates["SEX"].mode().iloc[0]
+            )
+
+        covariates["SITE"] = covariates["SITE"].astype(str)
+        covariates["SEX"] = pd.to_numeric(covariates["SEX"], errors="coerce").fillna(1).astype(int)
+
+        # Drop subject_id — neuroHarmonize only expects covariate columns
+        covariates = covariates.drop(columns=["subject_id"])
+
         return covariates
     
     @staticmethod
@@ -521,13 +543,28 @@ class HarmonizationEngine:
     ) -> Tuple[Optional[object], pd.DataFrame, pd.DataFrame]:
         """Harmonize a single fold using neuroHarmonize."""
         try:
+            # Add epsilon noise to prevent singular matrix errors with 1e-6 constants
+            # ComBat cannot handle zero-variance features that occur when entire ROIs
+            # are constant (from the 1e-6 padding in abide_download.py)
+            train_features_noisy = train_features.copy()
+            val_features_noisy = val_features.copy()
+            
+            for col in train_features.columns:
+                col_std = train_features[col].std()
+                if col_std < 1e-5:  # Near-constant column
+                    epsilon_noise = np.random.normal(0, 1e-8, size=len(train_features))
+                    train_features_noisy[col] = train_features[col] + epsilon_noise
+                    
+                    val_epsilon = np.random.normal(0, 1e-8, size=len(val_features))
+                    val_features_noisy[col] = val_features[col] + val_epsilon
+            
             model, train_harmonized = harmonizationLearn(
-                train_features.values,
+                train_features_noisy.values,
                 train_covariates,
             )
             
             val_harmonized = harmonizationApply(
-                val_features.values,
+                val_features_noisy.values,
                 val_covariates,
                 model,
             )
@@ -908,7 +945,32 @@ def harmonize_cv_safe_fold(
     logger.info("=" * 80)
     logger.info("ALL FOLDS HARMONIZED")
     logger.info("=" * 80)
-    
+
+    # Write combined lobe-level output for graph_factory.py
+    # Each subject appears in exactly one val fold in k-fold CV, so combining
+    # val sets gives the full dataset harmonized in a leave-one-fold-out manner.
+    if full_output_path is not None and harmonized_folds:
+        all_val_frames = [fold_result.val for fold_result in harmonized_folds]
+        combined_df = pd.concat(all_val_frames, ignore_index=True)
+
+        # Drop metadata columns — graph_factory expects only subject_id + feature cols
+        meta_cols = ["SITE_ID", "DX_GROUP"]
+        combined_df = combined_df.drop(
+            columns=[c for c in meta_cols if c in combined_df.columns]
+        )
+
+        # Deduplicate (safety: each subject should appear in exactly one val fold)
+        combined_df = combined_df.drop_duplicates(subset=["subject_id"])
+
+        Path(full_output_path).parent.mkdir(parents=True, exist_ok=True)
+        combined_df.to_csv(full_output_path, index=False)
+        logger.info(
+            "Saved combined harmonized lobe-level features → %s (%d subjects, %d columns)",
+            full_output_path,
+            len(combined_df),
+            len(combined_df.columns),
+        )
+
     return harmonized_folds
 
 

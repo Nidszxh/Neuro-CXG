@@ -35,7 +35,7 @@ class ABIDECausalDataset(Dataset):
         self._validate_feature_dimensions()
         
         logger.info(f"Initialized {split} dataset with {len(self.manifest)} subjects")
-        logger.info(f"  Node features: {GNN_IN_CHANNELS} ({NUM_TEMPORAL_FEATURES} temporal + {NUM_SPATIAL_FEATURES} spatial)")
+        logger.info(f"  Node features: {GNN_IN_CHANNELS} ({NUM_TEMPORAL_FEATURES} temporal+internal + {NUM_SPATIAL_FEATURES} spatial)")
     
     def _validate_feature_dimensions(self):
         """Ensure loaded features match config expectations."""
@@ -87,7 +87,7 @@ class ABIDECausalDataset(Dataset):
             graph_path = self.adj_dir / f"{sub}_graph.pt"
             if graph_path.exists():
                 try:
-                    graph_data = torch.load(graph_path)
+                    graph_data = torch.load(graph_path, weights_only=False)
                     if 'adj' not in graph_data:
                         invalid_count += 1
                         continue
@@ -127,7 +127,7 @@ class ABIDECausalDataset(Dataset):
         try:
             # 1. Load 12×12 Causal Adjacency Matrix
             graph_path = self.adj_dir / f"{sub_id}_graph.pt"
-            graph_dict = torch.load(graph_path)
+            graph_dict = torch.load(graph_path, weights_only=False)
             adj = graph_dict['adj']  # Should be (12, 12)
             
             if torch.isnan(adj).any() or torch.isinf(adj).any():

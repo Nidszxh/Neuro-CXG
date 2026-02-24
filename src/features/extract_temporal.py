@@ -22,6 +22,7 @@ from src.features.frequency_features import extract_frequency_features_batch
 # Expected ROI count range for validation (AAL3v1 atlas)
 # Note: Some AAL3v1 templates have 2 unused/empty ROIs, so 164-170 are all valid
 VALID_ROI_RANGE = (164, 170)
+MAX_ROIS = 170
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -176,21 +177,20 @@ def main(add_frequency: bool = True) -> None:
                 failed_subjects.append(sub_id)
                 continue
 
-            num_rois = ts_data.shape[1]
+            original_num_rois = ts_data.shape[1]
 
-            if not (VALID_ROI_RANGE[0] <= num_rois <= VALID_ROI_RANGE[1]):
+            # abide_download.py now saves fixed 170-column arrays
+            if original_num_rois != MAX_ROIS:
                 logger.error(
-                    f"{sub_id}: ROI count {num_rois} outside valid range {VALID_ROI_RANGE}. Skipping."
+                    f"{sub_id}: Expected {MAX_ROIS} ROIs but got {original_num_rois}. "
+                    f"Re-run abide_download.py to regenerate standardized time series."
                 )
                 failed_subjects.append(sub_id)
                 continue
 
-            if num_rois < 170:
-                logger.debug(f"{sub_id}: Using {num_rois} ROIs (AAL3v1 variant with unused ROIs)")
-
             subject_features = [sub_id]
 
-            for i in range(num_rois):
+            for i in range(MAX_ROIS):
                 roi_signal = ts_data[:, i]
                 try:
                     roi_feats = extract_single_roi_features(roi_signal, tr, include_frequency=add_frequency)
@@ -217,25 +217,6 @@ def main(add_frequency: bool = True) -> None:
     if not all_subject_data:
         logger.error("No valid subjects processed!")
         return
-
-    # Standardize to 170 ROIs for consistent downstream processing
-    all_subject_data_normalized = []
-    max_rois = 170
-    features_per_roi = 20 if add_frequency else 8
-    expected_features = 1 + (max_rois * features_per_roi)
-
-    for row in all_subject_data:
-        if len(row) == expected_features:
-            all_subject_data_normalized.append(row)
-        else:
-            actual_rois = (len(row) - 1) // features_per_roi
-            logger.debug(f"{row[0]}: Padding from {actual_rois} to {max_rois} ROIs")
-            padded_row = row.copy() if isinstance(row, list) else list(row)
-            padding_needed = (max_rois - actual_rois) * features_per_roi
-            padded_row.extend([0.0] * padding_needed)
-            all_subject_data_normalized.append(padded_row)
-
-    all_subject_data = all_subject_data_normalized
 
     # Create columns
     columns = ["subject_id"]
