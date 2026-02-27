@@ -1,4 +1,21 @@
+"""
+Fold-safe neuroHarmonize harmonization for Neuro-CXG.
+
+Pipeline
+--------
+1. Validate + repair raw temporal features (NaN/Inf/outlier handling).
+2. Aggregate 170 AAL ROIs -> 12 brain regions (vectorised mean).
+3. 5-fold CV harmonization via neuroHarmonize (ComBat).
+4. Quality-check variance retention across folds.
+5. Write combined leave-one-fold-out output for graph_factory.py.
+
+External interface (unchanged):
+    harmonize_cv_safe_fold(features_df, manifest_df, ...) -> List[HarmonizationFold]
+    main()  # called by run_pipeline.py
+"""
+
 import logging
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -7,21 +24,17 @@ import numpy as np
 import pandas as pd
 from neuroHarmonize import harmonizationApply, harmonizationLearn
 
-import sys
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
 from src.core.config import (
-    MASTER_MANIFEST,
-    NODE_ATTRIBUTES_TEMPORAL,
-    NODE_ATTRIBUTES_HARMONIZED,
-    NUM_TEMPORAL_FEATURES,
     LOBE_MAPPING,
-    NUM_LOBES,
     LOBE_NAMES,
+    MASTER_MANIFEST,
+    NODE_ATTRIBUTES_HARMONIZED,
+    NODE_ATTRIBUTES_TEMPORAL,
+    NUM_LOBES,
+    NUM_TEMPORAL_FEATURES,
 )
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -29,7 +42,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Constants
+# ── constants ─────────────────────────────────────────────────────────────────
 FEATURE_TYPES = [
     "mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr",
     "delta_power", "theta_power", "alpha_power", "beta_power", "gamma_power",
@@ -37,46 +50,14 @@ FEATURE_TYPES = [
     "spectral_entropy", "phase_std",
 ]
 
-NAN_REMOVAL_THRESHOLD = 0.5
-OUTLIER_STD_THRESHOLD = 5
-VARIANCE_RETENTION_LOW = 0.70
-VARIANCE_RETENTION_HIGH = 1.30
-VARIANCE_WARNING_THRESHOLD = 30.0
-
-
-@dataclass
-class ValidationStats:
-    """Container for validation statistics."""
-    total_subjects: int
-    total_features: int
-    nan_count: int
-    inf_count: int
-    zero_count: int
-    subjects_with_nans: int
-    features_with_nans: int
-    nan_percentage: float
-    detected_rois: int
-    value_mean: Optional[float] = None
-    value_std: Optional[float] = None
-    value_min: Optional[float] = None
-    value_max: Optional[float] = None
-
-
-@dataclass
-class RepairStats:
-    """Container for repair operation statistics."""
-    subjects_before: int
-    subjects_removed: int = 0
-    subjects_removed_multivariate: int = 0
-    nans_imputed: int = 0
-    infs_replaced: int = 0
-    spectral_log_transformed: int = 0
-    outliers_detected: int = 0
+NAN_REMOVAL_THRESHOLD = 0.5   # drop subjects with >50 % NaN
+OUTLIER_STD_THRESHOLD = 5     # cap outliers beyond ±5 σ
+VARIANCE_WARNING_THRESHOLD = 30.0  # warn when >30 % features lose/gain variance
 
 
 @dataclass
 class HarmonizationFold:
-    """Container for harmonization results of a single fold."""
+    """Container for harmonization results of a single CV fold."""
     fold: int
     train: pd.DataFrame
     val: pd.DataFrame
@@ -85,71 +66,102 @@ class HarmonizationFold:
     model: Optional[object]
 
 
-class FeatureValidator:
-    """Handles validation of temporal features."""
-    
-    @staticmethod
-    def validate(df: pd.DataFrame) -> ValidationStats:
-        """Comprehensive validation of temporal feature integrity."""
-        logger.info("Validating temporal features...")
-        
-        feature_cols = FeatureValidator._get_feature_columns(df)
-        
-        total_values = len(df) * len(feature_cols)
-        nan_count = df[feature_cols].isna().sum().sum()
-        
-        stats = ValidationStats(
-            total_subjects=len(df),
-            total_features=len(feature_cols),
-            nan_count=nan_count,
-            inf_count=np.isinf(df[feature_cols].values).sum(),
-            zero_count=(df[feature_cols] == 0).sum().sum(),
-            subjects_with_nans=df[feature_cols].isna().any(axis=1).sum(),
-            features_with_nans=df[feature_cols].isna().any(axis=0).sum(),
-            nan_percentage=(nan_count / total_values * 100) if total_values else 0.0,
-            detected_rois=len(feature_cols) // NUM_TEMPORAL_FEATURES if NUM_TEMPORAL_FEATURES else 0,
+# ── feature-column helpers ────────────────────────────────────────────────────
+
+def _feat_cols(df: pd.DataFrame) -> List[str]:
+    """Return all columns except subject_id."""
+    return [c for c in df.columns if c != "subject_id"]
+
+
+# ── 1. Validation ───────────────────────────────────────────────────────────────────
+
+def validate_features(df: pd.DataFrame) -> None:
+    """Log a compact validation summary for the feature matrix."""
+    cols = _feat_cols(df)
+    vals = df[cols].replace([np.inf, -np.inf], np.nan)
+
+    nan_total = int(vals.isna().sum().sum())
+    inf_total = int(np.isinf(df[cols].values).sum())
+    subj_nan = int(vals.isna().any(axis=1).sum())
+    feat_nan = int(vals.isna().any(axis=0).sum())
+    nan_pct = 100.0 * nan_total / max(vals.size, 1)
+
+    logger.info(
+        "Feature validation: %d subjects × %d features | "
+        "NaN: %d (%.1f%%) | Inf: %d | Subjects with NaN: %d | Features with NaN: %d",
+        len(df), len(cols), nan_total, nan_pct, inf_total, subj_nan, feat_nan,
+    )
+
+
+# ── 2. Repair ─────────────────────────────────────────────────────────────────────
+
+def repair_features(df: pd.DataFrame, *, impute_nans: bool = True) -> pd.DataFrame:
+    """
+    Clean feature matrix in four vectorised steps.
+
+    1. Drop subjects with >NAN_REMOVAL_THRESHOLD fraction of NaN values.
+    2. Replace ±Inf with the column 1st/99th percentile.
+    3. Log-transform spectral power features (reduces heavy tails).
+    4. Impute remaining NaNs with per-column medians; cap ±OUTLIER_STD_THRESHOLD σ.
+
+    Returns a cleaned copy; original is not modified.
+    """
+    df = df.copy()
+    cols = _feat_cols(df)
+    n_before = len(df)
+
+    # Step 1 — drop subjects with too many NaNs
+    min_valid = int(len(cols) * (1.0 - NAN_REMOVAL_THRESHOLD))
+    df = df.dropna(subset=cols, thresh=min_valid).reset_index(drop=True)
+    removed = n_before - len(df)
+    if removed:
+        logger.warning(
+            "Dropped %d subjects with >%d%% NaN values", removed, int(NAN_REMOVAL_THRESHOLD * 100)
         )
-        
-        # Calculate value statistics on valid data
-        valid_data = df[feature_cols].replace([np.inf, -np.inf], np.nan).dropna()
-        if len(valid_data) > 0:
-            values = valid_data.values
-            stats.value_mean = float(values.mean())
-            stats.value_std = float(values.std())
-            stats.value_min = float(values.min())
-            stats.value_max = float(values.max())
-        
-        return stats
-    
-    @staticmethod
-    def diagnose_nan_sources(df: pd.DataFrame, manifest: pd.DataFrame) -> pd.DataFrame:
-        """Identify which subjects and features have NaN values."""
-        feature_cols = FeatureValidator._get_feature_columns(df)
-        diagnosis = []
-        
-        for _, row in df.iterrows():
-            sub_id = row["subject_id"]
-            nan_count = row[feature_cols].isna().sum()
-            
-            if nan_count > 0:
-                meta = manifest[manifest["subject_id"] == sub_id]
-                diagnosis.append({
-                    "subject_id": sub_id,
-                    "nan_count": nan_count,
-                    "nan_percentage": (nan_count / len(feature_cols)) * 100,
-                    "site": meta["SITE_ID"].iloc[0] if len(meta) > 0 else "Unknown",
-                    "dx_group": meta["DX_GROUP"].iloc[0] if len(meta) > 0 else "Unknown",
-                })
-        
-        return pd.DataFrame(diagnosis).sort_values("nan_count", ascending=False)
-    
-    @staticmethod
-    def _get_feature_columns(df: pd.DataFrame) -> List[str]:
-        """Extract feature columns (excluding subject_id)."""
-        return [c for c in df.columns if c != "subject_id"]
+
+    # Step 2 — replace ±Inf with quantile bounds (column-wise)
+    inf_replaced = 0
+    for col in cols:
+        mask_pos = df[col] == np.inf
+        mask_neg = df[col] == -np.inf
+        if mask_pos.any() or mask_neg.any():
+            valid = df[col].replace([np.inf, -np.inf], np.nan).dropna()
+            df.loc[mask_pos, col] = valid.quantile(0.99) if len(valid) else 0.0
+            df.loc[mask_neg, col] = valid.quantile(0.01) if len(valid) else 0.0
+            inf_replaced += int(mask_pos.sum()) + int(mask_neg.sum())
+    if inf_replaced:
+        logger.warning("Replaced %d ±Inf values with 1st/99th-percentile bounds", inf_replaced)
+
+    # Step 3 — log-transform spectral power (positive-valued, heavy-tailed)
+    spectral = ["delta_power", "theta_power", "alpha_power", "beta_power", "gamma_power"]
+    spectral_cols = [c for c in cols if any(s in c for s in spectral)]
+    for col in spectral_cols:
+        mask = df[col] > 0
+        df.loc[mask, col] = np.log1p(df.loc[mask, col])
+    if spectral_cols:
+        logger.info("Log-transformed %d spectral-power columns", len(spectral_cols))
+
+    # Step 4a — impute NaNs with per-column median
+    if impute_nans:
+        medians = df[cols].median()
+        df[cols] = df[cols].fillna(medians)
+
+    # Step 4b — clip outliers beyond ±OUTLIER_STD_THRESHOLD σ (vectorised)
+    means = df[cols].mean()
+    stds = df[cols].std().replace(0, np.nan)   # avoid clipping constant cols
+    lower = means - OUTLIER_STD_THRESHOLD * stds
+    upper = means + OUTLIER_STD_THRESHOLD * stds
+    df[cols] = df[cols].clip(lower=lower, upper=upper, axis=1)
+
+    logger.info("Repair complete: %d subjects remaining (removed %d)", len(df), removed)
+    return df
 
 
-class FeatureRepairer:
+def _placeholder_repair_features_end():
+    pass
+
+
+class _FeatureRepairer_DELETED:
     """Handles repair operations on temporal features."""
     
     @staticmethod
