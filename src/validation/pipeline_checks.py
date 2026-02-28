@@ -1,12 +1,3 @@
-"""
-Unified validation and integrity checks for Neuro-CXG.
-
-This module consolidates:
-- integrity checks (post-download, pre-GNN, health reports)
-- quality validation (YOLO, graphs, stratification)
-- full pipeline validation (environment, data, features, graphs, models)
-"""
-
 import argparse
 import logging
 import os
@@ -25,6 +16,7 @@ from PIL import Image
 # Setup paths from config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
+    ALL_FEATURE_NAMES,
     ATLAS_PATH,
     CAUSAL_GRAPHS_DIR,
     CHECKPOINT_DIR,
@@ -36,6 +28,7 @@ from src.core.config import (
     K_FOLDS,
     LOBE_MAPPING,
     MASTER_MANIFEST,
+    MIN_EDGES_PER_GRAPH,
     NODE_ATTRIBUTES_HARMONIZED,
     NODE_ATTRIBUTES_TEMPORAL,
     NODE_FEATURES_3D,
@@ -174,12 +167,9 @@ def check_distribution() -> None:
             logger.warning(f"[!] Split '{split}' images folder missing.")
             continue
 
-        files = [f for f in os.listdir(img_path) if f.endswith(".png")]
-        subject_counts = {}
-
-        for file_name in files:
-            sub_id = file_name.rsplit("_z", 1)[0]
-            subject_counts[sub_id] = subject_counts.get(sub_id, 0) + 1
+        png_paths = list(img_path.glob("*.png"))
+        n_files = len(png_paths)
+        subject_counts = Counter(p.name.rsplit("_z", 1)[0] for p in png_paths)
 
         # Analyze the distribution of slice counts
         dist = Counter(subject_counts.values())
@@ -193,13 +183,13 @@ def check_distribution() -> None:
 
         # Check for matching labels (Critical for YOLO training)
         if lbl_path.exists():
-            labels = [f for f in os.listdir(lbl_path) if f.endswith(".txt")]
-            if len(labels) != len(files):
+            n_labels = len(list(lbl_path.glob("*.txt")))
+            if n_labels != n_files:
                 logger.warning(
-                    f"  [!] ALERT: Image/Label Mismatch! ({len(files)} images vs {len(labels)} labels)"
+                    f"  [!] ALERT: Image/Label Mismatch! ({n_files} images vs {n_labels} labels)"
                 )
             else:
-                logger.info(f"  ✓ Image/Label count matches ({len(files)} files)")
+                logger.info(f"  ✓ Image/Label count matches ({n_files} files)")
 
     logger.info("\nPre-GNN integrity check complete.")
 
@@ -276,28 +266,24 @@ def analyze_class_distribution() -> None:
     logger.info("-" * 70)
 
     if "SITE_ID" in df.columns:
-        site_stats = []
-        for site in df["SITE_ID"].value_counts().head(10).index:
-            site_df = df[df["SITE_ID"] == site]
-            site_dx = site_df["DX_GROUP"].value_counts()
-            site_control = site_dx.get(2, 0)
-            site_asd = site_dx.get(1, 0)
-
-            site_stats.append(
-                {
-                    "site": site,
-                    "total": len(site_df),
-                    "control": site_control,
-                    "asd": site_asd,
-                    "ratio": f"{site_control / site_asd:.2f}:1" if site_asd > 0 else "N/A",
-                }
-            )
-
-        for stat in site_stats:
+        site_dx = (
+            df.groupby(["SITE_ID", "DX_GROUP"])
+            .size()
+            .unstack(fill_value=0)
+        )
+        for col in (1, 2):  # ensure both ASD (1) and Control (2) columns exist
+            if col not in site_dx.columns:
+                site_dx[col] = 0
+        site_dx = site_dx.rename(columns={1: "asd", 2: "control"})
+        site_dx["total"] = site_dx["asd"] + site_dx["control"]
+        site_dx["ratio"] = site_dx.apply(
+            lambda r: f"{r['control'] / r['asd']:.2f}:1" if r["asd"] > 0 else "N/A", axis=1
+        )
+        for site, row in site_dx.sort_values("total", ascending=False).head(10).iterrows():
             logger.info(
-                f"{stat['site']:20} | Total: {stat['total']:4} | "
-                f"Control: {stat['control']:4} | ASD: {stat['asd']:4} | "
-                f"Ratio: {stat['ratio']}"
+                f"{str(site):20} | Total: {int(row['total']):4} | "
+                f"Control: {int(row['control']):4} | ASD: {int(row['asd']):4} | "
+                f"Ratio: {row['ratio']}"
             )
 
     # Check which subjects have graphs
@@ -429,7 +415,7 @@ def generate_health_report(
 
     if len(completed_subs) > 0:
         avg_slices = len(downloaded_files) / len(completed_subs)
-        logger.info(f"Avg Slices/Sub:    {avg_slices:.1f} (Target: 5.0)")
+        logger.info(f"Avg Slices/Sub:    {avg_slices:.1f} (Target: {TARGET_SLICES})")
 
     # Class balance
     logger.info("-" * 40)
@@ -490,14 +476,14 @@ def generate_health_report(
         subject_id = filename.rsplit("_z", 1)[0]
         slice_counts[subject_id] = slice_counts.get(subject_id, 0) + 1
 
-    incomplete = {subid: count for subid, count in slice_counts.items() if count != 5}
-    complete = sum(1 for count in slice_counts.values() if count == 5)
-    logger.info(f"  Complete (5 slices): {complete}/{len(slice_counts)}")
+    incomplete = {subid: count for subid, count in slice_counts.items() if count != TARGET_SLICES}
+    complete = sum(1 for count in slice_counts.values() if count == TARGET_SLICES)
+    logger.info(f"  Complete ({TARGET_SLICES} slices): {complete}/{len(slice_counts)}")
 
     if incomplete:
         logger.warning(f"  WARNING: Subjects with incomplete slices: {len(incomplete)}")
     else:
-        logger.info("  All subjects have complete slice sets (5/5)")
+        logger.info(f"  All subjects have complete slice sets ({TARGET_SLICES}/{TARGET_SLICES})")
 
     # Time series files — search across split directories
     logger.info("-" * 40)
@@ -622,486 +608,58 @@ def generate_health_report(
     return True
 
 
-class PipelineHealthCheck:
-    """Pipeline validation and diagnostics (YOLO, graphs, stratification)."""
+def _sample_graphs(graph_files: List[Path], sample_size: int = 200) -> Dict:
+    """
+    Sample up to *sample_size* graph .pt files and return validity statistics.
 
-    def __init__(self, visualize: bool = False):
-        self.visualize = visualize
-        self.output_dir = Path("./results/validation_outputs")
-        if visualize:
-            self.output_dir.mkdir(parents=True, exist_ok=True)
+    Shared helper used by PipelineValidator.validate_graphs() to eliminate
+    duplicated sampling code across classes.
 
-        self.issues = []
-        self.warnings = []
-        self.passed_checks = []
-        self.results = {}
+    Returns a dict with keys::
 
-    # RESULT TRACKING
-
-    def add_issue(self, stage: str, message: str, fix: str) -> None:
-        self.issues.append({"stage": stage, "message": message, "fix": fix})
-
-    def add_warning(self, stage: str, message: str) -> None:
-        self.warnings.append({"stage": stage, "message": message})
-
-    def add_pass(self, stage: str, message: str) -> None:
-        self.passed_checks.append({"stage": stage, "message": message})
-
-    # VALIDATION CHECKS
-
-    def check_atlas(self) -> bool:
-        logger.info("Checking atlas...")
-
-        if not ATLAS_PATH.exists():
-            self.add_issue(
-                "Atlas",
-                f"Atlas missing: {ATLAS_PATH}",
-                "Run: python -m src.validation.atlas_validator",
-            )
-            return False
-
+        total, valid, corrupted, zero_edges, wrong_shape, edge_counts,
+        mean_edges (present when edge_counts is non-empty),
+        median_edges (present when edge_counts is non-empty).
+    """
+    stats: Dict = {
+        "total": len(graph_files),
+        "valid": 0,
+        "corrupted": 0,
+        "zero_edges": 0,
+        "wrong_shape": 0,
+        "edge_counts": [],
+    }
+    sample = list(np.random.choice(graph_files, min(sample_size, len(graph_files)), replace=False))
+    for gf in sample:
         try:
-            import nibabel as nib
-
-            atlas_img = nib.load(str(ATLAS_PATH))
-            data = atlas_img.get_fdata()
-            num_rois = len(np.unique(data)) - 1
-
-            valid_counts = {116, 117, 164, 166, 170}
-            if num_rois not in valid_counts:
-                self.add_warning("Atlas", f"Unexpected ROI count: {num_rois} (expected {valid_counts})")
-
-            self.add_pass("Atlas", f"Valid atlas with {num_rois} ROIs")
-            return True
-
-        except Exception as e:
-            self.add_issue("Atlas", f"Atlas corrupted: {e}", "Re-download atlas")
-            return False
-
-    def check_lobe_mapping(self) -> bool:
-        logger.info("Checking LOBE_MAPPING...")
-
-        try:
-            if len(LOBE_MAPPING) != NUM_LOBES:
-                raise ValueError(f"Expected {NUM_LOBES} lobes, got {len(LOBE_MAPPING)}")
-
-            # Check completeness
-            all_rois = set()
-            for lobe_id, roi_list in LOBE_MAPPING.items():
-                for roi in roi_list:
-                    if roi in all_rois:
-                        raise ValueError(f"Duplicate ROI {roi} in lobe {lobe_id}")
-                    all_rois.add(roi)
-
-            # Verify range (AAL3: 0-169 after 0-based conversion)
-            expected_rois = set(range(170))
-            if all_rois != expected_rois:
-                missing = expected_rois - all_rois
-                extra = all_rois - expected_rois
-                if missing or extra:
-                    self.add_warning("Config", f"ROI coverage: missing={len(missing)}, extra={len(extra)}")
-
-            self.add_pass("Config", "LOBE_MAPPING valid")
-            return True
-
-        except ValueError as e:
-            self.add_issue("Config", f"LOBE_MAPPING invalid: {e}", "Fix LOBE_MAPPING in src/core/config.py")
-            return False
-
-    def check_manifest(self) -> Tuple[bool, Optional[pd.DataFrame]]:
-        logger.info("Checking manifest...")
-
-        if not MASTER_MANIFEST.exists():
-            self.add_issue("Manifest", f"Manifest missing: {MASTER_MANIFEST}", "Run: python -m src.utils.manifestor")
-            return False, None
-
-        try:
-            df = pd.read_csv(MASTER_MANIFEST)
-
-            # Check required columns
-            required = ["subject_id", "split", "DX_GROUP", "SITE_ID"]
-            missing = [c for c in required if c not in df.columns]
-
-            if missing:
-                self.add_issue("Manifest", f"Missing columns: {missing}", "Regenerate manifest")
-                return False, None
-
-            # Verify splits
-            splits = set(df["split"].unique())
-            expected_splits = {"train", "val", "test"}
-            if not expected_splits.issubset(splits):
-                self.add_warning("Manifest", f"Missing splits: {expected_splits - splits}")
-
-            self.add_pass("Manifest", f"{len(df)} subjects across {len(splits)} splits")
-            return True, df
-
-        except Exception as e:
-            self.add_issue("Manifest", f"Error reading manifest: {e}", "Check manifest file")
-            return False, None
-
-    def check_temporal_features(self) -> bool:
-        logger.info("Checking temporal features...")
-
-        if not NODE_ATTRIBUTES_TEMPORAL.exists():
-            self.add_issue(
-                "Features",
-                f"Temporal features missing: {NODE_ATTRIBUTES_TEMPORAL}",
-                "Run: python -m src.features.extract_temporal",
-            )
-            return False
-
-        try:
-            df = pd.read_csv(NODE_ATTRIBUTES_TEMPORAL)
-            feature_cols = [c for c in df.columns if c != "subject_id"]
-
-            # Check for NaNs
-            nan_count = df[feature_cols].isna().sum().sum()
-            total_values = len(df) * len(feature_cols)
-            nan_pct = (nan_count / total_values) * 100
-
-            if nan_pct > 20:
-                self.add_issue("Features", f"CRITICAL: {nan_pct:.1f}% NaN values!", "Check feature extraction pipeline")
-                return False
-            if nan_pct > 5:
-                self.add_warning("Features", f"{nan_pct:.1f}% NaN values detected")
-
-            # Estimate ROI count
-            expected_rois = len(feature_cols) // NUM_TEMPORAL_FEATURES if NUM_TEMPORAL_FEATURES > 0 else 170
-
-            self.add_pass("Features", f"Temporal features: {len(df)} subjects, ~{expected_rois} ROIs")
-            return True
-
-        except Exception as e:
-            self.add_issue("Features", f"Error reading features: {e}", "Regenerate temporal features")
-            return False
-
-    def check_harmonization(self) -> bool:
-        logger.info("Checking harmonization...")
-
-        if not NODE_ATTRIBUTES_HARMONIZED.exists():
-            self.add_issue(
-                "Harmonization",
-                f"Harmonized features missing: {NODE_ATTRIBUTES_HARMONIZED}",
-                "Run: python -m src.features.fold_safe_harmonization",
-            )
-            return False
-
-        try:
-            df = pd.read_csv(NODE_ATTRIBUTES_HARMONIZED)
-            feature_cols = [c for c in df.columns if c != "subject_id"]
-
-            # Check for NaNs (should be ZERO)
-            nan_count = df[feature_cols].isna().sum().sum()
-            if nan_count > 0:
-                self.add_issue(
-                    "Harmonization",
-                    f"CRITICAL: {nan_count} NaNs after harmonization!",
-                    "Re-run fold_safe_harmonization.py",
-                )
-                return False
-
-            # Check for infinites
-            inf_count = np.isinf(df[feature_cols].values).sum()
-            if inf_count > 0:
-                self.add_warning("Harmonization", f"{inf_count} infinite values detected")
-
-            self.add_pass("Harmonization", f"Clean harmonized features: {len(df)} subjects")
-            return True
-
-        except Exception as e:
-            self.add_issue("Harmonization", f"Error reading harmonized features: {e}", "Re-run harmonization")
-            return False
-
-    def check_spatial_features(self) -> bool:
-        logger.info("Checking spatial features...")
-
-        if not NODE_FEATURES_3D.exists():
-            self.add_issue(
-                "Spatial Features",
-                f"3D features missing: {NODE_FEATURES_3D}",
-                "Run: python -m src.features.extract_spatial",
-            )
-            return False
-
-        try:
-            df = pd.read_csv(NODE_FEATURES_3D)
-
-            # Check detection completeness
-            if "node_count" in df.columns:
-                complete = (df["node_count"] == NUM_LOBES).sum()
-                survival_rate = complete / len(df) * 100
-
-                self.results["yolo_survival_rate"] = survival_rate
-
-                if survival_rate < 80:
-                    self.add_warning(
-                        "Spatial Features",
-                        f"LOW survival rate: {survival_rate:.1f}% ({complete}/{len(df)})",
-                    )
-                else:
-                    self.add_pass(
-                        "Spatial Features",
-                        f"{complete}/{len(df)} subjects with all {NUM_LOBES} lobes ({survival_rate:.1f}%)",
-                    )
-
-            return True
-
-        except Exception as e:
-            self.add_issue("Spatial Features", f"Error reading spatial features: {e}", "Re-run feature extraction")
-            return False
-
-    def check_causal_graphs(self, manifest: Optional[pd.DataFrame] = None) -> Dict:
-        logger.info("Checking causal graphs...")
-
-        if not CAUSAL_GRAPHS_DIR.exists():
-            self.add_issue(
-                "Graphs",
-                f"Graph directory missing: {CAUSAL_GRAPHS_DIR}",
-                "Run: python -m src.features.construct_causal",
-            )
-            return {"available": 0, "missing": 0, "corrupted": 0}
-
-        graph_files = list(CAUSAL_GRAPHS_DIR.glob("*_graph.pt"))
-
-        if not graph_files:
-            self.add_issue("Graphs", "No graph files found", "Run: python -m src.features.construct_causal")
-            return {"available": 0, "missing": 0, "corrupted": 0}
-
-        stats = {
-            "total_files": len(graph_files),
-            "valid": 0,
-            "corrupted": 0,
-            "zero_edges": 0,
-            "edge_counts": [],
-        }
-
-        # Sample graphs for analysis
-        sample_size = min(200, len(graph_files))
-        for graph_file in np.random.choice(graph_files, sample_size, replace=False):
-            try:
-                graph_data = torch.load(graph_file, weights_only=False)
-
-                if "adj" not in graph_data:
-                    stats["corrupted"] += 1
-                    continue
-
-                adj = graph_data["adj"]
-
-                # Check for NaN/Inf
-                if torch.isnan(adj).any() or torch.isinf(adj).any():
-                    stats["corrupted"] += 1
-                    continue
-
-                # Count edges
-                num_edges = (adj != 0).sum().item()
-                stats["edge_counts"].append(num_edges)
-
-                if num_edges == 0:
-                    stats["zero_edges"] += 1
-                else:
-                    stats["valid"] += 1
-
-            except Exception:
+            data = torch.load(gf, weights_only=False)
+            if "adj" not in data:
                 stats["corrupted"] += 1
-
-        # Calculate statistics
-        if stats["edge_counts"]:
-            stats["mean_edges"] = np.mean(stats["edge_counts"])
-            stats["median_edges"] = np.median(stats["edge_counts"])
-
-        # Report findings
-        if stats["corrupted"] > sample_size * 0.05:
-            self.add_warning("Graphs", f"{stats['corrupted']}/{sample_size} graphs corrupted")
-
-        if stats["zero_edges"] > sample_size * 0.05:
-            self.add_warning("Graphs", f"{stats['zero_edges']}/{sample_size} graphs have zero edges")
-            self.add_warning("Graphs", f"Consider lowering SPARSITY_QUANTILE from {SPARSITY_QUANTILE}")
-
-        if stats["valid"] > 0:
-            self.add_pass(
-                "Graphs",
-                f"{len(graph_files)} graphs available, mean edges: {stats.get('mean_edges', 0):.1f}/{NUM_LOBES * NUM_LOBES}",
-            )
-
-        self.results["graph_stats"] = stats
-        return stats
-
-    def check_stratification(self, manifest: Optional[pd.DataFrame] = None) -> Dict:
-        logger.info("Checking stratification...")
-
-        if manifest is None:
-            _, manifest = self.check_manifest()
-            if manifest is None:
-                return {}
-
-        stats = {"total": len(manifest), "splits": {}}
-
-        # Per-split analysis
-        for split in ["train", "val", "test"]:
-            split_data = manifest[manifest["split"] == split]
-
-            if len(split_data) == 0:
                 continue
+            adj = data["adj"]
+            if adj.shape != (NUM_LOBES, NUM_LOBES):
+                stats["wrong_shape"] += 1
+                continue
+            if torch.isnan(adj).any() or torch.isinf(adj).any():
+                stats["corrupted"] += 1
+                continue
+            n_edges = int((adj != 0).sum().item())
+            stats["edge_counts"].append(n_edges)
+            if n_edges == 0:
+                stats["zero_edges"] += 1
+            else:
+                stats["valid"] += 1
+        except Exception:
+            stats["corrupted"] += 1
+    if stats["edge_counts"]:
+        arr = np.array(stats["edge_counts"])
+        stats["mean_edges"] = float(arr.mean())
+        stats["median_edges"] = float(np.median(arr))
+    return stats
 
-            dx_counts = split_data["DX_GROUP"].value_counts()
 
-            stats["splits"][split] = {
-                "total": len(split_data),
-                "control": dx_counts.get(2, 0),
-                "asd": dx_counts.get(1, 0),
-                "num_sites": split_data["SITE_ID"].nunique(),
-            }
-
-        # Check data leakage
-        subject_counts = manifest.groupby("subject_id")["split"].nunique()
-        leakage = (subject_counts > 1).sum()
-
-        if leakage > 0:
-            self.add_issue(
-                "Stratification",
-                f"DATA LEAKAGE: {leakage} subjects in multiple splits!",
-                "Re-run split.py with proper stratification",
-            )
-        else:
-            self.add_pass("Stratification", f"No data leakage, {len(stats['splits'])} splits")
-
-        self.results["stratification"] = stats
-        return stats
-
-    # VISUALIZATION (OPTIONAL)
-
-    def visualize_results(self) -> None:
-        if not self.visualize:
-            return
-
-        try:
-            # Graph sparsity visualization
-            if "graph_stats" in self.results:
-                stats = self.results["graph_stats"]
-                if stats.get("edge_counts"):
-                    self._plot_graph_sparsity(stats["edge_counts"])
-
-            # Stratification visualization
-            if "stratification" in self.results:
-                manifest = pd.read_csv(MASTER_MANIFEST)
-                self._plot_stratification(manifest)
-
-            logger.info(f"Visualizations saved to: {self.output_dir}")
-
-        except ImportError:
-            logger.warning("matplotlib/seaborn not available, skipping visualizations")
-
-    def _plot_graph_sparsity(self, edge_counts: List[int]) -> None:
-        import matplotlib.pyplot as plt
-
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.hist(edge_counts, bins=range(0, max(edge_counts) + 2), edgecolor="black", alpha=0.7)
-        ax.axvline(np.mean(edge_counts), color="red", linestyle="--", label=f"Mean: {np.mean(edge_counts):.1f}")
-        ax.set_title("Graph Edge Count Distribution")
-        ax.set_xlabel("Number of Edges")
-        ax.set_ylabel("Frequency")
-        ax.legend()
-
-        plt.tight_layout()
-        plt.savefig(self.output_dir / "graph_sparsity.png", dpi=150)
-        plt.close()
-
-    def _plot_stratification(self, manifest: pd.DataFrame) -> None:
-        import matplotlib.pyplot as plt
-
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-        # Split distribution
-        ax = axes[0]
-        split_dx = manifest.groupby(["split", "DX_GROUP"]).size().unstack(fill_value=0)
-        split_dx.columns = ["ASD", "Control"]
-        split_dx.plot(kind="bar", ax=ax, color=["#e74c3c", "#3498db"])
-        ax.set_title("Distribution by Split")
-        ax.set_ylabel("Number of Subjects")
-        ax.legend(title="Diagnosis")
-
-        # Class balance
-        ax = axes[1]
-        split_ratios = []
-        for split in ["train", "val", "test"]:
-            split_data = manifest[manifest["split"] == split]
-            asd = (split_data["DX_GROUP"] == 1).sum()
-            ratio = asd / len(split_data) if len(split_data) > 0 else 0
-            split_ratios.append(ratio)
-
-        ax.bar(["Train", "Val", "Test"], split_ratios)
-        ax.axhline(0.5, color="black", linestyle="--", label="Perfect Balance")
-        ax.set_title("ASD Ratio per Split")
-        ax.set_ylabel("Proportion")
-        ax.legend()
-
-        plt.tight_layout()
-        plt.savefig(self.output_dir / "stratification.png", dpi=150)
-        plt.close()
-
-    # REPORTING
-
-    def generate_report(self) -> bool:
-        print("\n" + "=" * 70)
-        print("NEURO-CXG PIPELINE HEALTH CHECK")
-        print("=" * 70)
-
-        # Passed checks
-        if self.passed_checks:
-            print("\nPASSED CHECKS:")
-            print("-" * 70)
-            for check in self.passed_checks:
-                print(f"  [{check['stage']}] {check['message']}")
-
-        # Warnings
-        if self.warnings:
-            print("\nWARNINGS:")
-            print("-" * 70)
-            for warn in self.warnings:
-                print(f"  [{warn['stage']}] {warn['message']}")
-
-        # Critical issues
-        if self.issues:
-            print("\nCRITICAL ISSUES:")
-            print("-" * 70)
-            for issue in self.issues:
-                print(f"\n  [{issue['stage']}]")
-                print(f"  Problem: {issue['message']}")
-                print(f"  Fix: {issue['fix']}")
-
-        # Summary
-        print("\n" + "=" * 70)
-        print("SUMMARY:")
-        print(f"  Passed: {len(self.passed_checks)}")
-        print(f"  Warnings: {len(self.warnings)}")
-        print(f"  Critical Issues: {len(self.issues)}")
-        print("=" * 70)
-
-        if self.issues:
-            print("\nPIPELINE HAS CRITICAL ISSUES")
-            return False
-        if self.warnings:
-            print("\nPipeline functional with warnings")
-            return True
-        print("\nPIPELINE FULLY HEALTHY")
-        return True
-
-    # MAIN EXECUTION
-
-    def run_full_check(self) -> bool:
-        self.check_atlas()
-        self.check_lobe_mapping()
-        manifest_ok, manifest = self.check_manifest()
-
-        if manifest_ok:
-            self.check_temporal_features()
-            self.check_harmonization()
-            self.check_spatial_features()
-            self.check_causal_graphs(manifest)
-            self.check_stratification(manifest)
-
-        self.visualize_results()
-        return self.generate_report()
+# Note: The deprecated PipelineHealthCheck class body has been removed.
+# PipelineHealthCheck is now an alias (see below after PipelineValidator).
 
 
 @dataclass
@@ -1124,9 +682,13 @@ class PipelineValidator:
     at each stage of the pipeline.
     """
 
-    def __init__(self):
+    def __init__(self, visualize: bool = False):
         self.results: List[ValidationResult] = []
         self.metrics: Dict = {}
+        self.visualize = visualize
+        self.output_dir = Path("./results/validation_outputs")
+        if visualize:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def add_result(self, result: ValidationResult) -> None:
         self.results.append(result)
@@ -1221,18 +783,29 @@ class PipelineValidator:
             )
             all_passed = False
 
-        expected_features = NUM_TEMPORAL_FEATURES + NUM_SPATIAL_FEATURES
+        # GNN_IN_CHANNELS is derived as len(ALL_FEATURE_NAMES) in config.py
+        # (temporal=8, frequency=12, internal=2, spatial=6 = 28 total)
+        expected_features = len(ALL_FEATURE_NAMES)
         if GNN_IN_CHANNELS != expected_features:
             self.add_result(
                 ValidationResult(
                     stage="Environment",
                     passed=False,
-                    message=f"Config mismatch: GNN_IN_CHANNELS={GNN_IN_CHANNELS} but expected {expected_features}",
+                    message=f"Config mismatch: GNN_IN_CHANNELS={GNN_IN_CHANNELS} but len(ALL_FEATURE_NAMES)={expected_features}",
                     severity="critical",
-                    fix_suggestion="Set GNN_IN_CHANNELS = NUM_TEMPORAL_FEATURES + NUM_SPATIAL_FEATURES",
+                    fix_suggestion="Ensure GNN_IN_CHANNELS = len(ALL_FEATURE_NAMES) in config.py",
                 )
             )
             all_passed = False
+        else:
+            self.add_result(
+                ValidationResult(
+                    stage="Environment",
+                    passed=True,
+                    message=f"Feature dims: GNN_IN_CHANNELS={GNN_IN_CHANNELS} ({NUM_TEMPORAL_FEATURES} temporal + {NUM_SPATIAL_FEATURES} spatial + internal)",
+                    severity="info",
+                )
+            )
 
         return all_passed
 
@@ -1245,23 +818,32 @@ class PipelineValidator:
 
         all_passed = True
 
-        image_dir = DATA_ROOT / "images"
-        if not image_dir.exists() or not list(image_dir.glob("*.png")):
+        # Images may live in split dirs (post-split) or the legacy pre-split dir
+        split_image_dirs = [DATA_FINAL / s / "images" for s in ("train", "val", "test")]
+        png_files = [p for d in split_image_dirs if d.exists() for p in d.glob("*.png")]
+        if not png_files:
+            legacy_dir = DATA_ROOT / "images"
+            png_files = list(legacy_dir.glob("*.png")) if legacy_dir.exists() else []
+
+        if not png_files:
             self.add_result(
                 ValidationResult(
                     stage="Data",
                     passed=False,
-                    message="No PNG images found",
+                    message="No PNG images found in split dirs or legacy data/images/",
                     severity="critical",
                     fix_suggestion="Run: python -m src.data.abide_download",
                 )
             )
             return False
 
-        png_files = list(image_dir.glob("*.png"))
         subjects = set(f.stem.rsplit("_z", 1)[0] for f in png_files)
 
-        ts_files = list(DATA_PROCESSED.glob("*_ts.npy"))
+        # Time series may live in split dirs or legacy DATA_PROCESSED root
+        split_ts_dirs = [DATA_FINAL / s / "time_series" for s in ("train", "val", "test")]
+        ts_files = [p for d in split_ts_dirs if d.exists() for p in d.glob("*_ts.npy")]
+        if not ts_files:
+            ts_files = list(DATA_PROCESSED.glob("*_ts.npy"))
         ts_subjects = set(f.stem.replace("_ts", "") for f in ts_files)
 
         missing_ts = subjects - ts_subjects
@@ -1524,95 +1106,56 @@ class PipelineValidator:
             return False
 
         graph_files = list(CAUSAL_GRAPHS_DIR.glob("*_graph.pt"))
-
         sample_size = min(50, len(graph_files))
-        stats = {"valid": 0, "corrupted": 0, "zero_edges": 0, "wrong_shape": 0, "edge_counts": []}
-
-        for graph_file in np.random.choice(graph_files, sample_size, replace=False):
-            try:
-                graph_data = torch.load(graph_file, weights_only=False)
-
-                if "adj" not in graph_data:
-                    stats["corrupted"] += 1
-                    continue
-
-                adj = graph_data["adj"]
-
-                if adj.shape != (NUM_LOBES, NUM_LOBES):
-                    stats["wrong_shape"] += 1
-                    continue
-
-                if torch.isnan(adj).any() or torch.isinf(adj).any():
-                    stats["corrupted"] += 1
-                    continue
-
-                num_edges = (adj != 0).sum().item()
-                stats["edge_counts"].append(num_edges)
-
-                if num_edges == 0:
-                    stats["zero_edges"] += 1
-                else:
-                    stats["valid"] += 1
-
-            except Exception:
-                stats["corrupted"] += 1
-
+        stats = _sample_graphs(graph_files, sample_size=sample_size)
         all_passed = True
 
         if stats["corrupted"] > sample_size * 0.05:
-            self.add_result(
-                ValidationResult(
-                    stage="Graphs",
-                    passed=False,
-                    message=f"{stats['corrupted']}/{sample_size} graphs corrupted",
-                    severity="critical",
-                    fix_suggestion="Re-run graph construction",
-                )
-            )
+            self.add_result(ValidationResult(
+                stage="Graphs",
+                passed=False,
+                message=f"{stats['corrupted']}/{sample_size} graphs corrupted or missing 'adj' key",
+                severity="critical",
+                fix_suggestion="Re-run graph construction",
+            ))
             all_passed = False
 
-        if stats["wrong_shape"] > 0:
-            self.add_result(
-                ValidationResult(
-                    stage="Graphs",
-                    passed=False,
-                    message=f"{stats['wrong_shape']} graphs have wrong shape (expected {NUM_LOBES}x{NUM_LOBES})",
-                    severity="critical",
-                    fix_suggestion="Clear graph directory and rebuild",
-                )
-            )
+        if stats.get("wrong_shape", 0) > 0:
+            self.add_result(ValidationResult(
+                stage="Graphs",
+                passed=False,
+                message=f"{stats['wrong_shape']} graphs have wrong shape (expected {NUM_LOBES}×{NUM_LOBES})",
+                severity="critical",
+                fix_suggestion="Clear graph directory and rebuild",
+            ))
             all_passed = False
 
         if stats["zero_edges"] > sample_size * 0.1:
-            self.add_result(
-                ValidationResult(
-                    stage="Graphs",
-                    passed=False,
-                    message=f"{stats['zero_edges']}/{sample_size} graphs have zero edges",
-                    severity="warning",
-                    fix_suggestion=f"Lower SPARSITY_QUANTILE from {SPARSITY_QUANTILE} to 0.70 or 0.60",
-                )
-            )
+            self.add_result(ValidationResult(
+                stage="Graphs",
+                passed=False,
+                message=f"{stats['zero_edges']}/{sample_size} graphs have zero edges",
+                severity="warning",
+                fix_suggestion=f"Lower SPARSITY_QUANTILE from {SPARSITY_QUANTILE}",
+            ))
 
         if stats["edge_counts"]:
-            mean_edges = np.mean(stats["edge_counts"])
-            median_edges = np.median(stats["edge_counts"])
-
-            self.add_result(
-                ValidationResult(
-                    stage="Graphs",
-                    passed=True,
-                    message=f"{len(graph_files)} graphs, mean edges: {mean_edges:.1f}, median: {median_edges:.0f}",
-                    severity="info",
-                    metrics={
-                        "total_graphs": len(graph_files),
-                        "mean_edges": mean_edges,
-                        "median_edges": median_edges,
-                        "max_edges": max(stats["edge_counts"]),
-                        "min_edges": min(stats["edge_counts"]),
-                    },
-                )
-            )
+            mean_e = stats.get("mean_edges", 0.0)
+            median_e = stats.get("median_edges", 0.0)
+            self.add_result(ValidationResult(
+                stage="Graphs",
+                passed=True,
+                message=f"{len(graph_files)} graphs — mean edges: {mean_e:.1f}, median: {median_e:.0f}",
+                severity="info",
+                metrics={
+                    "total_graphs": len(graph_files),
+                    "mean_edges": mean_e,
+                    "median_edges": median_e,
+                    "max_edges": max(stats["edge_counts"]),
+                    "min_edges": min(stats["edge_counts"]),
+                    "edge_counts_sample": stats["edge_counts"],
+                },
+            ))
 
         return all_passed
 
@@ -1711,6 +1254,203 @@ class PipelineValidator:
 
         return True
 
+    # ATLAS & CONFIG CHECKS (consolidated from PipelineHealthCheck)
+
+    def check_atlas(self) -> bool:
+        """Verify the brain atlas file exists and is loadable by nibabel."""
+        logger.info("Checking atlas...")
+        if not ATLAS_PATH.exists():
+            self.add_result(ValidationResult(
+                stage="Atlas", passed=False,
+                message=f"Atlas missing: {ATLAS_PATH}",
+                severity="critical",
+                fix_suggestion="Run: python -m src.validation.atlas_validator",
+            ))
+            return False
+        try:
+            import nibabel as nib
+            data = nib.load(str(ATLAS_PATH)).get_fdata()
+            num_rois = len(np.unique(data)) - 1
+            valid_counts = {116, 117, 164, 166, 170}
+            severity = "info" if num_rois in valid_counts else "warning"
+            self.add_result(ValidationResult(
+                stage="Atlas", passed=True,
+                message=f"Atlas loaded: {num_rois} ROIs",
+                severity=severity,
+            ))
+            return True
+        except Exception as e:
+            self.add_result(ValidationResult(
+                stage="Atlas", passed=False,
+                message=f"Atlas load error: {e}",
+                severity="critical",
+                fix_suggestion="Re-download: python -m src.validation.atlas_validator",
+            ))
+            return False
+
+    def check_lobe_mapping(self) -> bool:
+        """Validate LOBE_MAPPING completeness, uniqueness, and ROI range."""
+        logger.info("Checking LOBE_MAPPING...")
+        try:
+            if len(LOBE_MAPPING) != NUM_LOBES:
+                raise ValueError(f"Expected {NUM_LOBES} lobes, got {len(LOBE_MAPPING)}")
+            seen: set = set()
+            for lobe_id, roi_list in LOBE_MAPPING.items():
+                for roi in roi_list:
+                    if roi in seen:
+                        raise ValueError(f"Duplicate ROI {roi} in lobe {lobe_id}")
+                    seen.add(roi)
+            missing = set(range(170)) - seen
+            extra = seen - set(range(170))
+            if missing or extra:
+                self.add_result(ValidationResult(
+                    stage="Config", passed=True,
+                    message=f"LOBE_MAPPING gap: missing={len(missing)}, extra={len(extra)}",
+                    severity="warning",
+                ))
+            self.add_result(ValidationResult(
+                stage="Config", passed=True,
+                message=f"LOBE_MAPPING valid: {NUM_LOBES} lobes, {len(seen)} ROIs",
+                severity="info",
+            ))
+            return True
+        except ValueError as e:
+            self.add_result(ValidationResult(
+                stage="Config", passed=False,
+                message=f"LOBE_MAPPING invalid: {e}",
+                severity="critical",
+                fix_suggestion="Fix LOBE_MAPPING in src/core/config.py",
+            ))
+            return False
+
+    def check_manifest(self) -> Tuple[bool, Optional[pd.DataFrame]]:
+        """Check manifest exists and contains all required columns."""
+        logger.info("Checking manifest...")
+        if not MASTER_MANIFEST.exists():
+            self.add_result(ValidationResult(
+                stage="Manifest", passed=False,
+                message=f"Manifest missing: {MASTER_MANIFEST}",
+                severity="critical",
+                fix_suggestion="Run: python -m src.utils.manifestor",
+            ))
+            return False, None
+        try:
+            df = pd.read_csv(MASTER_MANIFEST)
+            missing_cols = [c for c in ("subject_id", "split", "DX_GROUP", "SITE_ID") if c not in df.columns]
+            if missing_cols:
+                self.add_result(ValidationResult(
+                    stage="Manifest", passed=False,
+                    message=f"Missing columns: {missing_cols}",
+                    severity="critical",
+                    fix_suggestion="Regenerate: python -m src.utils.manifestor",
+                ))
+                return False, None
+            splits = set(df["split"].unique())
+            if not {"train", "val", "test"}.issubset(splits):
+                self.add_result(ValidationResult(
+                    stage="Manifest", passed=True,
+                    message=f"Incomplete splits: {splits}",
+                    severity="warning",
+                ))
+            self.add_result(ValidationResult(
+                stage="Manifest", passed=True,
+                message=f"{len(df)} subjects across {len(splits)} splits",
+                severity="info",
+            ))
+            return True, df
+        except Exception as e:
+            self.add_result(ValidationResult(
+                stage="Manifest", passed=False,
+                message=f"Error reading manifest: {e}",
+                severity="critical",
+                fix_suggestion="Check or regenerate manifest",
+            ))
+            return False, None
+
+    def check_stratification(self, manifest: Optional[pd.DataFrame] = None) -> None:
+        """Assert no subject appears in more than one split (data leakage)."""
+        logger.info("Checking stratification...")
+        if manifest is None:
+            ok, manifest = self.check_manifest()
+            if not ok or manifest is None:
+                return
+        leakage = int((manifest.groupby("subject_id")["split"].nunique() > 1).sum())
+        if leakage > 0:
+            self.add_result(ValidationResult(
+                stage="Stratification", passed=False,
+                message=f"DATA LEAKAGE: {leakage} subjects appear in multiple splits",
+                severity="critical",
+                fix_suggestion="Re-run split.py with subject-level stratification",
+            ))
+        else:
+            self.add_result(ValidationResult(
+                stage="Stratification", passed=True,
+                message=f"No data leakage across {manifest['split'].nunique()} splits",
+                severity="info",
+            ))
+
+    # VISUALIZATION (OPTIONAL)
+
+    def visualize_results(self) -> None:
+        """Render graph-sparsity and stratification plots when visualize=True."""
+        if not self.visualize:
+            return
+        try:
+            graph_result = next(
+                (r for r in self.results if r.metrics and "edge_counts_sample" in (r.metrics or {})),
+                None,
+            )
+            if graph_result and graph_result.metrics:
+                edge_counts = graph_result.metrics.get("edge_counts_sample", [])
+                if edge_counts:
+                    self._plot_graph_sparsity(edge_counts)
+            if MASTER_MANIFEST.exists():
+                try:
+                    self._plot_stratification(pd.read_csv(MASTER_MANIFEST))
+                except Exception:
+                    pass
+            logger.info(f"Visualizations saved to: {self.output_dir}")
+        except ImportError:
+            logger.warning("matplotlib not available — skipping visualizations")
+
+    def _plot_graph_sparsity(self, edge_counts: List[int]) -> None:
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.hist(edge_counts, bins=range(0, max(edge_counts) + 2), edgecolor="black", alpha=0.7)
+        ax.axvline(np.mean(edge_counts), color="red", linestyle="--", label=f"Mean: {np.mean(edge_counts):.1f}")
+        ax.set_title("Graph Edge Count Distribution")
+        ax.set_xlabel("Number of Edges")
+        ax.set_ylabel("Frequency")
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(self.output_dir / "graph_sparsity.png", dpi=150)
+        plt.close()
+
+    def _plot_stratification(self, manifest: pd.DataFrame) -> None:
+        import matplotlib.pyplot as plt
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        ax = axes[0]
+        split_dx = manifest.groupby(["split", "DX_GROUP"]).size().unstack(fill_value=0)
+        split_dx.columns = ["ASD" if c == 1 else "Control" for c in split_dx.columns]
+        split_dx.plot(kind="bar", ax=ax, color=["#e74c3c", "#3498db"])
+        ax.set_title("Distribution by Split")
+        ax.set_ylabel("Number of Subjects")
+        ax.legend(title="Diagnosis")
+        ax = axes[1]
+        split_ratios = [
+            (manifest[manifest["split"] == s]["DX_GROUP"] == 1).sum()
+            / max(len(manifest[manifest["split"] == s]), 1)
+            for s in ["train", "val", "test"]
+        ]
+        ax.bar(["Train", "Val", "Test"], split_ratios)
+        ax.axhline(0.5, color="black", linestyle="--", label="Perfect Balance")
+        ax.set_title("ASD Ratio per Split")
+        ax.set_ylabel("Proportion")
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(self.output_dir / "stratification.png", dpi=150)
+        plt.close()
+
     # REPORTING
 
     def generate_report(self) -> Tuple[bool, Dict]:
@@ -1776,18 +1516,30 @@ class PipelineValidator:
         logger.info("Starting comprehensive pipeline validation...")
 
         self.validate_environment()
+        self.check_atlas()
+        self.check_lobe_mapping()
         self.validate_downloaded_data()
-        self.validate_features()
-        self.validate_graphs()
+        manifest_ok, manifest = self.check_manifest()
+        if manifest_ok:
+            self.validate_features()
+            self.validate_graphs()
+            self.check_stratification(manifest)
         self.validate_trained_models()
+        self.visualize_results()
 
         is_healthy, _ = self.generate_report()
         return is_healthy
 
 
+# PipelineHealthCheck functionality has been merged into PipelineValidator.
+# This alias ensures all existing imports and instantiations continue to work
+# without modification.  PipelineValidator is the single source of truth.
+PipelineHealthCheck = PipelineValidator
+
+
 def run_quality_validation(visualize: bool = False, strict: bool = False) -> bool:
-    checker = PipelineHealthCheck(visualize=visualize)
-    is_healthy = checker.run_full_check()
+    checker = PipelineValidator(visualize=visualize)
+    is_healthy = checker.run_full_validation()
     if strict and not is_healthy:
         sys.exit(1)
     return is_healthy

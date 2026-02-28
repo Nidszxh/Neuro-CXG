@@ -17,7 +17,6 @@ from src.features.causal_inference import (
     compute_granger_causality,
     compute_granger_causality_gpu,
     compute_transfer_entropy,
-    compute_multilag_causality
 )
 
 # Setup logging

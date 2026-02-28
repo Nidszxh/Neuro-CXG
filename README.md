@@ -73,14 +73,11 @@ Extract temporal, frequency-domain, and spatial features from detected ROIs:
 python -m src.features.extract_spatial
 # Outputs: data/metadata/node_features_3d.csv
 
-# Extract temporal features (8 basic stats per ROI)
+# Extract temporal features (8 basic stats + 12 frequency-domain features per ROI)
 python -m src.features.extract_temporal
 # Outputs: data/metadata/node_attributes_temporal.csv
-
-# Extract frequency-domain features (12 spectral features per ROI)
-python -m src.features.frequency_features
-# Outputs: 12 features - delta/theta/alpha/beta/gamma power + peaks + entropy + phase
-# Combined into temporal CSV: 20 total temporal features
+# 20 total features/ROI: 8 time-domain (mean/std/skew/kurtosis/psd/mssd/range/autocorr)
+#                      + 12 frequency (delta/theta/alpha/beta/gamma power+peaks+entropy+phase)
 ```
 
 ### 4. Fold-Safe Harmonization
@@ -304,19 +301,17 @@ Neuro-CXG/
 │   ├── core/
 │   │   └── config.py              # Central configuration (SINGLE SOURCE OF TRUTH)
 │   ├── run_pipeline.py            # Unified pipeline orchestrator (15 stages)
-│   ├── validation/                # ✨ Validation modules (updated Feb 15, 2026)
+│   ├── validation/                # ✨ Validation modules (updated Feb 28, 2026)
 │   │   ├── atlas_validator.py     # AAL atlas validation tool
-│   │   ├── code_audit.py          # ✨ Deep validation: feature quality, graph metrics, training readiness
-│   │   ├── feature_diagnostics.py # ✨ Feature E2E diagnostics: tensor audit, Granger edge, edge density, frequency validity
+│   │   ├── dev_audit.py           # ✨ Deep validation: feature quality, graph metrics, training readiness (merged from code_audit.py + feature_diagnostics.py)
 │   │   └── pipeline_checks.py     # ✨ Complete validation suite: post-download, pre-GNN, health reports
 │   ├── experiments/               # ✨ Experiment scripts
 │   │   ├── run_ablations.py       # 5 ablation studies (FlatMLP, spatial-only, temporal-only, Pearson edges, no-site)
 │   │   └── data_quality.py        # 3 data quality experiments (cross-site AUC, subject count audit, atlas baseline)
 │   ├── features/                  # Feature engineering and graph construction
 │   │   ├── extract_spatial.py     # YOLO inference → 3D spatial aggregation
-│   │   ├── extract_temporal.py    # Temporal feature extraction from time series
-│   │   ├── frequency_features.py  # ✨ NEW: Frequency-domain feature extraction (12 features)
-│   │   ├── causal_inference.py    # ✨ NEW: Granger causality & transfer entropy
+│   │   ├── extract_temporal.py    # Temporal + frequency-domain feature extraction (20 features/ROI)
+│   │   ├── causal_inference.py    # Granger causality & transfer entropy
 │   │   ├── fold_safe_harmonization.py  # CV-safe neuroHarmonize + robust NaN handling
 │   │   ├── construct_causal.py    # Causal graph construction (Granger or lagged correlation)
 │   │   └── graph_factory.py       # PyTorch Geometric dataset loader

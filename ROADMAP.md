@@ -118,7 +118,7 @@
   - check_distribution() - Pre-GNN distribution checks
   - analyze_class_distribution() - Class imbalance analysis with recommendations
   - generate_health_report() - Comprehensive dataset health report (replaces pipeline_diagnostics)
-- [x] Added code_audit.py for deep validation (January 28, 2026)
+- [x] Added code_audit.py for deep validation (January 28, 2026); merged into dev_audit.py (February 28, 2026)
   - Feature quality assessment
   - Graph connectivity metrics
   - Training readiness validation
@@ -150,12 +150,12 @@
 - [x] Updated PIPELINE_DATAFLOW.md with 15-stage visualization
 - [x] Updated README.md with current validation folder structure (3 modules)
 - [x] Updated ROADMAP.md with latest completion status
-- [x] All references consolidated: 3 validation modules clearly documented (atlas_validator, pipeline_checks, code_audit)
+- [x] All references consolidated: 3 validation modules clearly documented (atlas_validator, pipeline_checks, dev_audit)
 
 **Code Quality Improvements:**
 - [x] Single source of truth for all validation logic (pipeline_checks.py)
 - [x] Reduced code duplication (250+ lines → 610 lines consolidated with 4 functions)
-- [x] Centralized validation folder (3 modules: atlas_validator, pipeline_checks, code_audit)
+- [x] Centralized validation folder (3 modules: atlas_validator, pipeline_checks, dev_audit)
 - [x] Clear integration status for all validation modules
 - [x] Unified command interface: python src/validation/pipeline_checks.py [--dataset|--distribution|--class-analysis|--health]
 
@@ -164,7 +164,7 @@
 #### Feature Expansion: 14 → 28 Input Dimensions (✅ Complete)
 
 **Frequency-Domain Features Added:**
-- [x] Created `src/features/frequency_features.py` module
+- [x] Created `src/features/frequency_features.py` module; merged into `extract_temporal.py` (February 28, 2026)
 - [x] Implemented spectral feature extraction:
   - 5 frequency bands: delta (0.01-0.04 Hz), theta (0.04-0.08 Hz), alpha (0.08-0.13 Hz), beta (0.13-0.30 Hz), gamma (0.30-0.50 Hz)
   - Power features: Total power per band (5 features)
@@ -261,7 +261,7 @@
 - [x] Finalized validation folder structure (3 modules)
   - atlas_validator.py: Atlas file validation
   - pipeline_checks.py: Post-download and pre-GNN checks
-  - code_audit.py: Deep validation checks
+  - dev_audit.py: Deep validation + feature diagnostics (merged from code_audit + feature_diagnostics, Feb 28, 2026)
 - [x] All modules integrated into run_pipeline.py
 - [x] Documentation updated across all .md files
 

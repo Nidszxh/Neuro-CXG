@@ -1,0 +1,56 @@
+Session Summary — Neuro-CXG Codebase Refactor
+Core Goal
+Refactor validation, analysis, and features to eliminate redundancy, simplify over-engineered OOP patterns using standard library idioms, and reduce file count without over-modularizing.
+
+Architectural Decisions Made
+Change	Decision
+fold_safe_harmonization.py 1007 → ~580 lines	Replace 5 static-method-only classes (FeatureValidator, FeatureRepairer, ROIAggregator, HarmonizationEngine, QualityVerifier) with module-level functions using vectorized pandas
+code_audit.py + feature_diagnostics.py → dev_audit.py	Merge — neither is in the active pipeline; both are standalone CLI dev tools
+graph_topology.py + training_diagnostics.py → diagnostics.py	Merge — both imported together in gnn_model.py and visualizations.py
+Dead import compute_multilag_causality in construct_causal.py	Remove — imported but never called in pipeline
+Files to delete after merges: code_audit.py, feature_diagnostics.py, graph_topology.py, training_diagnostics.py
+
+Current State of fold_safe_harmonization.py
+Partially refactored — the file is mid-edit. Completed so far:
+
+✅ Module docstring added, imports cleaned up (lines 1–45)
+✅ ValidationStats + RepairStats dataclasses removed; HarmonizationFold kept; _feat_cols() helper added
+✅ FeatureValidator class replaced with validate_features() function
+✅ FeatureRepairer class replaced with repair_features() using df.dropna(thresh=...), df.clip(lower=..., upper=..., axis=1), df.fillna(df.median())
+Still in the file (not yet replaced):
+
+A temporary stub _placeholder_repair_features_end() + class _FeatureRepairer_DELETED: body — these are junk that need to be deleted (lines ~160–354 in the current file)
+class ROIAggregator: — iterrows loop over subjects; needs replacement with vectorized: df[present_cols].mean(axis=1) per lobe per feature
+class HarmonizationEngine: — replace with module-level functions _prepare_covariates(), _remove_constant_features(), _restore_constant_features(), _harmonize_fold()
+class QualityVerifier: — replace with _check_harmonization_quality() function
+harmonize_cv_safe_fold() — update call sites to use new function names instead of HarmonizationEngine.prepare_covariates(...), ROIAggregator.aggregate_to_lobes(...), QualityVerifier.verify(...)
+main() — update QualityVerifier.verify(...) → _check_harmonization_quality(...)
+Technical Constraints
+No over-modularization — prefer a few cohesive files over micro-modules
+External interface must stay identical — harmonize_cv_safe_fold() and main() signatures unchanged (called by run_pipeline.py)
+HarmonizationFold dataclass must be kept (used as return type)
+DX_GROUP is a protected covariate — never harmonized away (journal requirement)
+All imports must remain resolvable — no orphaned references after merges
+Immediate Next Step
+Resume the fold_safe_harmonization.py refactor. Open fold_safe_harmonization.py and:
+
+Delete the junk block (lines ~160–354): def _placeholder_repair_features_end(): pass + entire class _FeatureRepairer_DELETED: body — replace with empty string
+Replace class ROIAggregator: with:
+# ── 3. ROI → Lobe aggregation ─────────────────────────────────────────────
+def aggregate_to_lobes(df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate 170-ROI → 12-lobe feature matrix (vectorised)."""
+    logger.info("Aggregating 170 ROIs → %d regions…", NUM_LOBES)
+    result: Dict[str, pd.Series] = {"subject_id": df["subject_id"]}
+    for lobe_id in range(NUM_LOBES):
+        lobe_name = LOBE_NAMES[lobe_id]
+        roi_ids = [i + 1 for i in LOBE_MAPPING[lobe_id]]
+        for feat in FEATURE_TYPES:
+            present = [f"roi{r}_{feat}" for r in roi_ids if f"roi{r}_{feat}" in df.columns]
+            result[f"{lobe_name}_{feat}"] = df[present].mean(axis=1) if present else 0.0
+    return pd.DataFrame(result)
+
+Replace class HarmonizationEngine: with module-level functions
+Replace class QualityVerifier: with _check_harmonization_quality()
+Update harmonize_cv_safe_fold() call sites
+Update main()
+Then continue with the remaining todos (merge dev tools, merge analysis diagnostics, remove dead import, update import sites, delete old files).

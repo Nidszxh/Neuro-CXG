@@ -501,12 +501,10 @@ python src/features/fold_safe_harmonization.py
 | **Validation & Diagnostics** | |
 | [src/validation/pipeline_checks.py] | Consolidated validation — post-download, pre-GNN, class distribution, health reports |
 | [src/validation/atlas_validator.py] | Atlas file validation (checks existence, structure, ROI range) |
-| [src/validation/code_audit.py] | Deep validation — feature quality, graph connectivity, training readiness |
-| [src/validation/feature_diagnostics.py] | ✨ Feature E2E diagnostics — tensor audit per group, Granger edge density, frequency validity |
+| [src/validation/dev_audit.py] | Deep validation + feature diagnostics — merged from code_audit.py + feature_diagnostics.py (Feb 28, 2026) |
 | **Feature Engineering & Graphs** | |
 | [src/features/extract_spatial.py] | YOLO inference → 3D spatial aggregation; all-12-regions filter |
-| [src/features/extract_temporal.py] | 20 temporal features per ROI (170 ROIs → 3400 feature cols in temporal CSV) |
-| [src/features/frequency_features.py] | Frequency-domain extraction (12 features: delta/theta/alpha/beta/gamma power+peaks+entropy+phase) |
+| [src/features/extract_temporal.py] | 20 temporal features per ROI: 8 time-domain + 12 frequency (band power/peaks/entropy/phase); frequency functions merged from frequency_features.py (Feb 28, 2026) |
 | [src/features/causal_inference.py] | Granger causality & transfer entropy for directed graph construction |
 | [src/features/fold_safe_harmonization.py] | **Aggregates 170 ROIs→12 regions** + ComBat harmonization + NaN handling; protects DX_GROUP |
 | [src/features/construct_causal.py] | Granger/lagged correlation; saves graph dicts (.pt files) |
@@ -560,7 +558,7 @@ In [src/features/fold_safe_harmonization.py], `DX_GROUP` (diagnosis) is a protec
 **Documentation Fully Synchronized** (January 28, 2026)
 - All .md files updated to reflect current project status
 - README.md, ROADMAP.md, PIPELINE_DATAFLOW.md, copilot-instructions.md synchronized
-- Added code_audit.py to validation module documentation
+- Added code_audit.py to validation module documentation (later merged into dev_audit.py, Feb 28)
 - Updated YOLO performance metrics to v25 (mAP50-95: 0.908)
 - Clarified validation folder structure with 4 modules
 
@@ -630,15 +628,17 @@ In [src/features/fold_safe_harmonization.py], `DX_GROUP` (diagnosis) is a protec
   - **Integration**: Called from run_pipeline.py stages "post_download_integrity" and "pre_gnn_integrity"
   - **Benefits**: Single source of truth, reduced code duplication, centralized validation logic
 
-- **Validation Folder Structure** (February 11, 2026):
+- **Validation Folder Structure** (February 28, 2026):
   ```
   src/validation/
   ├── atlas_validator.py       (atlas file structure & ROI validation)
-  ├── code_audit.py            (deep validation: feature quality, graph connectivity, training readiness)
+  ├── dev_audit.py             (merged code_audit.py + feature_diagnostics.py; dev-only CLI tool)
   └── pipeline_checks.py       (unified: post-download + pre-GNN checks + health reports + class analysis)
   ```
   - Status: All modules integrated into run_pipeline.py
   - Deleted: integrity_check.py, integrity_check2.py, pipeline_diagnostics.py (merged into pipeline_checks.py)
+  - Deleted: code_audit.py, feature_diagnostics.py (merged into dev_audit.py, February 28, 2026)
+  - Deleted: frequency_features.py (merged into extract_temporal.py, February 28, 2026)
 
 ## Recent Fixes & Important Changes (February 2026) ✨ NEW
 
@@ -750,13 +750,15 @@ In [src/features/fold_safe_harmonization.py], `DX_GROUP` (diagnosis) is a protec
 
 - **Impact**: These architectural improvements position the model for AUC gains when fully leveraging 28-feature inputs and site/demographic conditioning
 
-#### Validation Folder Finalized (February 11, 2026)
+#### Validation Folder Finalized (February 28, 2026)
 - **Complete structure**: 3 modules fully integrated
   - atlas_validator.py: Atlas file structure & ROI validation
-  - code_audit.py: Deep validation checks (feature quality, graph metrics)
+  - dev_audit.py: Deep validation + feature diagnostics (merged from code_audit.py + feature_diagnostics.py)
   - pipeline_checks.py: Post-download, pre-GNN, health reports, class analysis, quality validation
 - **Integration**: All modules callable from run_pipeline.py
 - **Documentation**: Synchronized across README.md, ROADMAP.md, DATAFLOW.md, copilot-instructions.md
+- **Deleted**: code_audit.py, feature_diagnostics.py (merged into dev_audit.py)
+- **Deleted**: frequency_features.py (merged into extract_temporal.py)
 
 ### January 2026 Updates
 

@@ -51,8 +51,7 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 # Analysis modules
-from src.analysis.training_diagnostics import TrainingMonitor
-from src.analysis.graph_topology import CausalGraphAnalyzer
+from src.analysis.diagnostics import CausalGraphAnalyzer, TrainingMonitor
 try:
     from src.analysis.feature_attribution import FeatureAttributionAnalyzer
     FEATURE_ANALYSIS_AVAILABLE = True

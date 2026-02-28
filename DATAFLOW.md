@@ -97,11 +97,11 @@ STAGE 5: BATCH EFFECT REMOVAL
                 │
                 ▼
 
-STAGE 6: COMPREHENSIVE VALIDATION & TUNING ✨ UPDATED (Jan 28)
+STAGE 6: COMPREHENSIVE VALIDATION & TUNING ✨ UPDATED (Feb 28)
 ┌────────────────────────────────────────────────────┐
 │ Multi-Level Validation Suite     │  src/validation/
 │ Quality & Distribution Analysis  │  - pipeline_checks.py: YOLO quality, sparsity
-│                                  │  - code_audit.py: Deep checks
+│                                  │  - dev_audit.py: Deep checks (--features flag)
 │                                  │  - Feature distribution validation
 │                                  │  - Stratification correctness
 │                                  │  - Training readiness checks
@@ -256,7 +256,7 @@ atlas_validator.py                  ✓ YES     Stage 4                    ✓ I
 pipeline_checks.py ✨ NEW           ✓ YES     Stage 6/7                  ✓ Consolidated*
      ├─ check_dataset_integrity()      ✓ YES     Stage 1 (post-download)    ✓ Combined module
      └─ check_distribution()           ✓ YES     Stage 7 (pre-GNN)          ✓ Combined module
-code_audit.py                        ○ NO     Manual                      ✓ Available
+dev_audit.py                         ○ NO     Manual (--features flag)    ✓ Available
 
 * pipeline_checks.py consolidates integrity_check.py + integrity_check2.py into single module
      (Deleted: integrity_check.py, integrity_check2.py)
@@ -322,7 +322,7 @@ src.run_pipeline (ORCHESTRATOR)
 │
 ├── [VALIDATION SUITE] src.validation.* (3 modules)
 │   ├── atlas_validator.py: Atlas file validation
-│   ├── code_audit.py: Deep validation checks
+│   ├── dev_audit.py: Deep validation checks (merged from code_audit + feature_diagnostics, Feb 28)
 │   └── pipeline_checks.py: Post-download and pre-GNN checks (4 functions)
 
 Legend:

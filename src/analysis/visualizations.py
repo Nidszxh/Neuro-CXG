@@ -50,20 +50,13 @@ except ImportError:
     logger.warning("Feature attribution module not available")
 
 try:
-    from src.analysis.training_diagnostics import TrainingMonitor
+    from src.analysis.diagnostics import CausalGraphAnalyzer, TrainingMonitor
     TRAINING_MONITOR_MODULE = True
-except ImportError:
-    TRAINING_MONITOR_MODULE = False
-    logger.warning("Training monitor module not available")
-
-try:
-    from src.analysis.graph_topology import CausalGraphAnalyzer
-    import pandas as pd
-
     GRAPH_ANALYSIS_MODULE = True
 except ImportError:
+    TRAINING_MONITOR_MODULE = False
     GRAPH_ANALYSIS_MODULE = False
-    logger.warning("Graph analysis module not available")
+    logger.warning("Diagnostics module (TrainingMonitor/CausalGraphAnalyzer) not available")
 
 
 def create_feature_names():
