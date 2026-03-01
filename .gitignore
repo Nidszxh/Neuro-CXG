@@ -33,6 +33,14 @@ data/splits/**
 data/yolo/**
 data/final/**
 
+# Data metadata CSVs (large, generated; keep only tracked configs)
+data/metadata/*.csv
+data/metadata/*.json
+!data/metadata/atlas_metadata.json
+!data/metadata/roi_centroids.json
+# Exception: configs/ folder CSVs are config, not data
+!configs/
+
 # Atlases (ignore heavy binaries, keep metadata)
 data/atlases/**
 !data/atlases/README.md
@@ -43,6 +51,7 @@ data/atlases/**
 # Neuroimaging / Large Scientific Files
 *.nii
 *.nii.gz
+*.npy
 *.mat
 *.h5
 *.hdf5
@@ -112,11 +121,6 @@ check_gpu.py
 
 # Tests & Docs (keep source, ignore junk)
 tests/__pycache__/
+tests/**/__pycache__/
 docs/_build/
 /scripts
-/TODO.md
-/scraps
-/TODOy.md
-/CHAIN_AUDIT_REPORT.md
-/TODOs.md
-output.txt
