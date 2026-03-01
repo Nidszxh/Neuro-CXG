@@ -22,6 +22,10 @@ from nilearn.datasets import load_mni152_brain_mask
 
 # Suppress nilearn FutureWarnings (already addressed in code with explicit parameters)
 warnings.filterwarnings("ignore", category=FutureWarning, module="nilearn")
+# Suppress torch CUDA UserWarning on hardware without matching CUDA driver support
+warnings.filterwarnings("ignore", message=".*CUDA initialization.*", category=UserWarning)
+# Suppress scipy RuntimeWarning for empty ROIs (NiftiLabelsMasker mean of zero-voxel regions)
+warnings.filterwarnings("ignore", message="invalid value encountered in divide", category=RuntimeWarning, module="scipy")
 
 # PATHS 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -32,7 +36,7 @@ TS_OUTPUT    = PROJECT_ROOT / "data" / "processed"
 META_DIR     = PROJECT_ROOT / "data" / "metadata"
 ATLAS_PATH   = PROJECT_ROOT / "data" / "raw" / "atlases" / "AAL3v1.nii"
 PHENO_PATH   = PROJECT_ROOT / "data" / "processed" / "Phenotypic_V1_0b_preprocessed1.csv"
-MASK_S3_TEMPLATE = "data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/brain_mask/{sub_id}_brain_mask.nii.gz"
+MASK_S3_TEMPLATE = "data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/func_mask/{sub_id}_func_mask.nii.gz"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -129,7 +133,9 @@ def process_subject(sub_id, tr_val):
                 mask_img_obj = resample_to_img(
                     nib.load(str(m_p)),
                     func_img,
-                    interpolation="nearest"
+                    interpolation="nearest",
+                    force_resample=True,
+                    copy_header=True,
                 )
             except Exception as e:
                 logger.warning(
@@ -151,7 +157,7 @@ def process_subject(sub_id, tr_val):
                 labels_img=resampled_atlas, 
                 mask_img=mask_img_obj,
                 t_r=float(tr_val), 
-                standardize="zscore",
+                standardize=False,   # Disabled: single explicit z-score in construct_causal.py avoids double normalisation
                 detrend=True,
                 low_pass=0.08,   # Standard resting-state upper bound
                 high_pass=0.01,  # Standard resting-state lower bound
@@ -196,17 +202,18 @@ def process_subject(sub_id, tr_val):
                 if 1 <= roi_id <= 170:
                     full_ts[:, roi_id - 1] = ts[:, col_idx]
                 else:
-                    logger.warning("Subject %s: ROI id %s out of range", sub_id, roi_id)
+                    # ROI id 0 is the atlas background label — skip silently
+                    logger.debug("Subject %s: ROI id %s out of range (background label)", sub_id, roi_id)
 
             if np.any(np.all(full_ts == 0, axis=0)):
                 zero_rois = np.where(np.all(full_ts == 0, axis=0))[0]
-                
-                # Use deterministic Gaussian noise to avoid flat signal artifacts
-                # (1e-6 constant creates artificial autocorrelation and flat PSD)
-                rng = np.random.default_rng(seed=hash(sub_id) % (2**32))
+
+                # Fill empty ROIs with np.nan so downstream code can detect and
+                # skip/impute them cleanly. Gaussian noise is scientifically unsound
+                # because it introduces artificial autocorrelation and flat PSD.
                 for roi in zero_rois:
-                    full_ts[:, roi] = rng.normal(0, 1e-6, size=full_ts.shape[0])
-                
+                    full_ts[:, roi] = np.nan
+
                 # Map empty ROIs to their lobe assignments for better diagnostics
                 empty_roi_ids = [r + 1 for r in zero_rois]  # Convert to 1-indexed
                 

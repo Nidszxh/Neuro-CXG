@@ -63,6 +63,7 @@ from src.core.config import (
     NODE_FEATURES_3D,
     NUM_LOBES,
     NUM_SPATIAL_FEATURES,
+    RESULTS_DATA_QUALITY_DIR,
 )
 from src.models.gnn_model import FocalLoss
 from src.models.training_utils import CheckpointManager, train_fold_with_onecycle
@@ -70,7 +71,7 @@ from src.models.training_utils import CheckpointManager, train_fold_with_onecycl
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-RESULTS_DIR = Path("results/experiments/data_quality")
+RESULTS_DIR = RESULTS_DATA_QUALITY_DIR
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 

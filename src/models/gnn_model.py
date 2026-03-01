@@ -40,6 +40,7 @@ from src.core.config import (
     GNN_USE_DEMOGRAPHICS,
     CAUSAL_GRAPHS_DIR,
     DATA_METADATA,
+    RESULTS_TRAINING_DIR,
 )
 from src.models.training_utils import (
     TrainingTracker, 
@@ -373,7 +374,7 @@ def run_training():
     checkpoint_manager = CheckpointManager(CHECKPOINT_DIR, monitor='auc', mode='max')
     
     # Initialize training monitor for analysis
-    analysis_dir = Path('results/experiments/training')
+    analysis_dir = RESULTS_TRAINING_DIR
     monitor = TrainingMonitor(analysis_dir, num_folds=K_FOLDS)
     
     # Print configuration

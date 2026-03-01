@@ -29,15 +29,40 @@ logger = logging.getLogger(__name__)
 
 def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
     """
-    Smart Aggregation with Regional Homogeneity (ReHo) and Eigenvariate Extraction.
-    
-    Instead of simple averaging (which cancels anti-correlated signals), we extract:
-    1. Dominant Signal (PCA/Eigenvariate): Captures main driver without cancellation
-    2. Intra-Lobe Coherence: Local connectivity within lobe (ASD biomarker)
-    
+    Aggregate 170-ROI time series to 12-lobe representations using smart aggregation.
+
+    Two complementary signals are extracted per lobe:
+
+    1. **PCA Eigenvariate (dominant signal)**
+       Computes the first principal component via SVD of the mean-centred ROI matrix.
+       Captures the direction of maximum variance within the lobe, avoiding the
+       signal cancellation that occurs with simple averaging when ROIs are
+       anti-correlated (common in motor and cingulate areas in ASD).
+
+    2. **Regional Homogeneity features (intra-lobe connectivity)**
+       * ``coherence`` – Mean pairwise Pearson correlation of ROIs inside the lobe.
+         Clamped to ``[-1, 1]``.  Higher values indicate tighter local synchrony.
+       * ``spatial_variance`` – Mean standard deviation of ROI activations across
+         time, averaged over all ROIs in the lobe.  Reflects the spread of activity.
+
+    Both features are set to zero when NaN/Inf is detected so that downstream graph
+    construction is never blocked by a single bad ROI.
+
+    Args:
+        ts_raw (Tensor): Raw ROI time series, shape ``(T, 170)`` where ``T`` is the
+                         number of fMRI time points and 170 is the AAL3 ROI count.
+                         Values should be z-scored (mean=0, std≈1).
+
     Returns:
-        lobe_signals: (Timepoints, 12) - The cleaned time series for graph edges
-        lobe_features: (12, 2) - Internal features (Coherence, Variance)
+        Tuple[Tensor, Tensor]:
+            * ``ts_lobes`` – Lobe-level time series, shape ``(T, NUM_LOBES)``.
+              Used as input to causal graph construction.
+            * ``features_internal`` – Internal feature matrix, shape ``(NUM_LOBES, 2)``.
+              Column 0: coherence; column 1: spatial_variance.
+              Concatenated into node features by ``graph_factory.py``.
+
+    Raises:
+        No exceptions raised; failures fall back to zero vectors with a warning log.
     """
     num_rois = ts_raw.shape[1]
     lobe_signals = []
@@ -223,15 +248,43 @@ def adaptive_sparsification(
     min_edges: int = None
 ) -> torch.Tensor:
     """
-    Apply adaptive sparsification to causality matrix.
-    
+    Apply adaptive sparsification to a causal adjacency matrix.
+
+    Three strategies are supported (select via ``method`` or ``SPARSITY_METHOD`` config):
+
+    * **``'adaptive_proportional'``** – Keeps a number of edges proportional to the
+      total network strength ``sqrt(sum(|adj|)) × 10``, capped at ``NUM_LOBES²``.
+      Preserves more edges in strongly connected graphs and fewer in weak ones.
+
+    * **``'adaptive_statistical'``** – For Granger causality, retains edges where
+      ``-log10(p) > 1.3`` (i.e.  ``p < 0.05``).  For other methods, keeps edges
+      exceeding ``median + std`` of non-zero values.  Falls back to keeping the
+      top ``min_edges`` if the threshold would leave too few edges.
+
+    * **``'fixed'``** – Quantile-based threshold: retains the top
+      ``(1 - SPARSITY_QUANTILE)`` fraction of edges by absolute weight
+      (default: top 30 %, ``SPARSITY_QUANTILE=0.70``).
+
+    All methods guarantee a minimum of ``min_edges`` edges remain in the graph,
+    falling back to a top-k selection if the primary threshold is too aggressive.
+
     Args:
-        causal_matrix: Causal adjacency matrix
-        method: Sparsification method ('adaptive_proportional', 'adaptive_statistical', 'fixed')
-        min_edges: Minimum number of edges to keep
-    
+        causal_matrix (Tensor): Signed causal adjacency matrix, shape
+                                ``(n_lobes, n_lobes)``.  Zero diagonal assumed.
+        method (str, optional): Sparsification strategy.  One of
+                                ``'adaptive_proportional'``, ``'adaptive_statistical'``,
+                                ``'fixed'``.  Defaults to ``SPARSITY_METHOD`` from
+                                config.
+        min_edges (int, optional): Minimum number of edges to retain.  Defaults to
+                                   ``MIN_EDGES_PER_GRAPH`` from config (12).
+
     Returns:
-        Sparsified adjacency matrix
+        Tensor: Sparsified adjacency matrix, shape ``(n_lobes, n_lobes)``.
+                Zero entries indicate absent edges; non-zero values preserve the
+                original signed causal weights.
+
+    Note:
+        The returned matrix is on the same device as ``causal_matrix``.
     """
     if method is None:
         method = SPARSITY_METHOD

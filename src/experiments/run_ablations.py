@@ -64,6 +64,7 @@ from src.core.config import (
     GNN_WEIGHT_DECAY,
     K_FOLDS,
     NUM_LOBES,
+    RESULTS_ABLATIONS_DIR,
 )
 from src.models.gnn_model import FocalLoss
 from src.models.training_utils import train_fold_with_onecycle
@@ -71,7 +72,7 @@ from src.models.training_utils import train_fold_with_onecycle
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-RESULTS_DIR = Path("results/experiments/ablations")
+RESULTS_DIR = RESULTS_ABLATIONS_DIR
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Feature group index ranges ────────────────────────────────────────────────

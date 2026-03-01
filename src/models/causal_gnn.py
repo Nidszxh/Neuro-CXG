@@ -159,15 +159,56 @@ class CausalBrainGNN(torch.nn.Module):
         return_site_logits=False
     ):
         """
-        Forward pass: Treat all features as unified input (no conditional logic).
-        
+        Forward pass through the GATv2-based brain connectivity classifier.
+
+        Processing pipeline:
+            1. [Optional] Site embedding: append 16-dim site vector to node features.
+               When ``site_id`` is None the embedding column is zero-padded so that
+               ``lin_in`` always receives the same input width.
+            2. Input projection: ``lin_in`` (Linear) + LayerNorm + GELU activation.
+            3. Soft edge gating: learnable sigmoid gate applied to ``edge_attr``.
+            4. GATv2 layer 1 with skip connection + LayerNorm + GELU + Dropout.
+            5. GATv2 layer 2 with skip connection + LayerNorm + GELU + Dropout.
+            6. [Optional] GATv2 layer 3 with skip connection (when ``num_layers >= 3``).
+            7. Global graph pooling (attention or mean+max+sum).
+            8. [Optional] Append demographics (age, sex, fiq) before classifier.
+            9. Classifier head → class logits.
+           10. [Optional] Adversarial site head via GRL.
+
         Args:
-            x: Node features (num_nodes, num_node_features)
-            edge_index: Edge connectivity (2, num_edges)
-            edge_attr: Edge weights (num_edges, 1)
-            batch: Batch assignment (num_nodes,)
-            site_id: Site ID per graph (num_graphs,) for conditioning
-            age, sex, fiq: Demographics (num_graphs,)
+            x (Tensor): Node feature matrix of shape ``(num_nodes, in_channels)``.
+                        ``in_channels = GNN_IN_CHANNELS`` (default 28).
+            edge_index (LongTensor): COO edge connectivity, shape ``(2, num_edges)``.
+            edge_attr (Tensor): Edge weights, shape ``(num_edges, 1)``.
+                                Values are -log10(p-value) for Granger causality or
+                                Pearson correlation coefficients.
+            batch (LongTensor): Graph assignment vector, shape ``(num_nodes,)``.
+                                Maps each node to a graph within the mini-batch.
+            site_id (LongTensor, optional): Site index per graph, shape ``(num_graphs,)``.
+                                            Integer in ``[0, num_sites)``.  Pass ``None``
+                                            to disable site conditioning (uses zero-padding).
+            age (Tensor, optional): Normalised age per graph, shape ``(num_graphs, 1)``.
+                                    Normalisation: ``(age - 15) / 20``.
+            sex (Tensor, optional): Normalised sex per graph, shape ``(num_graphs, 1)``.
+                                    Normalisation: ``sex - 1.5``.  (1=M → -0.5, 2=F → 0.5)
+            fiq (Tensor, optional): Normalised FIQ per graph, shape ``(num_graphs, 1)``.
+                                    Normalisation: ``(fiq - 100) / 30``.
+            return_site_logits (bool): If ``True`` and GRL is active, also return the
+                                       site classification logits. Default ``False``.
+
+        Returns:
+            Tensor: Classification logits, shape ``(num_graphs, num_classes)``.
+                    Apply ``softmax`` for probabilities or use directly with
+                    ``F.cross_entropy`` / ``FocalLoss``.
+            Tensor (optional): Site logits ``(num_graphs, num_sites)`` — only returned
+                               when ``return_site_logits=True`` and ``use_grl=True``.
+
+        Note:
+            * Setting ``return_site_logits=True`` without enabling GRL at init-time
+              returns only the classification logits (the GRL head is absent).
+            * During Captum attribution, pass ``site_id=None`` so the 28-feature input
+              projection stays correctly dimensioned; the site embedding column is
+              automatically zero-padded.
         """
         # 1. Optionally add site embeddings
         # When site_id is None (e.g., during attribution/inference without site info),

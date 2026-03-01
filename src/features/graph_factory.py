@@ -119,7 +119,45 @@ class ABIDECausalDataset(Dataset):
         return len(self.manifest)
     
     def get(self, idx):
+        """
+        Build a PyTorch Geometric ``Data`` object for the subject at *idx*.
 
+        Loads and combines three data sources:
+        * **Causal adjacency matrix** – ``{subject_id}_graph.pt`` (12×12 directed
+          graph with -log10(p) or Pearson correlation weights).
+        * **Temporal + internal features** – 20 harmonised temporal features per
+          region + 2 ReHo/PCA internal features from the graph dict.
+        * **Spatial features** – 6 YOLO-derived coordinates per region
+          (x, y, z_depth, size, conf_std, detection_count).
+
+        The three sources are concatenated along the feature axis to produce
+        node features ``x`` of shape ``(NUM_LOBES, GNN_IN_CHANNELS)`` = ``(12, 28)``.
+
+        Args:
+            idx (int): Index into the split-specific manifest (0-based).
+
+        Returns:
+            torch_geometric.data.Data: A graph object with::n
+
+                x             – Node features            (12, 28)  float32
+                edge_index    – COO edge connectivity    (2, E)    int64
+                edge_attr     – Edge weights             (E, 1)    float32
+                y             – Diagnosis label          (1,)      int64  (0=Control, 1=ASD)
+                pos           – Node positions (x,y,z)  (12, 3)   float32
+                sub_id        – Subject identifier string
+                site_id       – Site index tensor        (1,)      int64
+                age           – Normalised age           (1,)      float32
+                sex           – Normalised sex           (1,)      float32
+                fiq           – Normalised FIQ           (1,)      float32
+
+            ``None`` if any required data source is missing, contains NaN/Inf, or
+            the resulting graph has zero edges after sparsification.
+
+        Notes:
+            * Training-split graphs undergo random augmentation (50% probability):
+              ±5 % Gaussian noise on node features and 30 % edge weight dropout.
+            * DX_GROUP encoding: 1 → 0 (Control), 2 → 1 (ASD).
+        """
         sub_id = str(self.manifest.iloc[idx]['subject_id'])
         dx_group = self.manifest.iloc[idx]['DX_GROUP']
         label = 1 if dx_group == 2 else 0  # DX_GROUP: 1=Control, 2=ASD → labels: 0=Control, 1=ASD

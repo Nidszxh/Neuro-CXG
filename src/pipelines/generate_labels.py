@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 # Setup paths from config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src.core.config import DATA_FINAL, DATA_ATLASES, LOBE_MAPPING, NUM_LOBES
+from src.core.config import DATA_FINAL, ATLAS_PATH, LOBE_MAPPING, NUM_LOBES
 
 # Setup logging
 logging.basicConfig(
@@ -20,7 +20,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
-ATLAS_PATH = DATA_ATLASES / "AAL3v1.nii"
 IMG_SIZE = (640, 640)
 
 
@@ -37,24 +36,30 @@ def calculate_yolo_bbox(mask, size):
     return f"{x_center:.6f} {y_center:.6f} {(w / size[0]):.6f} {(h / size[1]):.6f}"
 
 
-def generate_atlas_labels_for_percentiles(z_dim):
+def generate_atlas_labels_for_percentiles():
     """
     Generate atlas labels for specific z-percentiles that match ALFF slice export.
+    Returns labels indexed by percentile index (0-6) to handle variable subject z-dims.
     """
+    if not ATLAS_PATH.exists():
+        logger.error(f"Atlas not found at {ATLAS_PATH}")
+        return {}
+    
     atlas_img = nib.as_closest_canonical(nib.load(str(ATLAS_PATH)))
     data = atlas_img.get_fdata()
+    atlas_z_dim = data.shape[2]
     
-    # Match abide_download.py line 236-249: percentiles used during slice export
+    # Match abide_download.py line 244: percentiles used during slice export
     percentiles = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
     atlas_labels = {}
 
-    logger.info(f"Pre-calculating atlas bounding boxes for {len(percentiles)} percentile slices...")
+    logger.info(f"Pre-calculating atlas bounding boxes for {len(percentiles)} percentile slices (atlas z_dim={atlas_z_dim})...")
     
-    for p in percentiles:
-        z = int(z_dim * p)  # Actual z-index in the volume
+    for idx, p in enumerate(percentiles):
+        z = int(atlas_z_dim * p)  # Atlas z-index for this percentile
         
-        if z >= data.shape[2]:
-            logger.warning(f"Percentile {p} maps to z={z} which exceeds atlas z_dim={data.shape[2]}")
+        if z >= atlas_z_dim:
+            logger.warning(f"Percentile {p} maps to z={z} which exceeds atlas z_dim={atlas_z_dim}")
             continue
             
         bboxes = []
@@ -72,7 +77,9 @@ def generate_atlas_labels_for_percentiles(z_dim):
                 bboxes.append(f"{class_id} {bbox}")
         
         if bboxes:
-            atlas_labels[z] = bboxes
+            # Key by percentile index (0-6) so it works for all subject z-dimensions
+            atlas_labels[idx] = bboxes
+            logger.debug(f"Percentile {p} (idx={idx}, z={z}): {len(bboxes)} boxes")
     
     return atlas_labels
 
@@ -82,18 +89,21 @@ def main():
         logger.error(f"Error: {DATA_FINAL} not found. Run split.py first!")
         return
 
-    # Use atlas z-dimension (ALFF volumes are typically close to this)
-    atlas_img = nib.load(str(ATLAS_PATH))
-    atlas_z_dim = atlas_img.shape[2]
+    # Generate atlas annotations indexed by percentile (0-6)
+    atlas_anno = generate_atlas_labels_for_percentiles()
     
-    # Generate annotations using the same z-dimension as atlas
-    # NOTE: This assumes ALFF volumes have similar z-dimension to atlas.
-    # If ALFF z-dims vary significantly across subjects, per-subject annotation would be needed.
-    atlas_anno = generate_atlas_labels_for_percentiles(atlas_z_dim)
+    if not atlas_anno:
+        logger.error("Failed to generate atlas annotations. Check atlas file exists.")
+        return
     
-    logger.info(f"Generated annotations for {len(atlas_anno)} z-slices (atlas z_dim={atlas_z_dim})")
+    logger.info(f"Generated annotations for {len(atlas_anno)} percentile slices")
+    
+    # Percentiles used in abide_download.py (7 slices per subject)
+    percentiles = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
     
     splits = ["train", "val", "test"]
+    total_images = 0
+    total_labels = 0
 
     for split in splits:
         img_dir = DATA_FINAL / split / "images"
@@ -104,19 +114,50 @@ def main():
             continue
 
         lbl_dir.mkdir(parents=True, exist_ok=True)
-        img_files = [f for f in os.listdir(img_dir) if f.endswith(".png")]
+        img_files = sorted([f for f in os.listdir(img_dir) if f.endswith(".png")])
 
         logger.info(f"Annotating {split} split ({len(img_files)} images)...")
-        for img_name in tqdm(img_files):
+        
+        # Group images by subject to map z-indices to percentiles
+        from collections import defaultdict
+        subject_slices = defaultdict(list)
+        
+        for img_name in img_files:
             try:
-                z_idx = int(img_name.split("_z")[1].split(".")[0])
-                if z_idx in atlas_anno:
-                    with open(lbl_dir / img_name.replace(".png", ".txt"), "w") as f:
-                        f.write("\n".join(atlas_anno[z_idx]))
-            except Exception:
+                # Extract subject_id and z-index from filename like "Caltech_0051456_z12.png"
+                parts = img_name.rsplit("_z", 1)
+                if len(parts) != 2:
+                    continue
+                subject_id = parts[0]
+                z_idx = int(parts[1].split(".")[0])
+                subject_slices[subject_id].append((z_idx, img_name))
+            except Exception as e:
+                logger.warning(f"Failed to parse {img_name}: {e}")
                 continue
+        
+        # Generate labels for each subject
+        for subject_id, slice_list in tqdm(subject_slices.items(), desc=f"Subjects in {split}"):
+            # Sort by z-index to map to percentiles
+            slice_list_sorted = sorted(slice_list, key=lambda x: x[0])
+            
+            if len(slice_list_sorted) != 7:
+                logger.warning(f"{subject_id}: Expected 7 slices, got {len(slice_list_sorted)}")
+                continue
+            
+            # Map each slice to its corresponding percentile index (0-6)
+            for percentile_idx, (z_idx, img_name) in enumerate(slice_list_sorted):
+                if percentile_idx in atlas_anno:
+                    label_path = lbl_dir / img_name.replace(".png", ".txt")
+                    with open(label_path, "w") as f:
+                        f.write("\n".join(atlas_anno[percentile_idx]))
+                    total_labels += 1
+                else:
+                    logger.warning(f"No annotations for percentile index {percentile_idx}")
+            
+            total_images += len(slice_list_sorted)
 
-    logger.info("Annotation complete. Labels synced with split images.")
+    logger.info(f"Annotation complete. Created {total_labels} labels for {total_images} images across all splits.")
+    logger.info(f"Coverage: {100 * total_labels / total_images:.1f}%" if total_images > 0 else "No images found")
 
 
 if __name__ == "__main__":

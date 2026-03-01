@@ -189,6 +189,28 @@ def aggregate_to_lobes(df: pd.DataFrame) -> pd.DataFrame:
 
 # ── 4. Harmonization helpers ──────────────────────────────────────────────
 
+
+def _clip_outliers(df: pd.DataFrame, percentile_range: float = 0.05) -> pd.DataFrame:
+    """Clip extreme values based on percentile range to prevent outlier explosion.
+    
+    Uses 5-95 percentile bounds to clip outliers, allowing ±3std from bounds.
+    Applied AFTER aggregation to handle extreme values that appear in aggregated features.
+    """
+    numeric_cols = df.columns[df.columns != "subject_id"]
+    clipped = df.copy()
+    
+    for col in numeric_cols:
+        p_lower = df[col].quantile(percentile_range)
+        p_upper = df[col].quantile(1 - percentile_range)
+        col_range = p_upper - p_lower
+        
+        # Allow ±3σ from the percentile bounds
+        lower_bound = p_lower - 3 * col_range
+        upper_bound = p_upper + 3 * col_range
+        
+        clipped[col] = clipped[col].clip(lower_bound, upper_bound)
+    
+    return clipped
 def _prepare_covariates(manifest: pd.DataFrame, features_df: pd.DataFrame) -> pd.DataFrame:
     """Build covariate DataFrame for neuroHarmonize (requires exact 'SITE' column)."""
     cov = manifest[["subject_id", "SITE_ID", "AGE_AT_SCAN", "SEX"]].copy()
@@ -223,8 +245,16 @@ def _restore_constant_features(
 ) -> pd.DataFrame:
     """Re-attach zero-variance columns that were removed pre-harmonization."""
     result = pd.DataFrame(harmonized.values, columns=kept_cols)
-    for col in dropped_cols:
-        result[col] = original[col].values if col in original.columns else 0.0
+    
+    # Build all dropped columns at once to avoid fragmentation
+    if dropped_cols:
+        dropped_data = {
+            col: original[col].values if col in original.columns else 0.0
+            for col in dropped_cols
+        }
+        dropped_df = pd.DataFrame(dropped_data, index=result.index)
+        result = pd.concat([result, dropped_df], axis=1)
+    
     all_cols = [c for c in original.columns if c != "subject_id"]
     return result[[c for c in all_cols if c in result.columns]]
 
@@ -453,6 +483,10 @@ def harmonize_cv_safe_fold(
         train_lobes = aggregate_to_lobes(train_df)
         val_lobes = aggregate_to_lobes(val_df)
         
+        # Clip extreme values that appear in aggregated features
+        train_lobes = _clip_outliers(train_lobes)
+        val_lobes = _clip_outliers(val_lobes)
+        
         # Add metadata
         train_meta = train_manifest[["subject_id", "SITE_ID", "DX_GROUP"]]
         val_meta = val_manifest[["subject_id", "SITE_ID", "DX_GROUP"]]
@@ -502,6 +536,9 @@ def harmonize_cv_safe_fold(
 
         # Deduplicate (safety: each subject should appear in exactly one val fold)
         combined_df = combined_df.drop_duplicates(subset=["subject_id"])
+        
+        # Final clipping pass to ensure no extreme values in output
+        combined_df = _clip_outliers(combined_df)
 
         Path(full_output_path).parent.mkdir(parents=True, exist_ok=True)
         combined_df.to_csv(full_output_path, index=False)
