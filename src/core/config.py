@@ -25,6 +25,12 @@ FINAL_TEST      = DATA_FINAL / "test"
 MODEL_ROOT      = PROJECT_ROOT / "models"
 CHECKPOINT_DIR  = MODEL_ROOT   / "checkpoints"
 RESULTS_DIR     = PROJECT_ROOT / "results"
+# Result subdirectory constants — import these instead of hardcoding paths
+RESULTS_TRAINING_DIR     = RESULTS_DIR / "experiments" / "training"
+RESULTS_ABLATIONS_DIR    = RESULTS_DIR / "experiments" / "ablations"
+RESULTS_DATA_QUALITY_DIR = RESULTS_DIR / "experiments" / "data_quality"
+RESULTS_EVALUATION_DIR   = RESULTS_DIR / "evaluation"
+RESULTS_FIGURES_DIR      = RESULTS_DIR / "figures"
 CONFIG_DIR      = PROJECT_ROOT / "configs"
 
 # --- FILE PATHS ---
@@ -111,8 +117,8 @@ GNN_IN_CHANNELS = len(ALL_FEATURE_NAMES)
 
 # --- YOLO DETECTION PARAMETERS (Fixed for Medical Integrity) ---
 YOLO_MODEL_SIZE = "yolo26n.pt"
-YOLO_PROJECT_NAME = "ROI_Detection_v28"  # Output directory name from training
-YOLO_WEIGHTS_PATH = RESULTS_DIR / "experiments" / "detection" / "ROI_Detection_v28" / "weights" / "best.pt"
+YOLO_PROJECT_NAME = "ROI_Detection_v29"  # Output directory name from training
+YOLO_WEIGHTS_PATH = RESULTS_DIR / "experiments" / "detection" / "ROI_Detection_v29" / "weights" / "best.pt"
 YOLO_IMGSZ = 640
 YOLO_BATCH_SIZE = 32
 YOLO_EPOCHS = 100
@@ -297,6 +303,70 @@ def log_training_diagnostics(fold: int, epoch: int, metrics: dict):
     
     
 # --- VALIDATION LOGIC ---
+def validate_lobe_mapping() -> bool:
+    """Validate LOBE_MAPPING completeness, uniqueness, and ROI range.
+
+    Checks:
+    1. Exactly NUM_LOBES regions are defined.
+    2. All ROI 0-indexed values are within [0, 169] (1-indexed: [1, 170]).
+    3. No ROI index appears in more than one lobe (no duplicates).
+    4. All 170 ROI indices are covered (full coverage).
+
+    Returns:
+        True on success.
+
+    Raises:
+        ValueError: If any check fails with a descriptive message.
+    """
+    # 1. Correct number of regions
+    if len(LOBE_MAPPING) != NUM_LOBES:
+        raise ValueError(
+            f"LOBE_MAPPING has {len(LOBE_MAPPING)} regions, expected NUM_LOBES={NUM_LOBES}"
+        )
+
+    all_rois: list = []
+    for lobe_id, indices in LOBE_MAPPING.items():
+        for idx in indices:
+            # 2. Range check (0-indexed, so valid range is 0–169)
+            if not (0 <= idx <= 169):
+                raise ValueError(
+                    f"LOBE_MAPPING[{lobe_id}] contains out-of-range index {idx} "
+                    f"(1-indexed: {idx + 1}). Valid 1-indexed range is [1, 170]."
+                )
+            all_rois.append(idx)
+
+    # 3. Duplicate check
+    seen: set = set()
+    duplicates: list = []
+    for idx in all_rois:
+        if idx in seen:
+            duplicates.append(idx + 1)  # Report as 1-indexed
+        seen.add(idx)
+    if duplicates:
+        raise ValueError(
+            f"LOBE_MAPPING contains duplicate ROI indices (1-indexed): {sorted(set(duplicates))}"
+        )
+
+    # 4. Full coverage of 170 AAL ROIs
+    expected = set(range(170))
+    covered = set(all_rois)
+    missing = expected - covered
+    if missing:
+        # Convert to 1-indexed for readability in the error message
+        missing_1idx = sorted(i + 1 for i in missing)
+        raise ValueError(
+            f"LOBE_MAPPING does not cover {len(missing)} AAL ROI(s) "
+            f"(1-indexed): {missing_1idx}"
+        )
+
+    logger.info(
+        "✓ validate_lobe_mapping: %d regions, %d ROIs, no duplicates, full coverage",
+        NUM_LOBES,
+        len(all_rois),
+    )
+    return True
+
+
 def validate_environment():
     """Checks if the 12-region architecture is ready for execution."""
     logger.info("VALIDATING NEURO-CXG 12-REGION ARCHITECTURE")
@@ -305,9 +375,8 @@ def validate_environment():
     for p in [DATA_ROOT, DATA_METADATA, CAUSAL_GRAPHS_DIR]:
         p.mkdir(parents=True, exist_ok=True)
     
-    # Check Lobe Mapping
-    if len(LOBE_MAPPING) != NUM_LOBES:
-        raise ValueError(f"Config Error: NUM_LOBES is {NUM_LOBES} but mapping has {len(LOBE_MAPPING)}")
+    # Check Lobe Mapping (comprehensive)
+    validate_lobe_mapping()
 
     # Check YOLO Augmentations (Prevent 0.5 AUC failure)
     if YOLO_FLIPLR > 0 or YOLO_DEGREES > 0:

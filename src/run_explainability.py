@@ -1,0 +1,440 @@
+#!/usr/bin/env python
+"""
+scripts/run_explainability.py
+Phase 8 Unified Explainability Pipeline
+=========================================
+Orchestrates all four explainability sub-phases for Neuro-CXG:
+
+    Phase 8.1  Node Importance Analysis  (GradCAM + GAT attention weights)
+    Phase 8.2  Edge Importance Analysis  (gradient attribution + edge masking)
+    Phase 8.3  Feature Attribution       (Integrated Gradients / saliency maps)
+    Phase 8.4  Literature Validation     (cross-reference with ASD networks)
+
+All figures are saved to ``results/explainability/`` by default.
+A summary JSON is written at the end with key findings.
+
+Usage
+-----
+    # Full pipeline (all phases)
+    python scripts/run_explainability.py
+
+    # Use a specific checkpoint fold
+    python scripts/run_explainability.py --fold 3
+
+    # Run only specific phases
+    python scripts/run_explainability.py --phases node edge
+
+    # Custom output directory
+    python scripts/run_explainability.py --output-dir results/explain_v2
+
+    # Disable the slow edge-masking (keeps only gradient attribution)
+    python scripts/run_explainability.py --no-masking
+
+Outputs
+-------
+results/explainability/
+    node/
+        node_importance_gradcam.png
+        attention_weights_by_layer.png
+        node_importance_asd_vs_control.png
+    edge/
+        edge_importance_gradient.png
+        edge_importance_masking.png
+        edge_differential_connectivity.png
+    features/
+        feature_importance_ig.png
+        feature_importance_per_class.png
+        feature_importance_temporal_vs_spatial.png
+    literature/
+        literature_validation.json
+        literature_validation.txt
+        literature_validation_heatmap.png
+    summary.json
+"""
+
+import argparse
+import json
+import logging
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional
+
+import numpy as np
+import torch
+from torch_geometric.loader import DataLoader
+
+# ── project imports ────────────────────────────────────────────────────────────
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.core.config import (
+    ALL_FEATURE_NAMES,
+    CHECKPOINT_DIR,
+    GNN_DROPOUT,
+    GNN_EDGE_GATE,
+    GNN_GRL_ALPHA,
+    GNN_HIDDEN_CHANNELS,
+    GNN_IN_CHANNELS,
+    GNN_NUM_GNN_LAYERS,
+    GNN_NUM_HEADS,
+    GNN_POOLING,
+    GNN_USE_DEMOGRAPHICS,
+    GNN_USE_GRL,
+    GNN_USE_SITE_EMBEDDING,
+    LOBE_NAMES,
+    NUM_LOBES,
+    RESULTS_DIR,
+)
+from src.features.graph_factory import ABIDECausalDataset
+from src.models.causal_gnn import CausalBrainGNN
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+REGION_LABELS: List[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
+
+
+# ── helpers ────────────────────────────────────────────────────────────────────
+
+def _load_model(checkpoint_path: Path, device: torch.device) -> CausalBrainGNN:
+    """Load a CausalBrainGNN from a fold checkpoint."""
+    model = CausalBrainGNN(
+        num_node_features=GNN_IN_CHANNELS,
+        hidden_channels=GNN_HIDDEN_CHANNELS,
+        num_classes=2,
+        num_heads=GNN_NUM_HEADS,
+        num_layers=GNN_NUM_GNN_LAYERS,
+        pooling=GNN_POOLING,
+        use_site_embedding=GNN_USE_SITE_EMBEDDING,
+        use_demographics=GNN_USE_DEMOGRAPHICS,
+        use_grl=GNN_USE_GRL,
+        grl_alpha=GNN_GRL_ALPHA,
+        edge_gate=GNN_EDGE_GATE,
+        dropout=GNN_DROPOUT,
+    ).to(device)
+
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    state_dict = ckpt["model_state"] if isinstance(ckpt, dict) and "model_state" in ckpt else ckpt
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if missing:
+        logger.warning("Missing keys in checkpoint: %s", missing)
+    if unexpected:
+        logger.warning("Unexpected keys in checkpoint: %s", unexpected)
+
+    model.eval()
+    logger.info("Loaded model from %s", checkpoint_path)
+    return model
+
+
+def _build_test_loader(batch_size: int = 16) -> DataLoader:
+    """Build a DataLoader for the held-out test split."""
+    dataset = ABIDECausalDataset(split="test")
+    graphs  = [g for g in dataset if g is not None]
+    loader  = DataLoader(graphs, batch_size=batch_size, shuffle=False)
+    logger.info("Test loader: %d graphs, batch_size=%d", len(graphs), batch_size)
+    return loader
+
+
+def _best_fold(num_folds: int = 5) -> int:
+    """Select the fold with the highest saved validation AUC from training JSONs."""
+    import re
+    best_auc, best_fold_id = -1.0, 0
+    training_dir = RESULTS_DIR / "experiments" / "training"
+    for fold_id in range(num_folds):
+        history_path = training_dir / f"training_history_fold{fold_id}.json"
+        if not history_path.exists():
+            continue
+        try:
+            with open(history_path) as f:
+                h = json.load(f)
+            auc = max(h.get("val_auc", [0.0]))
+            if auc > best_auc:
+                best_auc, best_fold_id = auc, fold_id
+        except Exception:
+            pass
+    logger.info("Auto-selected fold %d (val AUC=%.4f)", best_fold_id, best_auc)
+    return best_fold_id
+
+
+# ── phase runners ──────────────────────────────────────────────────────────────
+
+def run_phase_node(model, test_loader, device, output_dir: Path) -> Dict:
+    """Phase 8.1 — Node Importance Analysis."""
+    from src.analysis.node_importance import NodeImportanceAnalyzer
+    logger.info("=" * 55)
+    logger.info("PHASE 8.1  NODE IMPORTANCE ANALYSIS")
+    logger.info("=" * 55)
+    analyzer = NodeImportanceAnalyzer(model, test_loader, device)
+    results  = analyzer.run(output_dir / "node")
+    logger.info("Phase 8.1 complete — figures saved to %s/node/", output_dir)
+    return results
+
+
+def run_phase_edge(
+    model,
+    test_loader,
+    device,
+    output_dir: Path,
+    run_masking: bool = True,
+) -> Dict:
+    """Phase 8.2 — Edge Importance Analysis."""
+    from src.analysis.edge_importance import EdgeImportanceAnalyzer
+    logger.info("=" * 55)
+    logger.info("PHASE 8.2  EDGE IMPORTANCE ANALYSIS")
+    logger.info("=" * 55)
+    analyzer = EdgeImportanceAnalyzer(
+        model, test_loader, device,
+        masking_max_graphs=40 if run_masking else 0,
+    )
+    results = analyzer.run(output_dir / "edge")
+    logger.info("Phase 8.2 complete — figures saved to %s/edge/", output_dir)
+    return results
+
+
+def run_phase_features(model, test_loader, device, output_dir: Path) -> Optional[Dict]:
+    """Phase 8.3 — Feature Attribution (saliency maps)."""
+    logger.info("=" * 55)
+    logger.info("PHASE 8.3  FEATURE ATTRIBUTION (SALIENCY MAPS)")
+    logger.info("=" * 55)
+    try:
+        from src.analysis.feature_attribution import FeatureAttributionAnalyzer
+        feat_dir = output_dir / "features"
+        feat_dir.mkdir(parents=True, exist_ok=True)
+        feature_names = ALL_FEATURE_NAMES
+        analyzer = FeatureAttributionAnalyzer(
+            model=model,
+            test_loader=test_loader,
+            feature_names=list(feature_names),
+            device=str(device),
+        )
+        attributions = analyzer.compute_attributions()
+        analyzer.visualize_feature_importance(
+            attributions, feat_dir / "feature_importance_ig.png"
+        )
+        analyzer.visualize_per_class(feat_dir / "feature_importance_per_class.png")
+        analyzer.compare_temporal_vs_spatial(
+            attributions, feat_dir / "feature_importance_temporal_vs_spatial.png"
+        )
+        logger.info("Phase 8.3 complete — figures saved to %s/features/", output_dir)
+
+        # Return per-region importance scores for literature validation
+        import torch as _t
+        if isinstance(attributions, _t.Tensor):
+            attr_np = attributions.detach().cpu().numpy()   # (N, 12, 28)
+        else:
+            attr_np = np.array(attributions)
+        region_scores = np.abs(attr_np).mean(axis=(0, 2))   # (12,) mean over subjects+features
+        return {"region_scores": region_scores}
+    except Exception as exc:
+        logger.error("Phase 8.3 failed: %s", exc, exc_info=True)
+        return None
+
+
+def run_phase_literature(
+    gradcam_scores: Optional[np.ndarray],
+    feature_region_scores: Optional[np.ndarray],
+    output_dir: Path,
+    top_n: int = 6,
+) -> Dict:
+    """Phase 8.4 — Literature / Clinical Validation."""
+    from src.analysis.literature_validation import run_literature_validation
+    logger.info("=" * 55)
+    logger.info("PHASE 8.4  CLINICAL / LITERATURE VALIDATION")
+    logger.info("=" * 55)
+    results = run_literature_validation(
+        gradcam_asd_scores=gradcam_scores,
+        attention_asd_scores=feature_region_scores,
+        output_dir=output_dir / "literature",
+        top_n=top_n,
+    )
+    logger.info("Phase 8.4 complete — report saved to %s/literature/", output_dir)
+    return results
+
+
+# ── main pipeline ──────────────────────────────────────────────────────────────
+
+def run_explainability_pipeline(
+    fold_id: int,
+    output_dir: Path,
+    phases: List[str],
+    run_masking: bool,
+    batch_size: int,
+) -> None:
+    """Full orchestration for Phase 8 explainability."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info("Device: %s", device)
+
+    checkpoint_path = CHECKPOINT_DIR / f"best_model_fold{fold_id}.pt"
+    model       = _load_model(checkpoint_path, device)
+    test_loader = _build_test_loader(batch_size=batch_size)
+
+    summary: Dict = {
+        "fold_used": fold_id,
+        "checkpoint": str(checkpoint_path),
+        "device": str(device),
+        "num_test_graphs": len(test_loader.dataset),
+        "phases_run": phases,
+    }
+
+    node_results    = {}
+    edge_results    = {}
+    feature_results = None
+    lit_results     = {}
+
+    # ── 8.1 Node importance ────────────────────────────────────────────────────
+    if "node" in phases:
+        try:
+            node_results = run_phase_node(model, test_loader, device, output_dir)
+        except Exception as exc:
+            logger.error("Phase 8.1 error: %s", exc, exc_info=True)
+
+    # ── 8.2 Edge importance ────────────────────────────────────────────────────
+    if "edge" in phases:
+        try:
+            edge_results = run_phase_edge(model, test_loader, device, output_dir, run_masking)
+        except Exception as exc:
+            logger.error("Phase 8.2 error: %s", exc, exc_info=True)
+
+    # ── 8.3 Feature attribution ────────────────────────────────────────────────
+    if "features" in phases:
+        try:
+            feature_results = run_phase_features(model, test_loader, device, output_dir)
+        except Exception as exc:
+            logger.error("Phase 8.3 error: %s", exc, exc_info=True)
+
+    # ── 8.4 Literature validation  ─────────────────────────────────────────────
+    if "literature" in phases:
+        try:
+            # Pull GradCAM ASD scores from Phase 8.1
+            gradcam_scores = None
+            if node_results and "gradcam" in node_results:
+                gradcam_scores = node_results["gradcam"].get("asd_mean")
+
+            feat_region_scores = None
+            if feature_results and "region_scores" in feature_results:
+                feat_region_scores = feature_results["region_scores"]
+
+            lit_results = run_phase_literature(
+                gradcam_scores, feat_region_scores, output_dir
+            )
+            summary["top_regions"]     = [r["name"]     for r in lit_results.get("top_regions", [])]
+            summary["top_networks"]    = [k for k, v in lit_results.get("network_coverage", {}).items() if v["hit"]]
+            summary["overlap_scores"]  = lit_results.get("overlap_scores", {})
+        except Exception as exc:
+            logger.error("Phase 8.4 error: %s", exc, exc_info=True)
+
+    # ── GradCAM top-5 log ──────────────────────────────────────────────────────
+    if node_results and "gradcam" in node_results:
+        g = node_results["gradcam"]
+        asd   = g.get("asd_mean",     np.zeros(NUM_LOBES))
+        ctrl  = g.get("control_mean", np.zeros(NUM_LOBES))
+        diff  = g.get("diff",         asd - ctrl)
+        top5  = np.argsort(np.abs(diff))[::-1][:5]
+        summary["gradcam_top5_differential"] = [
+            {"region": REGION_LABELS[i], "delta": float(diff[i])} for i in top5
+        ]
+
+    # ── Edge top-5 log ─────────────────────────────────────────────────────────
+    if edge_results and "gradient" in edge_results:
+        diff_mat = (
+            edge_results["gradient"]["asd_matrix"] - edge_results["gradient"]["control_matrix"]
+        )
+        flat_top = np.argsort(np.abs(diff_mat), axis=None)[::-1][:5]
+        top_edges = []
+        for flat_i in flat_top:
+            row, col = np.unravel_index(flat_i, diff_mat.shape)
+            top_edges.append({
+                "source": REGION_LABELS[row],
+                "target": REGION_LABELS[col],
+                "delta":  float(diff_mat[row, col]),
+            })
+        summary["top5_differential_edges"] = top_edges
+
+    # ── Save summary ───────────────────────────────────────────────────────────
+    summary_path = output_dir / "summary.json"
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2, default=str)
+    logger.info("Summary JSON saved → %s", summary_path)
+
+    # ── Final report ───────────────────────────────────────────────────────────
+    logger.info("\n" + "=" * 65)
+    logger.info("PHASE 8 EXPLAINABILITY PIPELINE COMPLETE")
+    logger.info("=" * 65)
+    logger.info("Output directory : %s", output_dir)
+    logger.info("Phases run       : %s", ", ".join(phases))
+    if "gradcam_top5_differential" in summary:
+        logger.info("\nTop-5 Differentially-Important Regions (GradCAM, ASD−Control):")
+        for rank, r in enumerate(summary["gradcam_top5_differential"], start=1):
+            logger.info("  %d. %-25s Δ=%.4f", rank, r["region"], r["delta"])
+    if "top5_differential_edges" in summary:
+        logger.info("\nTop-5 Differentially-Important Edges (gradient, ASD−Control):")
+        for rank, e in enumerate(summary["top5_differential_edges"], start=1):
+            logger.info("  %d. %-22s → %-22s Δ=%.4f", rank, e["source"], e["target"], e["delta"])
+    if "top_regions" in summary:
+        logger.info("\nTop regions (literature validation): %s", ", ".join(summary["top_regions"]))
+    if "top_networks" in summary:
+        logger.info("Matching ASD networks  : %s", ", ".join(summary["top_networks"]))
+    logger.info("=" * 65)
+
+
+# ── CLI ────────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Phase 8 Explainability Pipeline for Neuro-CXG",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--fold",
+        type=int,
+        default=None,
+        help=(
+            "Checkpoint fold index to use (0–4).  "
+            "If omitted, the fold with the highest recorded val AUC is selected automatically."
+        ),
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=RESULTS_DIR / "explainability",
+        help="Directory to save all explainability outputs.",
+    )
+    parser.add_argument(
+        "--phases",
+        nargs="+",
+        choices=["node", "edge", "features", "literature"],
+        default=["node", "edge", "features", "literature"],
+        help="Subset of phases to run.",
+    )
+    parser.add_argument(
+        "--no-masking",
+        action="store_true",
+        default=False,
+        help="Skip the slow edge-masking (ΔP) analysis in Phase 8.2.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=16,
+        help="Batch size for the test DataLoader.",
+    )
+    args = parser.parse_args()
+
+    fold_id = args.fold if args.fold is not None else _best_fold()
+
+    run_explainability_pipeline(
+        fold_id=fold_id,
+        output_dir=args.output_dir,
+        phases=list(args.phases),
+        run_masking=not args.no_masking,
+        batch_size=args.batch_size,
+    )
+
+
+if __name__ == "__main__":
+    main()
