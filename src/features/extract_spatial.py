@@ -16,6 +16,7 @@ from src.core.config import (
     NODE_FEATURES_3D,
     NUM_LOBES,
     NUM_SPATIAL_FEATURES,
+    SPATIAL_MIN_REQUIRED_REGIONS,
 )
 
 # Setup logging
@@ -47,7 +48,9 @@ def extract_spatial():
 
         try:
             logger.info(f"Processing {split} set...")
-            results = model(str(img_dir), stream=True, conf=0.35)
+            # Use config confidence threshold (not hardcoded 0.35)
+            from src.core.config import YOLO_CONF_THRESHOLD
+            results = model(str(img_dir), stream=True, conf=YOLO_CONF_THRESHOLD)
 
             for res in tqdm(results, desc=f"Inference {split}"):
                 try:
@@ -95,35 +98,47 @@ def extract_spatial():
     logger.info("Aggregating 2D detections into 3D lobe nodes...")
 
     processed_subjects = []
+    # Allow partial detections (min 9/12 regions) to maximize dataset size
+    # Subjects with fewer regions are filtered here
+    MIN_REQUIRED_REGIONS = SPATIAL_MIN_REQUIRED_REGIONS
+    
     filtered_count = 0
+    partial_count = 0
     subject_ids = raw_df["subject_id"].unique()
 
     for sub_id in tqdm(subject_ids, desc="Building Subject Nodes"):
         sub_group = raw_df[raw_df["subject_id"] == sub_id]
 
-        # Relaxed filter: Accept subjects with at least 9 of 12 regions
-        # (Missing: Frontal_Orbital, Insula, Brainstem often not visible in z-slices)
+        # RELAXED FILTER: Require at least 9/12 regions detected
+        # This allows subjects with up to 3 missing regions to proceed to feature extraction
         detected_regions = sub_group["roi_class"].nunique()
-        if detected_regions < 9:
+        if detected_regions < MIN_REQUIRED_REGIONS:
             filtered_count += 1
-            logger.debug(f"Subject {sub_id}: only {detected_regions}/{NUM_LOBES} regions detected")
+            logger.debug(f"Subject {sub_id}: only {detected_regions}/{NUM_LOBES} regions detected (REJECTED)")
             continue
 
-        subject_row = {"subject_id": sub_id}
+        # Track whether subject has complete detection (all 12 regions)
+        is_complete = detected_regions == NUM_LOBES
+        if not is_complete:
+            partial_count += 1
+            logger.debug(f"Subject {sub_id}: {detected_regions}/{NUM_LOBES} regions detected (PARTIAL - kept for ranking)")
 
+        subject_row = {"subject_id": sub_id, "spatial_complete": is_complete}
+
+        # Aggregate spatial features for each of the 12 detected regions
         for lobe_id in range(NUM_LOBES):
             lobe_name = LOBE_NAMES[lobe_id]
             lobe_data = sub_group[sub_group["roi_class"] == lobe_id]
 
-            # Handle missing regions gracefully (fill with 0 or NaN for imputation later)
+            # LENIENT: If region not detected, fill with zeros (YOLO sometimes misses regions like Frontal_Orbital)
             if len(lobe_data) == 0:
-                # Region not detected - use sentinel values
+                logger.debug(f"Subject {sub_id}: Region {lobe_name} not detected, filling with zeros")
                 subject_row[f"{lobe_name}_x"] = 0.0
                 subject_row[f"{lobe_name}_y"] = 0.0
                 subject_row[f"{lobe_name}_z_depth"] = 0.0
                 subject_row[f"{lobe_name}_size"] = 0.0
                 subject_row[f"{lobe_name}_conf_std"] = 0.0
-                subject_row[f"{lobe_name}_detection_count"] = 0
+                subject_row[f"{lobe_name}_detection_count"] = 0.0
             else:
                 subject_row[f"{lobe_name}_x"] = lobe_data["x"].mean()
                 subject_row[f"{lobe_name}_y"] = lobe_data["y"].mean()
@@ -133,28 +148,32 @@ def extract_spatial():
                     lobe_data["conf"].std() if len(lobe_data) > 1 else 0.0
                 )
                 subject_row[f"{lobe_name}_detection_count"] = len(lobe_data)
-
-        processed_subjects.append(subject_row)
+        
+        # Append if region aggregation succeeded (processing didn't encounter corruption)
+        if subject_row is not None:
+            processed_subjects.append(subject_row)
 
     logger.info(f"Subjects processed: {len(subject_ids)}")
-    logger.info(f"Subjects filtered (< 9 regions): {filtered_count}")
-    logger.info(f"Subjects kept (9+ regions): {len(processed_subjects)}")
-    logger.info(f"Note: Accepting subjects with 9+ of {NUM_LOBES} regions (missing regions filled with 0s)")
+    logger.info(f"Subjects filtered (< {MIN_REQUIRED_REGIONS} regions): {filtered_count}")
+    logger.info(f"Subjects with partial detection (9-11 regions): {partial_count}")
+    logger.info(f"Subjects with complete detection (all {NUM_LOBES} regions): {len(processed_subjects) - partial_count}")
+    logger.info(f"Subjects kept (>= {MIN_REQUIRED_REGIONS} regions): {len(processed_subjects)}")
+    logger.warning(f"RELAXED FILTER: Subjects with >= {MIN_REQUIRED_REGIONS} regions kept. Final filtering to complete {NUM_LOBES}-region subjects happens in variance ranking stage.")
     
     final_df = pd.DataFrame(processed_subjects)
     
     # Handle case where no subjects passed the filter
     if final_df.empty:
         logger.error(
-            f"No subjects detected with at least 9/{NUM_LOBES} brain regions! "
+            f"No subjects detected with >= {MIN_REQUIRED_REGIONS}/{NUM_LOBES} brain regions! "
             f"Check YOLO model quality or detection confidence threshold."
         )
         # Create empty output with proper schema
         manifest = pd.read_csv(MANIFEST_PATH)
         manifest["subject_id"] = manifest["subject_id"].astype(str)
         
-        # Create minimal schema for empty output
-        empty_cols = ["subject_id"] + [
+        # Create minimal schema for empty output (includes spatial_complete tracking column)
+        empty_cols = ["subject_id", "spatial_complete"] + [
             f"{lobe}_{feat}" 
             for lobe in LOBE_NAMES.values() 
             for feat in ["x", "y", "z_depth", "size", "conf_std", "detection_count"]

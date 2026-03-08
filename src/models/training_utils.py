@@ -26,6 +26,7 @@ from sklearn.metrics import (
     precision_recall_curve,
     average_precision_score,
 )
+from src.core.config import GNN_ONECYCLE_PCT_START, GNN_GRL_ALPHA_MAX
 
 logger = logging.getLogger(__name__)
 
@@ -538,7 +539,7 @@ def train_fold_with_onecycle(
     fold: int,
     weight_decay: float = 0.0,
     gradient_accumulation_steps: int = 2,
-    pct_start: float = 0.3,
+    pct_start: float = GNN_ONECYCLE_PCT_START,
 ) -> tuple:
     model.to(device)
 
@@ -568,6 +569,11 @@ def train_fold_with_onecycle(
     }
 
     for epoch in range(1, epochs + 1):
+        # Anneal GRL alpha following Ganin et al. 2016 schedule
+        if hasattr(model, 'set_grl_alpha'):
+            progress = (epoch - 1) / max(epochs - 1, 1)
+            model.set_grl_alpha(progress, alpha_max=GNN_GRL_ALPHA_MAX)
+
         loss = train_one_epoch_with_accumulation(
             model,
             train_loader,

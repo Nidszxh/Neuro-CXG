@@ -39,7 +39,7 @@ class CausalBrainGNN(torch.nn.Module):
         num_classes=2,
         dropout=0.4,  # Reduced to prevent underfitting
         num_heads=4,
-        num_layers=3,
+        num_layers=2,
         pooling="mean_max_sum",
         num_sites=20,
         use_site_embedding=True,
@@ -110,7 +110,9 @@ class CausalBrainGNN(torch.nn.Module):
         # Edge gating to reduce noisy causal links
         if edge_gate:
             self.edge_gate_nn = Sequential(
-                Linear(1, 1)
+                Linear(2 * hidden_channels + 1, hidden_channels // 2),
+                GELU(),
+                Linear(hidden_channels // 2, 1)
             )
 
         # 4. Pooling
@@ -145,6 +147,18 @@ class CausalBrainGNN(torch.nn.Module):
             Dropout(dropout),
             Linear(hidden_channels, num_classes)
         )
+
+    def set_grl_alpha(self, progress: float, alpha_max: float = 1.0) -> None:
+        """Anneal GRL alpha using the Ganin et al. 2016 schedule.
+
+        Args:
+            progress: Training progress in [0, 1] (current_epoch / total_epochs).
+                      Alpha increases from 0 to ~1 as training progresses.
+            alpha_max: Maximum alpha reached at end of training.
+        """
+        import math
+        alpha = 2.0 / (1.0 + math.exp(-10.0 * progress)) - 1.0
+        self.grl_alpha = alpha * max(alpha_max, 0.0)
 
     def forward(
         self,
@@ -227,9 +241,11 @@ class CausalBrainGNN(torch.nn.Module):
         # 2. Input projection with activation
         h = self.norm_in(F.gelu(self.lin_in(x)))
         
-        # 3. Soft edge gating
+        # 3. Soft edge gating (Dynamic based on source/target nodes and original edge weight)
         if self.edge_gate:
-            edge_gate = torch.sigmoid(self.edge_gate_nn(edge_attr))
+            row, col = edge_index
+            gate_input = torch.cat([h[row], h[col], edge_attr], dim=-1)
+            edge_gate = torch.sigmoid(self.edge_gate_nn(gate_input))
             edge_attr = edge_attr * edge_gate
 
         # 4. GAT Layer 1 with residual
@@ -265,7 +281,11 @@ class CausalBrainGNN(torch.nn.Module):
 
         # 8. Append demographics if enabled
         if self.use_demographics and age is not None:
-            demo = torch.stack([age.squeeze(), sex.squeeze(), fiq.squeeze()], dim=1)
+            # Ensure tensors are 1D (batch,) not scalar or multi-dimensional
+            age_flat = age.view(-1) if age.dim() > 0 else age.unsqueeze(0)
+            sex_flat = sex.view(-1) if sex.dim() > 0 else sex.unsqueeze(0)
+            fiq_flat = fiq.view(-1) if fiq.dim() > 0 else fiq.unsqueeze(0)
+            demo = torch.stack([age_flat, sex_flat, fiq_flat], dim=1)  # (batch_size, 3)
             g = torch.cat([g, demo], dim=1)
             g = self.post_fusion_norm(g)
 

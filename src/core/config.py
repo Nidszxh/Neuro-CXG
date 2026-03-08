@@ -9,29 +9,35 @@ logger = logging.getLogger(__name__)
 # --- PROJECT STRUCTURE ---
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-DATA_ROOT       = PROJECT_ROOT / "data"
-DATA_PROCESSED  = DATA_ROOT / "processed"
-DATA_FINAL      = DATA_ROOT / "final"
-DATA_IMAGES     = DATA_ROOT / "images"
-DATA_LABELS     = DATA_ROOT / "labels"
-DATA_ATLASES    = DATA_ROOT / "raw" / "atlases"
-DATA_METADATA   = DATA_ROOT / "metadata"
+DATA_ROOT        = PROJECT_ROOT / "data"
+DATA_PROCESSED   = DATA_ROOT / "processed"
+DATA_TIME_SERIES = DATA_PROCESSED / "time_series"
+DATA_FINAL       = DATA_ROOT / "final"
+DATA_IMAGES      = DATA_ROOT / "images"
+DATA_LABELS      = DATA_ROOT / "labels"
+DATA_ATLASES     = DATA_ROOT / "raw" / "atlases"
+DATA_METADATA    = DATA_ROOT / "metadata"
 
 # Final split directories
 FINAL_TRAIN     = DATA_FINAL / "train"
 FINAL_VAL       = DATA_FINAL / "val"
 FINAL_TEST      = DATA_FINAL / "test"
 
-MODEL_ROOT      = PROJECT_ROOT / "models"
-CHECKPOINT_DIR  = MODEL_ROOT   / "checkpoints"
+MODEL_ROOT              = PROJECT_ROOT / "models"
+CHECKPOINT_DIR          = MODEL_ROOT   / "checkpoints"
+# Baseline (pre-trained) checkpoints shipped with the repository.
+# New training runs save to CHECKPOINT_DIR; get_active_checkpoint_dir() resolves
+# the correct directory at runtime.
+BASELINE_CHECKPOINT_DIR = MODEL_ROOT   / "checkpoints_baseline"
 RESULTS_DIR     = PROJECT_ROOT / "results"
+
 # Result subdirectory constants — import these instead of hardcoding paths
 RESULTS_TRAINING_DIR     = RESULTS_DIR / "experiments" / "training"
 RESULTS_ABLATIONS_DIR    = RESULTS_DIR / "experiments" / "ablations"
 RESULTS_DATA_QUALITY_DIR = RESULTS_DIR / "experiments" / "data_quality"
 RESULTS_EVALUATION_DIR   = RESULTS_DIR / "evaluation"
 RESULTS_FIGURES_DIR      = RESULTS_DIR / "figures"
-CONFIG_DIR      = PROJECT_ROOT / "configs"
+CONFIG_DIR               = PROJECT_ROOT / "configs"
 
 # --- FILE PATHS ---
 CONFIG_BRAIN_YAML = CONFIG_DIR   / "brain.yaml"
@@ -43,6 +49,44 @@ MASTER_MANIFEST = DATA_METADATA  / "master_manifest.csv"
 # --- fMRI ACQUISITION DEFAULTS ---
 # Default TR (seconds) when missing in manifest metadata.
 DEFAULT_TR = 2.0
+NYQUIST_EPS = 1e-6
+UNRELIABLE_FREQ_BANDS_AT_NYQUIST = ("gamma",)
+
+# fMRI frequency bands (single source of truth — import in extract_temporal.py)
+# Note: fMRI bands differ from EEG; these are slow hemodynamic oscillations.
+# gamma is at the Nyquist limit for TR=2s; see UNRELIABLE_FREQ_BANDS_AT_NYQUIST.
+FREQ_BANDS = {
+    "delta": (0.01,  0.027),   # Slow-5 (well below Nyquist)
+    "theta": (0.027, 0.073),   # Slow-4 (well below Nyquist)
+    "alpha": (0.073, 0.15),    # Slow-3 (well below Nyquist)
+    "beta":  (0.15,  0.20),    # Upper Slow-3 (safe, ~3x below Nyquist @ 0.25 Hz)
+    "gamma": (0.20,  0.25),    # Slow-2/Gamma (AT Nyquist limit — aliasing risk)
+}
+
+# Bandpass filter bounds used by NiftiLabelsMasker in abide_download.py.
+# Raising BANDPASS_HIGH from 0.08 → 0.15 Hz retains beta-band oscillations
+# that are physiologically relevant but were previously filtered out.
+BANDPASS_LOW  = 0.01   # High-pass (BOLD low-frequency cut-off)
+BANDPASS_HIGH = 0.15   # Low-pass (Expanded from 0.08 Hz to retain beta band)
+
+# ABIDE I site-specific TRs from scanner specifications (single source of truth)
+# Different scanners have different repetition times - CRITICAL for multi-site studies
+SITE_TR_MAP = {
+    'CALTECH': 2.0, 'CMU': 2.0, 'KKI': 2.5, 'LEUVEN_1': 1.656,
+    'LEUVEN_2': 1.656, 'MAX_MUN': 3.0, 'NYU': 2.0, 'OHSU': 2.5,
+    'OLIN': 1.5, 'PITT': 1.5, 'SBL': 2.5, 'SDSU': 2.0,
+    'STANFORD': 2.0, 'TRINITY': 2.0, 'UCLA_1': 3.0, 'UCLA_2': 3.0,
+    'UM_1': 2.0, 'UM_2': 2.0, 'USM': 2.0, 'YALE': 2.0
+}
+
+# ALFF slice extraction percentiles (single source of truth)
+# CRITICAL: 0.21 captures brainstem (ROIs 167-170 starting at z=38), fixes missing class 11
+# These percentiles must match exactly between abide_download.py and generate_labels.py
+ALFF_SLICE_PERCENTILES = [0.21, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+
+# --- ATLAS VALIDATION CONSTANTS ---
+AAL3_VALID_ROI_RANGE = (164, 170)  # AAL3v1: some variants have 2 unused ROIs
+ROI_CENTROIDS_PATH = DATA_METADATA / "roi_centroids.json"  # ROI 3D centroids for visualization
 
 # Output files for the pipeline
 NODE_ATTRIBUTES_TEMPORAL     = DATA_METADATA  / "node_attributes_temporal.csv"
@@ -90,11 +134,12 @@ NUM_LOBES = 12  # Updated from 5 to 12 regions
 NUM_FREQUENCY_FEATURES = 12  # 5 bands x 2 features + 2 global
 NUM_TEMPORAL_FEATURES = 20  # 8 basic + 12 frequency
 NUM_SPATIAL_FEATURES = 6   # x, y, z_depth, size, conf_std, detection_count per lobe
+SPATIAL_MIN_REQUIRED_REGIONS = 9  # relaxed gate; final golden filter enforces complete 12-region subjects
 
 # --- FEATURE REGISTRY (The Golden Standard) ---
 # Explicit feature definitions. GNN_IN_CHANNELS is calculated dynamically from this.
 FEATURE_GROUPS = {
-    'temporal': ["mean", "std", "skew", "kurtosis", "psd", "mssd", "range", "autocorr"],
+    'temporal': ["mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr"],
     'frequency': [
         "delta_power", "delta_peak", "theta_power", "theta_peak",
         "alpha_power", "alpha_peak", "beta_power", "beta_peak",
@@ -165,21 +210,24 @@ YOLO_TRAIN_CONFIG = {
 }
 
 # --- CAUSAL GRAPH PARAMETERS ---
-CAUSAL_LAG = 1           # 1 TR lag for temporal precedence
+# CAUSAL_LAG = 1  # DEPRECATED: Only used in legacy compute_lagged_causality().
+#                 # Use _LEGACY_CAUSAL_LAG = 1 inline in construct_causal.py instead.
+#                 # Retained as comment to prevent accidental re-introduction.
 SPARSITY_QUANTILE = 0.70 # Keep top 30% edges (High Selectivity - Phase 3)
 
 # Phase 1 Enhancements (Feb 2026)
 CAUSALITY_METHOD = 'granger'  # Directed causality (options: 'granger', 'transfer_entropy', 'lagged_pearson')
-GRANGER_MAX_LAG = 5  # Test lags 1-5 TRs for Granger causality
+GRANGER_MAX_LAG = 5  # Test lags 1-5 TRs for Granger causality (legacy, kept for backward compatibility)
+GRANGER_MAX_LAG_SECONDS = 10.0  # Test causality up to 10 seconds of history (adjusted per subject TR at runtime)
 GRANGER_SIGNIFICANCE_LEVEL = 0.05  # Statistical significance threshold
 
+# --- GRAPH CONSTRUCTION PARAMETERS ---
 SPARSITY_METHOD = 'adaptive_statistical'  # Options: 'adaptive_proportional', 'adaptive_statistical', 'fixed'
 MIN_EDGES_PER_GRAPH = 12  # Ensure minimum connectivity for 12-region graphs
 
 # --- GNN MODEL PARAMETERS (Phase 3: Regularized for Small Graphs) ---
 # Reduced from 256 to 64 channels to prevent overfitting on 12-node graphs
 GNN_HIDDEN_CHANNELS = 128       # Increased capacity for 28-feature inputs
-GNN_IN_CHANNELS_DYNAMIC = len(ALL_FEATURE_NAMES)  # Should be 28
 GNN_NUM_HEADS = 4               # Multi-head attention is crucial
 GNN_NUM_CLASSES = 2      # 0: Control, 1: ASD
 GNN_DROPOUT = 0.45               # Reduced to prevent underfitting
@@ -189,18 +237,21 @@ GNN_BATCH_SIZE = 32
 GNN_EPOCHS = 100  # More epochs with early stopping
 K_FOLDS = 5
 
-GNN_NUM_GNN_LAYERS = 3          # Restore depth for full graph coverage
+GNN_NUM_LAYERS = 2              # Reduced to 2 to prevent over-smoothing on small 12-node graphs
 GNN_SKIP_CONNECTIONS = True     # Enable residual connections
 GNN_USE_SITE_EMBEDDING = True   # Reduce site bias
 GNN_USE_DEMOGRAPHICS = True     # Add age/sex/IQ conditioning
-GNN_EARLY_STOPPING_PATIENCE = 20
+GNN_EARLY_STOPPING_PATIENCE = 20  # Unified early-stopping patience (was 25; mirrors former GNN_ONECYCLE_PATIENCE)
+# GNN_ONECYCLE_PATIENCE = 20    # DEPRECATED ALIAS — use GNN_EARLY_STOPPING_PATIENCE instead
 GNN_POOLING = "attention"        # Options: "attention", "mean_max_sum"
 GNN_USE_GRL = True              # Enable gradient reversal site classifier
-GNN_GRL_ALPHA = 1.0             # GRL strength (higher = stronger site invariance)
-GNN_SITE_LOSS_WEIGHT = 0.2      # Weight for site classification loss
+GNN_GRL_ALPHA = 1.0             # GRL strength (higher = stronger site invariance) — REVERTED: stronger GRL degraded performance
+GNN_GRL_ALPHA_MAX = 1.0         # Max annealed GRL alpha reached at end of training
+GNN_SITE_LOSS_WEIGHT = 0.2      # Weight for site classification loss — REVERTED: focus on feature quality instead
 GNN_EDGE_GATE = True            # Soft gate edge_attr before message passing
 GNN_ONECYCLE_MAX_LR = 0.003     # Peak LR for OneCycle schedule
-GNN_ONECYCLE_PATIENCE = 20      # Early stopping patience for OneCycle training
+# GNN_ONECYCLE_PATIENCE = 20    # DEPRECATED — consolidated into GNN_EARLY_STOPPING_PATIENCE above
+GNN_ONECYCLE_PCT_START = 0.1    # Warmup fraction (10 epochs for 100 total) — must satisfy: PCT_START * EPOCHS < PATIENCE
 
 # --- HARDWARE ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -222,7 +273,6 @@ USE_CLASS_WEIGHTS = False  # Use class weights (alternative to Focal Loss)
 USE_BALANCED_SAMPLING = False  # Oversample minority class in batches
 
 # Early Stopping
-PATIENCE = 25  # Epochs without improvement before stopping
 EVAL_FREQUENCY = 10  # Evaluate and check threshold every N epochs
 
 # DIAGNOSTIC THRESHOLDS
@@ -365,6 +415,30 @@ def validate_lobe_mapping() -> bool:
         len(all_rois),
     )
     return True
+
+
+def get_active_checkpoint_dir() -> Path:
+    """Return the checkpoint directory that contains the current fold models.
+
+    Checks ``CHECKPOINT_DIR`` first (output of a fresh training run).  Falls
+    back to ``BASELINE_CHECKPOINT_DIR`` so that evaluation and explainability
+    scripts work out-of-the-box with the pre-trained baseline models even before
+    a new training run has completed.
+
+    Returns:
+        Path: Directory containing ``best_model_fold*.pt`` files, or
+              ``CHECKPOINT_DIR`` as the default even if it is currently empty
+              (the caller will then raise a descriptive error).
+    """
+    for candidate in (CHECKPOINT_DIR, BASELINE_CHECKPOINT_DIR):
+        if candidate.exists() and any(candidate.glob("best_model_fold*.pt")):
+            if candidate != CHECKPOINT_DIR:
+                logger.debug(
+                    "CHECKPOINT_DIR is empty; using baseline checkpoints from %s",
+                    candidate,
+                )
+            return candidate
+    return CHECKPOINT_DIR  # Default — caller will handle missing files
 
 
 def validate_environment():

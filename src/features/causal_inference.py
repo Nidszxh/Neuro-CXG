@@ -89,11 +89,15 @@ def compute_granger_causality(
                 
                 # Use minimum p-value across lags (strongest evidence)
                 min_p_value = min(p_values)
-                
+
+                # Bonferroni correction for multiple lag tests
+                n_tests = len(p_values)  # = max_lag
+                corrected_p = min(min_p_value * n_tests, 1.0)
+
                 # Convert to -log10(p) for interpretability
                 # Higher values = stronger causality
-                if min_p_value > 0:
-                    gc_matrix[i, j] = -np.log10(min_p_value + 1e-10)
+                if corrected_p > 0:
+                    gc_matrix[i, j] = -np.log10(corrected_p + 1e-10)
                 else:
                     gc_matrix[i, j] = 10.0  # Cap at very high value
                 
@@ -171,8 +175,10 @@ def compute_granger_causality_gpu(
         # w = (X^T X)^-1 X^T y
         try:
             # RSS_restricted
-            # Use lstsq for stability
-            w_r = torch.linalg.lstsq(X_restricted, Y_targets[:, j]).solution
+            # Use ridge regression (solve) for stability instead of raw lstsq
+            XtX_r = X_restricted.T @ X_restricted
+            ridge_r = torch.eye(XtX_r.shape[0], device=device) * 1e-4
+            w_r = torch.linalg.solve(XtX_r + ridge_r, X_restricted.T @ Y_targets[:, j])
             preds_r = X_restricted @ w_r
             resid_r = Y_targets[:, j] - preds_r
             rss_r = (resid_r ** 2).sum()
@@ -194,7 +200,9 @@ def compute_granger_causality_gpu(
             
             try:
                 # RSS_unrestricted
-                w_u = torch.linalg.lstsq(X_unrestricted, Y_targets[:, j]).solution
+                XtX_u = X_unrestricted.T @ X_unrestricted
+                ridge_u = torch.eye(XtX_u.shape[0], device=device) * 1e-4
+                w_u = torch.linalg.solve(XtX_u + ridge_u, X_unrestricted.T @ Y_targets[:, j])
                 preds_u = X_unrestricted @ w_u
                 resid_u = Y_targets[:, j] - preds_u
                 rss_u = (resid_u ** 2).sum()

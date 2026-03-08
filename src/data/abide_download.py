@@ -27,15 +27,19 @@ warnings.filterwarnings("ignore", message=".*CUDA initialization.*", category=Us
 # Suppress scipy RuntimeWarning for empty ROIs (NiftiLabelsMasker mean of zero-voxel regions)
 warnings.filterwarnings("ignore", message="invalid value encountered in divide", category=RuntimeWarning, module="scipy")
 
-# PATHS 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
-from src.core.config import LOBE_MAPPING, LOBE_NAMES 
-PNG_OUTPUT   = PROJECT_ROOT / "data" / "images"
-TS_OUTPUT    = PROJECT_ROOT / "data" / "processed"
-META_DIR     = PROJECT_ROOT / "data" / "metadata"
-ATLAS_PATH   = PROJECT_ROOT / "data" / "raw" / "atlases" / "AAL3v1.nii"
-PHENO_PATH   = PROJECT_ROOT / "data" / "processed" / "Phenotypic_V1_0b_preprocessed1.csv"
+# PATHS - Import from config to ensure single source of truth
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from src.core.config import (
+    LOBE_MAPPING, LOBE_NAMES,
+    DATA_IMAGES, DATA_PROCESSED, DATA_TIME_SERIES, DATA_METADATA,
+    ATLAS_PATH, PHENO_PATH, ROI_CENTROIDS_PATH, AAL3_VALID_ROI_RANGE,
+    SITE_TR_MAP, ALFF_SLICE_PERCENTILES,
+    BANDPASS_LOW, BANDPASS_HIGH,
+)
+PNG_OUTPUT   = DATA_IMAGES
+# Prefer dedicated time-series directory when available, keep legacy fallback.
+TS_OUTPUT    = DATA_TIME_SERIES if DATA_TIME_SERIES.exists() else DATA_PROCESSED
+META_DIR     = DATA_METADATA
 MASK_S3_TEMPLATE = "data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/func_mask/{sub_id}_func_mask.nii.gz"
 
 logging.basicConfig(
@@ -49,9 +53,14 @@ _MNI_MASK_TEMPLATE = None
 
 # HELPER: ATLAS PREP 
 def save_atlas_metadata():
-    """Extracts ROI centroids once to avoid 4D overhead later."""
+    """Extracts ROI centroids once to avoid 4D overhead later. Idempotent."""
     if not ATLAS_PATH.exists():
         raise FileNotFoundError(f"Atlas not found at {ATLAS_PATH}")
+    
+    # Idempotent: skip if already exists
+    if ROI_CENTROIDS_PATH.exists():
+        logger.info("ROI centroids already exist, skipping computation.")
+        return nib.load(str(ATLAS_PATH))
     
     atlas_img = nib.load(str(ATLAS_PATH))
     data = atlas_img.get_fdata()
@@ -74,8 +83,9 @@ def save_atlas_metadata():
         })
     
     META_DIR.mkdir(parents=True, exist_ok=True)
-    with open(META_DIR / "roi_centroids.json", 'w') as f:
+    with open(ROI_CENTROIDS_PATH, 'w') as f:
         json.dump(coords, f)
+    logger.info(f"Saved ROI centroids to {ROI_CENTROIDS_PATH}")
     return atlas_img
 
 # THE CORE PROCESS 
@@ -87,6 +97,10 @@ def init_worker():
 
 def get_s3_client():
     if _S3_CLIENT is None:
+        logger.warning(
+            "S3 client not initialized via init_worker(). "
+            "Creating unauthenticated client - may fail outside process pool."
+        )
         return boto3.client("s3", config=Config(signature_version=UNSIGNED))
     return _S3_CLIENT
 
@@ -151,16 +165,18 @@ def process_subject(sub_id, tr_val):
                     copy_header=True,
                 )
 
-            # Temporal filtering: 0.01-0.08 Hz (standard resting-state connectivity)
-            # Current setting follows ABIDE preprocessing guidelines for broad connectivity
+            # Temporal filtering: 0.01-0.08 Hz (standard resting-state connectivity).
+            # standardize=False: a single z-score is applied downstream in
+            # construct_causal.py::construct_graph() so that the normalisation
+            # happens once, in one place, and is fully auditable.
             masker = NiftiLabelsMasker(
                 labels_img=resampled_atlas, 
                 mask_img=mask_img_obj,
                 t_r=float(tr_val), 
-                standardize=False,   # Disabled: single explicit z-score in construct_causal.py avoids double normalisation
+                standardize=False,  # z-score applied once in construct_causal.py
                 detrend=True,
-                low_pass=0.08,   # Standard resting-state upper bound
-                high_pass=0.01,  # Standard resting-state lower bound
+                low_pass=BANDPASS_HIGH,  # config.BANDPASS_HIGH = 0.15 Hz (expanded from 0.08 Hz)
+                high_pass=BANDPASS_LOW,  # config.BANDPASS_LOW  = 0.01 Hz
                 ensure_finite=True,  # Safety for NaN values
                 strategy="mean",
                 memory_level=0  # Saves RAM by not caching to disk
@@ -185,10 +201,9 @@ def process_subject(sub_id, tr_val):
             
             # Validate ROI count (AAL3v1 variant: 164-170 ROIs)
             # Some AAL3v1 templates have 2 unused/empty ROIs
-            VALID_ROI_RANGE = (164, 170)
-            if not (VALID_ROI_RANGE[0] <= ts.shape[1] <= VALID_ROI_RANGE[1]):
+            if not (AAL3_VALID_ROI_RANGE[0] <= ts.shape[1] <= AAL3_VALID_ROI_RANGE[1]):
                 raise ValueError(
-                    f"ROI count mismatch: extracted {ts.shape[1]} ROIs, expected {VALID_ROI_RANGE[0]}-{VALID_ROI_RANGE[1]}. "
+                    f"ROI count mismatch: extracted {ts.shape[1]} ROIs, expected {AAL3_VALID_ROI_RANGE[0]}-{AAL3_VALID_ROI_RANGE[1]}. "
                     f"Atlas resampling may have failed for subject {sub_id}"
                 )
             
@@ -238,9 +253,10 @@ def process_subject(sub_id, tr_val):
             alff_img = nib.as_closest_canonical(nib.load(str(a_p)))
             alff_data = alff_img.get_fdata()
             
-            # Slice percentiles: 0.2 captures cerebellum/brainstem (regions 10-11 in LOBE_MAPPING)
-            # 0.3-0.8 cover mid-brain structures (thalamus, basal ganglia, cortex)
-            for p in [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]:
+            # Slice percentiles from config (single source of truth)
+            # CRITICAL: 0.21 captures brainstem (region 11, ROIs 167-170 starting at z=38)
+            # Must match generate_labels.py exactly for atlas-to-image alignment
+            for p in ALFF_SLICE_PERCENTILES:
                 z = int(alff_data.shape[2] * p)
                 slice_arr = np.rot90(alff_data[:, :, z])
                 
@@ -283,24 +299,12 @@ if __name__ == "__main__":
     # Strip whitespace from FILE_ID to prevent match failures
     df['FILE_ID'] = df['FILE_ID'].astype(str).str.strip()
     
-    # ABIDE I site-specific TRs (from ABIDE documentation)
-    # Different scanners have different repetition times
-    # CRITICAL: Keys must match SITE_ID column format (uppercase)
-    SITE_TR_MAP = {
-        'CALTECH': 2.0, 'CMU': 2.0, 'KKI': 2.5, 'LEUVEN_1': 1.656,
-        'LEUVEN_2': 1.656, 'MAX_MUN': 3.0, 'NYU': 2.0, 'OHSU': 2.5,
-        'OLIN': 1.5, 'PITT': 1.5, 'SBL': 2.5, 'SDSU': 2.0,
-        'STANFORD': 2.0, 'TRINITY': 2.0, 'UCLA_1': 3.0, 'UCLA_2': 3.0,
-        'UM_1': 2.0, 'UM_2': 2.0, 'USM': 2.0, 'YALE': 2.0
-    }
-    
-    # Handle TR column (may not exist in all phenotype versions)
-    if 'TR' not in df.columns:
-        logger.warning("'TR' column not found in phenotype CSV. Using site-specific TRs.")
-        df['TR'] = df['SITE_ID'].map(SITE_TR_MAP).fillna(2.0)
-        logger.info("Assigned site-specific TRs: %s", df.groupby('SITE_ID')['TR'].first().to_dict())
-    else:
-        df['TR'] = pd.to_numeric(df['TR'], errors='coerce').fillna(2.0)
+    # Handle TR column: ALWAYS APPLY SITE-SPECIFIC MAPPING (imported from config)
+    # Even if phenotype CSV has a TR column, we override with site-specific values
+    # (phenotype CSVs often have generic/default TR values, not actual site-specific ones)
+    logger.info("Applying site-specific TR mapping based on SITE_ID...")
+    df['TR'] = df['SITE_ID'].map(SITE_TR_MAP).fillna(2.0)
+    logger.info("Assigned site-specific TRs: %s", df.groupby('SITE_ID')['TR'].first().to_dict())
     
     # Filter valid subjects
     subjects_df = df[df["FILE_ID"] != "no_filename"].dropna(subset=["FILE_ID"])

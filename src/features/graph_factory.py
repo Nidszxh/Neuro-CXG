@@ -373,9 +373,12 @@ class ABIDECausalDataset(Dataset):
         """
         Encodes site name to integer index (0-19).
         Creates mapping on-the-fly if not cached.
+        Uses full manifest (all splits) to guarantee a consistent site→index
+        mapping across train, val, and test so the site embedding lookup is
+        identical at training and inference time.
         """
         if not hasattr(self, '_site_mapping'):
-            unique_sites = sorted(self.manifest['SITE_ID'].unique())
+            unique_sites = sorted(self.manifest_raw['SITE_ID'].unique())
             self._site_mapping = {site: idx for idx, site in enumerate(unique_sites)}
 
         return self._site_mapping.get(site_name, 0)  # Default to site 0 if unknown

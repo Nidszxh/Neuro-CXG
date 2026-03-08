@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import random
 from torch_geometric.loader import DataLoader
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import (
@@ -8,6 +9,7 @@ from sklearn.metrics import (
     accuracy_score, precision_recall_curve, average_precision_score
 )
 import numpy as np
+import pandas as pd
 import logging
 from pathlib import Path
 import sys
@@ -26,14 +28,14 @@ from src.core.config import (
     GNN_DROPOUT,
     GNN_WEIGHT_DECAY,
     GNN_NUM_HEADS,
-    GNN_NUM_GNN_LAYERS,
+    GNN_NUM_LAYERS,
     GNN_POOLING,
     GNN_USE_GRL,
     GNN_GRL_ALPHA,
     GNN_SITE_LOSS_WEIGHT,
     GNN_EDGE_GATE,
     GNN_ONECYCLE_MAX_LR,
-    GNN_ONECYCLE_PATIENCE,
+    GNN_EARLY_STOPPING_PATIENCE,
     FOCAL_LOSS_ALPHA,
     FOCAL_LOSS_GAMMA,
     GNN_USE_SITE_EMBEDDING,
@@ -264,7 +266,7 @@ def evaluate_ensemble(tracker: TrainingTracker, checkpoint_manager: CheckpointMa
                 num_classes=2,
                 dropout=GNN_DROPOUT,
                 num_heads=GNN_NUM_HEADS,
-                num_layers=GNN_NUM_GNN_LAYERS,
+                num_layers=GNN_NUM_LAYERS,
                 pooling=GNN_POOLING,
                 num_sites=20,
                 use_site_embedding=GNN_USE_SITE_EMBEDDING,
@@ -339,6 +341,26 @@ def evaluate_ensemble(tracker: TrainingTracker, checkpoint_manager: CheckpointMa
 
 # MAIN TRAINING FUNCTION
 
+
+def _set_global_seed(seed: int = 42) -> None:
+    """Set all random seeds for full reproducibility.
+
+    Sets Python, NumPy, PyTorch, and CUDA seeds.  Also forces cuDNN into
+    deterministic mode (deterministic=True, benchmark=False) so that
+    convolution algorithms are selected deterministically across runs.
+    This trades a small amount of runtime performance for exact reproducibility.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    # CUDA determinism: required for reproducible training on GPU.
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    logger.info("Global seed set to %d (cuDNN deterministic mode enabled)", seed)
+
+
 def run_training():
     """
     Main training loop with k-fold cross-validation.
@@ -351,16 +373,23 @@ def run_training():
     """
     from src.features.graph_factory import ABIDECausalDataset
     from src.models.causal_gnn import CausalBrainGNN
-    
+
+    _set_global_seed(42)
+
     # Load dataset
     dataset = ABIDECausalDataset(split='train')
     
     # Extract labels for stratification
     labels = []
+    site_labels = []
     for i in range(len(dataset)):
         data = dataset.get(i)
         if data is not None:
             labels.append(data.y.item())
+            if hasattr(data, 'site_id') and data.site_id is not None and data.site_id.numel() > 0:
+                site_labels.append(int(data.site_id.view(-1)[0].item()))
+            else:
+                site_labels.append(-1)
     
     if not labels:
         logger.error("No valid training data found!")
@@ -387,18 +416,38 @@ def run_training():
     logger.info(f"Input features: {GNN_IN_CHANNELS} (20 temporal + 6 spatial)")
     logger.info(f"Site conditioning: {GNN_USE_SITE_EMBEDDING}")
     logger.info(f"Demographics: {GNN_USE_DEMOGRAPHICS}")
-    logger.info(f"Early stopping patience: {GNN_ONECYCLE_PATIENCE}")
+    logger.info(f"Early stopping patience: {GNN_EARLY_STOPPING_PATIENCE}")
     logger.info(f"Focal Loss: α={FOCAL_LOSS_ALPHA}, γ={FOCAL_LOSS_GAMMA}")
     logger.info(f"{'='*70}\n")
     
-    # K-fold cross-validation
-    skf = StratifiedKFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
+    # K-fold cross-validation (strict manifest-only enforcement)
+    if 'cv_fold' not in dataset.manifest.columns:
+        raise ValueError(
+            "cv_fold column not found in manifest. "
+            "Run split.py first to generate predefined CV folds."
+        )
     
-    for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(labels)), labels)):
+    cv_folds = dataset.manifest['cv_fold'].values
+    if cv_folds.min() < 0 or cv_folds.max() >= K_FOLDS:
+        raise ValueError(
+            f"Invalid cv_fold values: found [{cv_folds.min()}, {cv_folds.max()}], "
+            f"expected [0, {K_FOLDS-1}]. Run split.py to regenerate folds."
+        )
+    
+    # Build fold splits from manifest (aligned with harmonization)
+    cv_splits = []
+    for f in range(K_FOLDS):
+        t_idx = np.where(cv_folds != f)[0]
+        v_idx = np.where(cv_folds == f)[0]
+        cv_splits.append((t_idx, v_idx))
+        logger.debug(f"Fold {f}: train={len(t_idx)}, val={len(v_idx)}")
+            
+    for fold, (train_idx, val_idx) in enumerate(cv_splits):
         logger.info(f"\n{'='*70}")
         logger.info(f"FOLD {fold+1}/{K_FOLDS}")
         logger.info(f"{'='*70}")
-        
+
+        _set_global_seed(42 + fold)  # deterministic per-fold model initialisation
         fold_start_time = time.time()
         
         # Create data loaders
@@ -421,7 +470,7 @@ def run_training():
             num_classes=2,
             dropout=GNN_DROPOUT,
             num_heads=GNN_NUM_HEADS,
-            num_layers=GNN_NUM_GNN_LAYERS,
+            num_layers=GNN_NUM_LAYERS,
             pooling=GNN_POOLING,
             num_sites=20,
             use_site_embedding=GNN_USE_SITE_EMBEDDING,
@@ -432,7 +481,9 @@ def run_training():
         ).to(DEVICE)
         
         # Loss function
-        pos_weight = 272.0 / 290.0  # ~0.93
+        n_control = max((np.array(train_labels) == 0).sum(), 1)
+        n_asd = max((np.array(train_labels) == 1).sum(), 1)
+        pos_weight = float(n_control / n_asd)
         criterion = FocalLoss(alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA, pos_weight=pos_weight)
         checkpoint_manager.reset()
 
@@ -444,7 +495,7 @@ def run_training():
             device=DEVICE,
             epochs=GNN_EPOCHS,
             max_lr=GNN_ONECYCLE_MAX_LR,
-            patience=GNN_ONECYCLE_PATIENCE,
+            patience=GNN_EARLY_STOPPING_PATIENCE,
             use_grl=GNN_USE_GRL,
             grl_weight=GNN_SITE_LOSS_WEIGHT,
             fold=fold,
@@ -570,7 +621,7 @@ def run_training():
                 num_classes=2,
                 dropout=GNN_DROPOUT,
                 num_heads=GNN_NUM_HEADS,
-                num_layers=GNN_NUM_GNN_LAYERS,
+                num_layers=GNN_NUM_LAYERS,
                 pooling=GNN_POOLING,
                 num_sites=20,
                 use_site_embedding=GNN_USE_SITE_EMBEDDING,

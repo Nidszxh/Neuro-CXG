@@ -17,6 +17,9 @@ from src.core.config import (
     MASTER_MANIFEST,
     NODE_ATTRIBUTES_TEMPORAL,
     DEFAULT_TR,
+    FREQ_BANDS,
+    NYQUIST_EPS,
+    UNRELIABLE_FREQ_BANDS_AT_NYQUIST,
 )
 
 # Expected ROI count range for validation (AAL3v1 atlas)
@@ -27,6 +30,7 @@ MAX_ROIS = 170
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
+_NYQUIST_NOTE_EMITTED = False
 
 
 # ============================================================================
@@ -72,13 +76,33 @@ def extract_band_power(
     - gamma: 0.20 - 0.25 Hz (Slow-2)
     """
     if bands is None:
-        bands = {
-            "delta": (0.01, 0.027),
-            "theta": (0.027, 0.073),
-            "alpha": (0.073, 0.15),
-            "beta": (0.15, 0.20),
-            "gamma": (0.20, 0.25),
-        }
+        bands = FREQ_BANDS  # Imported from config.py — single source of truth
+
+    # Nyquist-safe adjustment: keep feature shape stable while avoiding aliasing warning spam.
+    global _NYQUIST_NOTE_EMITTED
+    nyquist = fs / 2.0
+    nyquist_eps = nyquist - NYQUIST_EPS
+    safe_bands = {}
+    for band_name, (low, high) in bands.items():
+        if band_name in UNRELIABLE_FREQ_BANDS_AT_NYQUIST and high >= nyquist:
+            safe_bands[band_name] = (0.0, 0.0)
+            continue
+        safe_low = max(0.0, low)
+        safe_high = min(high, nyquist_eps)
+        if safe_low >= safe_high:
+            safe_bands[band_name] = (0.0, 0.0)
+        else:
+            safe_bands[band_name] = (safe_low, safe_high)
+
+    if not _NYQUIST_NOTE_EMITTED and "gamma" in bands and bands["gamma"][1] >= nyquist:
+        tr = 1.0 / fs
+        logger.warning(
+            "Gamma band marked unreliable at Nyquist for TR=%.1fs; gamma features are zeroed.",
+            tr,
+        )
+        _NYQUIST_NOTE_EMITTED = True
+
+    bands = safe_bands
 
     # Validate input
     if len(ts) < 10 or np.isnan(ts).any() or np.isinf(ts).any():
@@ -184,14 +208,24 @@ def extract_frequency_features_batch(ts_matrix: np.ndarray, fs: float = 0.5) -> 
 
 
 def calculate_psd(ts: np.ndarray, tr: float) -> float:
-    """Calculates the mean Power Spectral Density in the 0.01-0.1Hz band."""
+    """
+    Calculates the mean Power Spectral Density in the 0.01-0.1Hz band.
+    
+    Bounds PSD to [0, 1e4] to prevent extreme outliers from noise-padded ROIs.
+    fMRI signals typically have modest PSD; values > 1e4 indicate numerical issues.
+    """
     if len(ts) < 10 or np.all(ts == 0):
         return 0.0
     ts = ts - np.mean(ts)
     psd = np.abs(np.fft.fft(ts)) ** 2
     freqs = np.fft.fftfreq(len(ts), d=tr)
     mask = (freqs > 0.01) & (freqs < 0.1)
-    return float(np.mean(psd[mask])) if np.any(mask) else 0.0
+    if not np.any(mask):
+        return 0.0
+    
+    psd_mean = float(np.mean(psd[mask]))
+    # Clip to [0, 1e4] — reasonable range for fMRI PSD
+    return np.clip(psd_mean, 0.0, 1e4)
 
 
 def calculate_autocorr(ts: np.ndarray, lag: int = 1) -> float:
@@ -249,11 +283,21 @@ def extract_single_roi_features(ts: np.ndarray, tr: float, include_frequency: bo
         n_features = 20 if include_frequency else 8
         return [0.0] * n_features
 
+    # Compute statistics with bounds checking to prevent extreme outliers
+    # from skew/kurtosis on near-constant or pathological distributions
+    mean_val = float(np.mean(ts))
+    std_val = float(np.std(ts))
+    
+    # Clip skewness and kurtosis to [-1e3, 1e3] to prevent extreme outliers
+    # fMRI signals are typically moderate in shape parameters
+    skew_val = np.clip(float(skew(ts, bias=False)), -1e3, 1e3)
+    kurt_val = np.clip(float(kurtosis(ts, bias=False)), -1e3, 1e3)
+    
     base_features = [
-        float(np.mean(ts)),
-        float(np.std(ts)),
-        float(skew(ts, bias=False)),
-        float(kurtosis(ts, bias=False)),
+        mean_val,
+        std_val,
+        skew_val,
+        kurt_val,
         calculate_psd(ts, tr),
         float(np.mean(np.diff(ts) ** 2)),
         float(np.max(ts) - np.min(ts)),
