@@ -54,13 +54,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.core.config import (
     ALL_FEATURE_NAMES,
     CHECKPOINT_DIR,
+    get_active_checkpoint_dir,
     GNN_BATCH_SIZE,
     GNN_DROPOUT,
     GNN_EDGE_GATE,
     GNN_GRL_ALPHA,
     GNN_HIDDEN_CHANNELS,
     GNN_IN_CHANNELS,
-    GNN_NUM_GNN_LAYERS,
+    GNN_NUM_LAYERS,
     GNN_NUM_HEADS,
     GNN_POOLING,
     GNN_USE_DEMOGRAPHICS,
@@ -96,7 +97,7 @@ def _load_model(fold_id: int) -> CausalBrainGNN:
         hidden_channels=GNN_HIDDEN_CHANNELS,
         num_classes=2,
         num_heads=GNN_NUM_HEADS,
-        num_layers=GNN_NUM_GNN_LAYERS,
+        num_layers=GNN_NUM_LAYERS,
         pooling=GNN_POOLING,
         dropout=GNN_DROPOUT,
         use_site_embedding=GNN_USE_SITE_EMBEDDING,
@@ -105,7 +106,7 @@ def _load_model(fold_id: int) -> CausalBrainGNN:
         grl_alpha=GNN_GRL_ALPHA,
         edge_gate=GNN_EDGE_GATE,
     ).to(DEVICE)
-    ckpt_path = CHECKPOINT_DIR / f"best_model_fold{fold_id}.pt"
+    ckpt_path = get_active_checkpoint_dir() / f"best_model_fold{fold_id}.pt"
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
     ckpt  = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)

@@ -67,16 +67,15 @@ class FeatureAttributionAnalyzer:
         logger.info(f"  Device: {device}")
         logger.info(f"  Features: {len(feature_names)}")
 
-    def _get_wrapper_for_batch(self, edge_index, edge_attr, batch):
+    def _get_wrapper_for_batch(self, edge_index, edge_attr, batch, age=None, sex=None, fiq=None):
         """
         Create a forward function for a specific batch.
 
-        Simplified version for Captum compatibility - no site embedding or demographics
-        since those don't scale well with Captum's numerical integration.
+        Pass demographics to maintain correct classifier input dimensions (128 pooled + 3 demo = 131).
         """
 
         def wrapper(x):
-            return self.model(x, edge_index, edge_attr, batch, None, None, None, None)
+            return self.model(x, edge_index, edge_attr, batch, None, age, sex, fiq)
 
         return wrapper
 
@@ -132,10 +131,10 @@ class FeatureAttributionAnalyzer:
                     edge_index,
                     edge_attr,
                     batch_tensor,
-                    None,
-                    None,
-                    None,
-                    None,
+                    site_id=None,
+                    age=data.age if hasattr(data, "age") else None,
+                    sex=data.sex if hasattr(data, "sex") else None,
+                    fiq=data.fiq if hasattr(data, "fiq") else None,
                 )
                 pred_class = out.argmax(dim=1)
 
@@ -148,7 +147,10 @@ class FeatureAttributionAnalyzer:
                 if use_integrated_gradients and CAPTUM_AVAILABLE:
                     baseline = torch.zeros_like(data.x, requires_grad=False)
                     input_features = data.x.clone().detach().requires_grad_(True)
-                    batch_wrapper = self._get_wrapper_for_batch(edge_index, edge_attr, batch_tensor)
+                    age = data.age if hasattr(data, "age") else None
+                    sex = data.sex if hasattr(data, "sex") else None
+                    fiq = data.fiq if hasattr(data, "fiq") else None
+                    batch_wrapper = self._get_wrapper_for_batch(edge_index, edge_attr, batch_tensor, age, sex, fiq)
                     ig = IntegratedGradients(batch_wrapper)
                     attr = ig.attribute(input_features, baselines=baseline, target=target, n_steps=n_steps)
                 else:
@@ -158,10 +160,10 @@ class FeatureAttributionAnalyzer:
                         edge_index,
                         edge_attr,
                         batch_tensor,
-                        None,
-                        None,
-                        None,
-                        None,
+                        site_id=None,
+                        age=data.age if hasattr(data, "age") else None,
+                        sex=data.sex if hasattr(data, "sex") else None,
+                        fiq=data.fiq if hasattr(data, "fiq") else None,
                     )
                     if isinstance(target, torch.Tensor):
                         target = target.to(out.device)

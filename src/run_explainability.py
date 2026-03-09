@@ -68,12 +68,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.core.config import (
     ALL_FEATURE_NAMES,
     CHECKPOINT_DIR,
+    get_active_checkpoint_dir,
     GNN_DROPOUT,
     GNN_EDGE_GATE,
     GNN_GRL_ALPHA,
     GNN_HIDDEN_CHANNELS,
     GNN_IN_CHANNELS,
-    GNN_NUM_GNN_LAYERS,
+    GNN_NUM_LAYERS,
     GNN_NUM_HEADS,
     GNN_POOLING,
     GNN_USE_DEMOGRAPHICS,
@@ -104,7 +105,7 @@ def _load_model(checkpoint_path: Path, device: torch.device) -> CausalBrainGNN:
         hidden_channels=GNN_HIDDEN_CHANNELS,
         num_classes=2,
         num_heads=GNN_NUM_HEADS,
-        num_layers=GNN_NUM_GNN_LAYERS,
+        num_layers=GNN_NUM_LAYERS,
         pooling=GNN_POOLING,
         use_site_embedding=GNN_USE_SITE_EMBEDDING,
         use_demographics=GNN_USE_DEMOGRAPHICS,
@@ -217,7 +218,7 @@ def run_phase_features(model, test_loader, device, output_dir: Path) -> Optional
         )
         analyzer.visualize_per_class(feat_dir / "feature_importance_per_class.png")
         analyzer.compare_temporal_vs_spatial(
-            attributions, feat_dir / "feature_importance_temporal_vs_spatial.png"
+            attributions, output_path=feat_dir / "feature_importance_temporal_vs_spatial.png"
         )
         logger.info("Phase 8.3 complete — figures saved to %s/features/", output_dir)
 
@@ -269,7 +270,7 @@ def run_explainability_pipeline(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("Device: %s", device)
 
-    checkpoint_path = CHECKPOINT_DIR / f"best_model_fold{fold_id}.pt"
+    checkpoint_path = get_active_checkpoint_dir() / f"best_model_fold{fold_id}.pt"
     model       = _load_model(checkpoint_path, device)
     test_loader = _build_test_loader(batch_size=batch_size)
 

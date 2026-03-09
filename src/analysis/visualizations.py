@@ -5,6 +5,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 from torch_geometric.loader import DataLoader
 
@@ -24,7 +25,7 @@ from src.core.config import (
     GNN_IN_CHANNELS,
     GNN_HIDDEN_CHANNELS,
     GNN_NUM_HEADS,
-    GNN_NUM_GNN_LAYERS,
+    GNN_NUM_LAYERS,
     GNN_POOLING,
     GNN_USE_SITE_EMBEDDING,
     GNN_USE_DEMOGRAPHICS,
@@ -159,9 +160,9 @@ def visualize_accuracy_metrics(output_dir: Path):
                 fold_id = _parse_fold_id(history_file)
                 with open(history_file, "r") as f:
                     history_data = json.load(f)
-                    if "val_accuracy" in history_data:
-                        fold_accuracies[fold_id] = history_data["val_accuracy"]
-                        fold_epochs[fold_id] = list(range(len(history_data["val_accuracy"])))
+                    if "val_acc" in history_data:
+                        fold_accuracies[fold_id] = history_data["val_acc"]
+                        fold_epochs[fold_id] = list(range(len(history_data["val_acc"])))
 
             if fold_accuracies:
                 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
@@ -279,7 +280,7 @@ def generate_simple_feature_importance(output_dir: Path):
             hidden_channels=GNN_HIDDEN_CHANNELS,
             num_classes=2,
             num_heads=GNN_NUM_HEADS,
-            num_layers=GNN_NUM_GNN_LAYERS,
+            num_layers=GNN_NUM_LAYERS,
             pooling=GNN_POOLING,
             use_site_embedding=GNN_USE_SITE_EMBEDDING,
             use_demographics=GNN_USE_DEMOGRAPHICS,
@@ -378,7 +379,7 @@ def run_visualization_pipeline(output_dir: Path):
                 hidden_channels=GNN_HIDDEN_CHANNELS,
                 num_classes=2,
                 num_heads=GNN_NUM_HEADS,
-                num_layers=GNN_NUM_GNN_LAYERS,
+                num_layers=GNN_NUM_LAYERS,
                 pooling=GNN_POOLING,
                 use_site_embedding=GNN_USE_SITE_EMBEDDING,
                 use_demographics=GNN_USE_DEMOGRAPHICS,
@@ -406,11 +407,13 @@ def run_visualization_pipeline(output_dir: Path):
                 device=device,
             )
 
-            attributions = analyzer.compute_attributions()
-            analyzer.visualize_feature_importance(attributions, output_dir / "feature_importance_ig.png")
-            analyzer.visualize_per_class(output_dir / "feature_importance_per_class.png")
-
-            logger.info("Advanced feature importance completed")
+            try:
+                attributions = analyzer.compute_attributions()
+                analyzer.visualize_feature_importance(attributions, output_dir / "feature_importance_ig.png")
+                analyzer.visualize_per_class(output_dir / "feature_importance_per_class.png")
+                logger.info("Advanced feature importance completed")
+            except (RuntimeError, IndexError) as shape_error:
+                logger.warning(f"Feature attribution skipped due to architecture mismatch: {str(shape_error)[:80]}…")
         except Exception as e:
             logger.error(f"Advanced feature importance failed: {e}")
             import traceback

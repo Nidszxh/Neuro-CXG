@@ -283,6 +283,15 @@ class NodeImportanceAnalyzer:
         diff = asd_scores - ctrl_scores
         top_regions = np.argsort(np.abs(diff))[::-1]
 
+        max_abs_diff = float(np.abs(diff).max())
+        if max_abs_diff < 1e-4:
+            logger.warning(
+                "All GradCAM differential scores are near-zero (max |Δ|=%.2e). "
+                "Model is likely predicting one class for most/all inputs. "
+                "Interpretability output is not reliable.",
+                max_abs_diff,
+            )
+
         logger.info("Top differentially-important regions (ASD - Control):")
         for rank, idx in enumerate(top_regions[:5]):
             logger.info(
@@ -352,6 +361,22 @@ class NodeImportanceAnalyzer:
             "GradCAM: collected %d ASD, %d Control graphs",
             len(asd_scores), len(control_scores),
         )
+
+        # Warn when all scores are near-zero — a typical sign of a saturated /
+        # degenerate model where softmax output barely varies across inputs and
+        # back-propagated gradients collapse to zero.
+        if results:
+            all_means = [v for k, v in results.items() if k.endswith("_mean")]
+            global_max = float(max(arr.max() for arr in all_means)) if all_means else 0.0
+            if global_max < 1e-5:
+                logger.warning(
+                    "GradCAM scores are effectively zero (max=%.2e). "
+                    "This typically means the model predicts one class for all "
+                    "inputs (degenerate/biased model) so softmax gradients vanish. "
+                    "Attribution results will not be meaningful until model quality improves.",
+                    global_max,
+                )
+
         return results
 
     # ── Attention extraction pass ──────────────────────────────────────────────
@@ -379,6 +404,9 @@ class NodeImportanceAnalyzer:
                     batch.edge_attr,
                     batch.batch,
                     site_id=None,
+                    age=batch.age if hasattr(batch, "age") else None,
+                    sex=batch.sex if hasattr(batch, "sex") else None,
+                    fiq=batch.fiq if hasattr(batch, "fiq") else None,
                 )
                 attn_by_layer = extractor.get_attention_weights()
 

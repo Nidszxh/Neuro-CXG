@@ -70,13 +70,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.core.config import (
     ALL_FEATURE_NAMES,
     CHECKPOINT_DIR,
+    get_active_checkpoint_dir,
     GNN_BATCH_SIZE,
     GNN_DROPOUT,
     GNN_EDGE_GATE,
     GNN_GRL_ALPHA,
     GNN_HIDDEN_CHANNELS,
     GNN_IN_CHANNELS,
-    GNN_NUM_GNN_LAYERS,
+    GNN_NUM_LAYERS,
     GNN_NUM_HEADS,
     GNN_POOLING,
     GNN_USE_DEMOGRAPHICS,
@@ -107,12 +108,26 @@ OUTPUT_DIR = RESULTS_DIR / "evaluation"
 
 def _load_model(fold_id: int) -> CausalBrainGNN:
     """Load a trained fold checkpoint into a CausalBrainGNN."""
+    active_dir = get_active_checkpoint_dir()
+    ckpt_path = active_dir / f"best_model_fold{fold_id}.pt"
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+
+    ckpt = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
+    state = ckpt.get("model_state", ckpt)
+
+    # Auto-detect node_emb_dim from the saved lin_in weight shape so that
+    # checkpoints trained before this feature was added load correctly.
+    site_dim = 16 if GNN_USE_SITE_EMBEDDING else 0
+    saved_in_features = state["lin_in.weight"].shape[1]
+    node_emb_dim = saved_in_features - GNN_IN_CHANNELS - site_dim
+
     model = CausalBrainGNN(
         num_node_features=GNN_IN_CHANNELS,
         hidden_channels=GNN_HIDDEN_CHANNELS,
         num_classes=2,
         num_heads=GNN_NUM_HEADS,
-        num_layers=GNN_NUM_GNN_LAYERS,
+        num_layers=GNN_NUM_LAYERS,
         pooling=GNN_POOLING,
         dropout=GNN_DROPOUT,
         use_site_embedding=GNN_USE_SITE_EMBEDDING,
@@ -120,14 +135,9 @@ def _load_model(fold_id: int) -> CausalBrainGNN:
         use_grl=GNN_USE_GRL,
         grl_alpha=GNN_GRL_ALPHA,
         edge_gate=GNN_EDGE_GATE,
+        node_emb_dim=node_emb_dim,
     ).to(DEVICE)
 
-    ckpt_path = CHECKPOINT_DIR / f"best_model_fold{fold_id}.pt"
-    if not ckpt_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-
-    ckpt = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
-    state = ckpt.get("model_state", ckpt)
     model.load_state_dict(state, strict=False)
     model.eval()
     return model
@@ -147,7 +157,7 @@ def _predict_probs(model: CausalBrainGNN, loader: DataLoader) -> Tuple[np.ndarra
         batch = batch.to(DEVICE)
         out = model(
             batch.x, batch.edge_index, batch.edge_attr, batch.batch,
-            site_id=None,
+            site_id=batch.site_id if hasattr(batch, "site_id") else None,
             age=batch.age  if hasattr(batch, "age")  else None,
             sex=batch.sex  if hasattr(batch, "sex")  else None,
             fiq=batch.fiq  if hasattr(batch, "fiq")  else None,
@@ -203,15 +213,23 @@ def _bootstrap_ci(
     """
     rng = np.random.default_rng(seed)
     n = len(labels)
-    aucs, f1s, accs, senss, specs = [], [], [], [], []
+    aucs, auprcs, f1s, accs, senss, specs = [], [], [], [], [], []
+
+    # Stratified bootstrap: resample ASD and Control indices separately so that
+    # both classes are always represented in every bootstrap sample.
+    idx_asd  = np.where(labels == 1)[0]
+    idx_ctrl = np.where(labels == 0)[0]
 
     for _ in range(n_bootstrap):
-        idx = rng.integers(0, n, size=n)
+        boot_asd  = rng.choice(idx_asd,  size=len(idx_asd),  replace=True)
+        boot_ctrl = rng.choice(idx_ctrl, size=len(idx_ctrl), replace=True)
+        idx = np.concatenate([boot_asd, boot_ctrl])
         bp, bl = probs[idx], labels[idx]
         if bl.min() == bl.max():   # degenerate bootstrap: skip
             continue
         m = _full_metrics(bp, bl, threshold=threshold)
         aucs.append(m["auc"])
+        auprcs.append(m["auprc"])
         f1s.append(m["f1"])
         accs.append(m["accuracy"])
         senss.append(m["sensitivity"])
@@ -225,6 +243,7 @@ def _bootstrap_ci(
 
     return {
         "auc":         _ci(aucs),
+        "auprc":       _ci(auprcs),
         "f1":          _ci(f1s),
         "accuracy":    _ci(accs),
         "sensitivity": _ci(senss),
@@ -246,16 +265,31 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
     logger.info("=" * 60)
 
     loader = _build_loader(test_graphs)
-    fold_probs, fold_aucs = [], []
+    fold_probs, fold_aucs, fold_thresholds = [], [], []
 
     for fold_id in range(K_FOLDS):
         try:
             model = _load_model(fold_id)
             probs, labels = _predict_probs(model, loader)
-            fold_auc = roc_auc_score(labels, probs)
+            # Use checkpoint val-AUC for weighting to avoid circular test-set evaluation
+            active_dir = get_active_checkpoint_dir()
+            ckpt = torch.load(
+                active_dir / f"best_model_fold{fold_id}.pt",
+                map_location="cpu",
+                weights_only=False,
+            )
+            fold_auc = float(ckpt.get("auc", 0.5))
+            if "auc" not in ckpt:
+                logger.warning(
+                    "Fold %d checkpoint missing 'auc' key — defaulting to 0.5 weight. "
+                    "Re-train this fold to persist val-AUC in the checkpoint.",
+                    fold_id,
+                )
+            fold_threshold = float(ckpt.get("threshold", 0.5))
             fold_probs.append(probs)
             fold_aucs.append(fold_auc)
-            logger.info("  Fold %d  AUC=%.4f  (n=%d)", fold_id, fold_auc, len(labels))
+            fold_thresholds.append(fold_threshold)
+            logger.info("  Fold %d  val-AUC=%.4f  threshold=%.4f  (n=%d)", fold_id, fold_auc, fold_threshold, len(labels))
             del model
         except FileNotFoundError as e:
             logger.warning("  Skipped: %s", e)
@@ -266,7 +300,8 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
     # AUC-weighted average
     weights   = np.array(fold_aucs) / sum(fold_aucs)
     ens_probs = np.average(np.stack(fold_probs, axis=0), axis=0, weights=weights)
-    threshold = _optimal_threshold(ens_probs, labels)
+    # Use mean of val-fold thresholds — avoids looking at test labels to pick threshold
+    threshold = float(np.mean(fold_thresholds))
     metrics   = _full_metrics(ens_probs, labels, threshold=threshold)
     ci        = _bootstrap_ci(ens_probs, labels, threshold=threshold)
 
@@ -332,10 +367,16 @@ def run_permutation_test(
     n_permutations: int = 1_000,
     output_dir: Path = OUTPUT_DIR,
     seed: int = 42,
+    site_ids: Optional[np.ndarray] = None,
+    within_site: bool = False,
+    plot_name: str = "permutation_test.png",
 ) -> Dict:
     """
     Permutation test: shuffle ASD / Control labels N times and compute null AUC.
     The observed AUC is significant if p < 0.05.
+
+    If ``within_site`` is True and *site_ids* is supplied, labels are shuffled
+    independently within each site to control for site-level class imbalance.
     """
     logger.info("=" * 60)
     logger.info("SECTION 2 — PERMUTATION SIGNIFICANCE TEST  (n=%d)", n_permutations)
@@ -345,8 +386,21 @@ def run_permutation_test(
     observed_auc = roc_auc_score(labels, ens_probs)
     null_aucs    = np.empty(n_permutations)
 
+    # Determine site groups for within-site permutation
+    if within_site and site_ids is not None and len(site_ids) == len(labels):
+        unique_sites = np.unique(site_ids)
+        logger.info("  Using within-site permutation (%d sites)", len(unique_sites))
+        site_groups = [(site_ids == s) for s in unique_sites]
+    else:
+        site_groups = None
+
     for i in range(n_permutations):
-        shuffled = rng.permutation(labels)
+        if site_groups is not None:
+            shuffled = labels.copy()
+            for mask in site_groups:
+                shuffled[mask] = rng.permutation(labels[mask])
+        else:
+            shuffled = rng.permutation(labels)
         null_aucs[i] = roc_auc_score(shuffled, ens_probs)
 
     p_value = float(np.mean(null_aucs >= observed_auc))
@@ -373,7 +427,7 @@ def run_permutation_test(
         ax.legend(fontsize=10)
         ax.grid(alpha=0.3)
         plt.tight_layout()
-        out = output_dir / "permutation_test.png"
+        out = output_dir / plot_name
         plt.savefig(out, dpi=300, bbox_inches="tight")
         plt.close()
         logger.info("  Plot saved → %s", out)
@@ -388,7 +442,6 @@ def run_permutation_test(
         "significant":    p_value < 0.05,
         "n_permutations": n_permutations,
     }
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 3: SUBGROUP ANALYSIS
@@ -806,6 +859,12 @@ def save_comprehensive_results(
     logger.info("  p-value      : %.4f  (%s)",
                 perm.get("p_value", float("nan")),
                 "✓ significant" if perm.get("significant") else "✗ not significant")
+    if "p_value_global" in perm and "p_value_within_site" in perm:
+        logger.info(
+            "  p-value(global / within-site): %.4f / %.4f",
+            perm.get("p_value_global", float("nan")),
+            perm.get("p_value_within_site", float("nan")),
+        )
     logger.info("═" * 65)
 
 
@@ -853,9 +912,36 @@ def main() -> None:
 
     # ── Section 2: Permutation test ───────────────────────────────────────────
     if not args.no_permutation:
-        perm_result = run_permutation_test(
-            ens_probs, labels, n_permutations=args.n_permutations, output_dir=args.output_dir
+        site_ids = np.array([
+            int(g.site_id.item())
+            if hasattr(g, "site_id") and g.site_id is not None and g.site_id.numel() > 0
+            else -1
+            for g in test_graphs
+        ])
+        perm_global = run_permutation_test(
+            ens_probs, labels, n_permutations=args.n_permutations,
+            output_dir=args.output_dir,
+            within_site=False,
+            plot_name="permutation_test_global.png",
         )
+        perm_within_site = run_permutation_test(
+            ens_probs, labels, n_permutations=args.n_permutations,
+            output_dir=args.output_dir,
+            site_ids=site_ids,
+            within_site=True,
+            plot_name="permutation_test_within_site.png",
+        )
+        perm_result = {
+            "global": perm_global,
+            "within_site": perm_within_site,
+            "p_value_global": perm_global.get("p_value", float("nan")),
+            "p_value_within_site": perm_within_site.get("p_value", float("nan")),
+            "significant_global": perm_global.get("significant"),
+            "significant_within_site": perm_within_site.get("significant"),
+            # Backward-compatible top-level key: prefer conservative within-site p-value.
+            "p_value": perm_within_site.get("p_value", float("nan")),
+            "significant": perm_within_site.get("significant"),
+        }
     else:
         logger.info("Skipping permutation test (--no-permutation)")
         perm_result = {"skipped": True, "p_value": float("nan"), "significant": None}
