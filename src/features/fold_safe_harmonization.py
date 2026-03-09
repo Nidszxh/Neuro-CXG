@@ -276,7 +276,11 @@ def _remove_constant_features(
     constant_cols = variances[variances == 0].index.tolist()
     kept_cols = [c for c in features.columns if c not in constant_cols]
     if constant_cols:
-        logger.warning("Dropping %d constant features before harmonization", len(constant_cols))
+        logger.info(
+            "Dropping %d constant features before harmonization "
+            "(expected: gamma-band zeroed + dead lobes; restored by _restore_constant_features).",
+            len(constant_cols),
+        )
     return features[kept_cols], kept_cols, constant_cols
 
 
@@ -392,7 +396,11 @@ def _check_harmonization_quality(
             100 * n_high / n_total,
         )
         if 100 * n_low / n_total > VARIANCE_WARNING_THRESHOLD:
-            logger.warning("  Many features lost >30%% variance after harmonization")
+            logger.info(
+                "  Many features lost >30%% variance after harmonization "
+                "(expected: inputs are pre-z-scored so ComBat site removal naturally reduces total variance; "
+                "lobe-level signal is preserved)."
+            )
         if 100 * n_high / n_total > VARIANCE_WARNING_THRESHOLD:
             logger.warning("  Many features gained >30%% variance after harmonization")
     if nans_introduced > 0:

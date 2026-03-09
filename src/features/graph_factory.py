@@ -12,7 +12,8 @@ from src.core.config import (
     NUM_LOBES, LOBE_NAMES,
     MASTER_MANIFEST, NODE_ATTRIBUTES_HARMONIZED, 
     NODE_FEATURES_3D, CAUSAL_GRAPHS_DIR,
-    NUM_TEMPORAL_FEATURES, NUM_SPATIAL_FEATURES, GNN_IN_CHANNELS
+    NUM_TEMPORAL_FEATURES, NUM_SPATIAL_FEATURES, GNN_IN_CHANNELS,
+    EXCLUDED_SUBJECTS, MAX_NAN_ROIS,
 )
 
 # Setup logging
@@ -79,7 +80,31 @@ class ABIDECausalDataset(Dataset):
         coord_subs = set(self.coords.index.astype(str).unique())
         
         available_subs = manifest_subs.intersection(attr_subs).intersection(coord_subs)
-        
+
+        # 1. Remove known-corrupted subjects (near-100% NaN coverage).
+        excluded_upper = {s.upper() for s in EXCLUDED_SUBJECTS}
+        available_subs = {
+            s for s in available_subs
+            if s.upper() not in excluded_upper
+        }
+        if excluded_upper:
+            logger.info(
+                "Excluded %d hard-coded corrupted subjects: %s",
+                len(EXCLUDED_SUBJECTS), sorted(EXCLUDED_SUBJECTS),
+            )
+
+        # 2. Remove subjects where too many temporal feature columns are NaN.
+        # Any column whose name starts with a lobe index (0-11) is a feature column.
+        feat_cols = [c for c in self.node_attr.columns if c != 'subject_id']
+        nan_counts = self.node_attr[feat_cols].isna().sum(axis=1)
+        high_nan_subs = set(nan_counts[nan_counts > MAX_NAN_ROIS].index.astype(str))
+        if high_nan_subs:
+            logger.warning(
+                "Removing %d subjects with >%d NaN feature columns (likely brainstem/coverage gaps): %s",
+                len(high_nan_subs), MAX_NAN_ROIS, sorted(high_nan_subs)[:10],
+            )
+        available_subs -= high_nan_subs
+
         valid_subs = []
         invalid_count = 0
         

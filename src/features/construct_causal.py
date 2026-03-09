@@ -30,6 +30,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Tracks which lobe IDs have already emitted a zero-signal warning so that atlas
+# coverage-gap messages appear once per process run rather than once per subject.
+_zero_lobe_warned: set = set()
+
 
 def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
     """
@@ -77,14 +81,42 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
         indices = [i for i in LOBE_MAPPING[lobe_id] if i < num_rois]
         
         if not indices:
-            logger.warning(f"Lobe {lobe_id} ({LOBE_NAMES[lobe_id]}): No matching ROIs in atlas. Using zero-signal.")
+            if lobe_id not in _zero_lobe_warned:
+                logger.warning(
+                    f"Lobe {lobe_id} ({LOBE_NAMES[lobe_id]}): No matching ROIs in atlas. "
+                    "Using zero-signal. (Subsequent subjects with the same gap suppressed.)"
+                )
+                _zero_lobe_warned.add(lobe_id)
             lobe_signals.append(torch.zeros(ts_raw.shape[0], device=ts_raw.device))
             lobe_internal_features.append(torch.tensor([0.0, 0.0], device=ts_raw.device))
             continue
         
         # Extract raw ROIs for this lobe: Shape (Timepoints, Num_ROIs_in_Lobe)
         roi_data = ts_raw[:, indices]
-        
+
+        # Filter out ROIs whose time series contains any NaN (atlas coverage gaps,
+        # brainstem/subcortical ROIs beyond atlas bounds).  This must happen before
+        # the PCA block so that NaN values don't propagate into the lobe signal.
+        valid_roi_mask = ~torch.isnan(roi_data).any(dim=0)  # (N_rois_in_lobe,)
+        if not valid_roi_mask.any():
+            if lobe_id not in _zero_lobe_warned:
+                logger.warning(
+                    f"Lobe {lobe_id} ({LOBE_NAMES[lobe_id]}): all {len(indices)} ROIs "
+                    "have NaN time series (atlas coverage gap). Using zero-signal fallback. "
+                    "(Subsequent subjects with the same gap suppressed.)"
+                )
+                _zero_lobe_warned.add(lobe_id)
+            lobe_signals.append(torch.zeros(ts_raw.shape[0], device=ts_raw.device))
+            lobe_internal_features.append(torch.tensor([0.0, 0.0], device=ts_raw.device))
+            continue
+        if valid_roi_mask.sum().item() < len(indices):
+            n_dropped = len(indices) - valid_roi_mask.sum().item()
+            logger.debug(
+                f"Lobe {lobe_id} ({LOBE_NAMES[lobe_id]}): dropped {n_dropped} NaN ROI(s), "
+                f"using {valid_roi_mask.sum().item()}/{len(indices)} valid ROIs."
+            )
+            roi_data = roi_data[:, valid_roi_mask]
+
         # --- 1. DOMINANT SIGNAL EXTRACTION (PCA/EIGENVARIATE) ---
         # Instead of mean(), use first principal component to avoid signal cancellation
         try:
@@ -116,9 +148,8 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
         # Measure how synchronized ROIs within this lobe are
         # ASD hypothesis: Local over-connectivity means HIGH coherence within lobes
         
-        # Filter out completely NaN ROIs
-        valid_roi_mask = ~torch.isnan(roi_data).all(dim=0)
-        valid_rois = roi_data[:, valid_roi_mask]
+        # roi_data is already NaN-free after the filtering block above
+        valid_rois = roi_data
         
         if valid_rois.shape[1] > 1:
             try:
@@ -249,12 +280,18 @@ def compute_causality_matrix(ts_lobe: torch.Tensor, method: str = None, max_lag:
         
         elif method == 'lagged_pearson':
             logger.debug(f"Computing lagged Pearson correlation (lag={_LEGACY_CAUSAL_LAG})")
-            # Use legacy function
-            return compute_lagged_causality(ts_lobe)
+            # Use legacy function with Fisher-Z transform applied downstream
+            pearson_adj = compute_lagged_causality(ts_lobe)
+            # Fisher-Z transform: z = arctanh(r) — stabilises variance of correlations
+            # Clips to (-0.999, 0.999) to avoid ±inf on perfect correlations
+            pearson_adj = pearson_adj.clamp(-0.999, 0.999)
+            return torch.arctanh(pearson_adj)
         
         else:
             logger.warning(f"Unknown causality method '{method}', falling back to lagged_pearson")
-            return compute_lagged_causality(ts_lobe)
+            fallback_adj = compute_lagged_causality(ts_lobe)
+            fallback_adj = fallback_adj.clamp(-0.999, 0.999)
+            return torch.arctanh(fallback_adj)
         
         # Convert back to torch tensor
         causal_matrix = torch.from_numpy(causal_matrix_np).float().to(DEVICE)
@@ -378,14 +415,17 @@ def adaptive_sparsification(
             )
     
     elif method == 'fixed':
-        # Use fixed quantile threshold (original method)
-        thresh = torch.quantile(offdiag_values, SPARSITY_QUANTILE)
+        # Quantile over off-diagonal values only — including the zero-padded diagonal
+        # inflates the quantile and causes over-dense graphs.
+        # Target density: GRAPH_DENSITY_TARGET (default 20%) of directed edges.
+        target_q = 1.0 - GRAPH_DENSITY_TARGET
+        thresh = torch.quantile(offdiag_values, target_q)
         adj_matrix = torch.where(
             (abs_matrix >= thresh) & offdiag_mask,
             causal_matrix,
             torch.tensor(0.0, device=DEVICE)
         )
-        
+
         # Ensure minimum edges
         num_edges = (adj_matrix != 0).sum().item()
         if num_edges < min_edges:
@@ -400,7 +440,8 @@ def adaptive_sparsification(
     
     else:
         logger.warning(f"Unknown sparsity method '{method}', using fixed")
-        thresh = torch.quantile(offdiag_values, SPARSITY_QUANTILE)
+        target_q = 1.0 - GRAPH_DENSITY_TARGET
+        thresh = torch.quantile(offdiag_values, target_q)
         adj_matrix = torch.where(
             (abs_matrix >= thresh) & offdiag_mask,
             causal_matrix,
@@ -436,8 +477,16 @@ def construct_graph(subject_id: str, split: str, tr: float = 2.0) -> Tuple[bool,
 
         # Single z-score normalisation: NiftiLabelsMasker uses standardize=False
         # (abide_download.py) so we apply exactly one z-score here before PCA.
-        ts_mean = ts_data.mean(dim=0, keepdim=True)
-        ts_std  = ts_data.std(dim=0, keepdim=True).clamp(min=1e-8)
+        # Use nanmean/nan-safe std so partially-NaN ROI columns are still z-scored
+        # on their valid timepoints.  All-NaN columns remain NaN and are filtered
+        # by valid_roi_mask inside aggregate_to_lobes.
+        ts_mean = torch.nanmean(ts_data, dim=0, keepdim=True)
+        ts_var  = torch.nanmean((ts_data - ts_mean).pow(2), dim=0, keepdim=True)
+        ts_std  = ts_var.sqrt()
+        # Floor non-NaN std at 1e-8 (prevents division by zero for constant ROIs).
+        # NaN std (all-NaN column) is intentionally preserved so valid_roi_mask
+        # can detect and drop those columns in aggregate_to_lobes.
+        ts_std  = torch.where(torch.isnan(ts_std), ts_std, ts_std.clamp(min=1e-8))
         ts_data = (ts_data - ts_mean) / ts_std
 
         # Validate input data
@@ -539,7 +588,10 @@ def main():
     # Track MIN_EDGES fallback by DX_GROUP to detect class-imbalanced graph quality
     fallback_by_group: Dict[int, int] = {}
     
-    for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Building Graphs"):
+    for _, row in tqdm(
+        manifest.iterrows(), total=len(manifest), desc="Building Graphs",
+        miniters=max(1, len(manifest) // 20), mininterval=10.0
+    ):
         tr = row.get('TR', 2.0)  # Get per-subject TR, default to 2.0 if missing
         result, fallback = construct_graph(row['subject_id'], row['split'], tr=tr)
         dx_group = int(row.get('DX_GROUP', -1))
