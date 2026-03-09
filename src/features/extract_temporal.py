@@ -354,7 +354,10 @@ def main(add_frequency: bool = True) -> None:
         f"Features per ROI: {features_per_roi} ({'with' if add_frequency else 'without'} frequency features)"
     )
 
-    for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Subjects"):
+    for _, row in tqdm(
+        manifest.iterrows(), total=len(manifest), desc="Subjects",
+        miniters=max(1, len(manifest) // 20), mininterval=10.0
+    ):
         sub_id = str(row["subject_id"])
         split = row["split"]
         tr = row.get("TR", DEFAULT_TR)

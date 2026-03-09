@@ -1,6 +1,8 @@
-from ultralytics import YOLO
 import sys
+import logging
 from pathlib import Path
+
+from ultralytics import YOLO
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
@@ -10,6 +12,12 @@ from src.core.config import (
     YOLO_MODEL_SIZE,
     YOLO_TRAIN_CONFIG,
 )
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 def main():
     # 1. Load YOLO26n
@@ -30,8 +38,8 @@ def main():
     # Optional: evaluate test split after training if defined in brain.yaml
     try:
         model.val(data=str(CONFIG_BRAIN_YAML))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Post-training validation skipped: %s", e)
 
     print(f"\n[SUCCESS] Training Complete. Model aligned for consistent lobe detection.")
 

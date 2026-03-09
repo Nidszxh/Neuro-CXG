@@ -211,9 +211,9 @@ class TestComputeGrangerCausality:
     # ── Value properties ─────────────────────────────────────────────────────
 
     def test_all_values_non_negative(self, synthetic_data):
-        """GC values are -log10(p) or 0; they must be ≥ 0."""
+        """GC values are -log10(p) or 0; they must be ≥ 0 (within float epsilon)."""
         _, gc = synthetic_data
-        assert (gc >= 0).all(), f"Negative GC values found:\n{gc}"
+        assert (gc >= -1e-9).all(), f"Negative GC values found:\n{gc}"
 
     def test_no_nan_or_inf(self, synthetic_data):
         """Output must contain no NaN or Inf."""

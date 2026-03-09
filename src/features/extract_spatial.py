@@ -50,9 +50,9 @@ def extract_spatial():
             logger.info(f"Processing {split} set...")
             # Use config confidence threshold (not hardcoded 0.35)
             from src.core.config import YOLO_CONF_THRESHOLD
-            results = model(str(img_dir), stream=True, conf=YOLO_CONF_THRESHOLD)
+            results = model(str(img_dir), stream=True, conf=YOLO_CONF_THRESHOLD, verbose=False)
 
-            for res in tqdm(results, desc=f"Inference {split}"):
+            for res in tqdm(results, desc=f"Inference {split}", disable=not sys.stdout.isatty()):
                 try:
                     file_name = Path(res.path).stem
                     try:
@@ -106,7 +106,10 @@ def extract_spatial():
     partial_count = 0
     subject_ids = raw_df["subject_id"].unique()
 
-    for sub_id in tqdm(subject_ids, desc="Building Subject Nodes"):
+    for sub_id in tqdm(
+        subject_ids, desc="Building Subject Nodes",
+        miniters=max(1, len(subject_ids) // 20), mininterval=10.0
+    ):
         sub_group = raw_df[raw_df["subject_id"] == sub_id]
 
         # RELAXED FILTER: Require at least 9/12 regions detected

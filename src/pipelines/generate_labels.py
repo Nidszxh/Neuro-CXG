@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 import nibabel as nib
@@ -10,7 +11,10 @@ from tqdm import tqdm
 
 # Setup paths from config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src.core.config import DATA_FINAL, ATLAS_PATH, LOBE_MAPPING, NUM_LOBES
+from src.core.config import (
+    DATA_FINAL, ATLAS_PATH, LOBE_MAPPING, NUM_LOBES,
+    ALFF_SLICE_PERCENTILES, YOLO_IMGSZ
+)
 
 # Setup logging
 logging.basicConfig(
@@ -20,7 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
-IMG_SIZE = (640, 640)
+IMG_SIZE = (YOLO_IMGSZ, YOLO_IMGSZ)
 
 
 def calculate_yolo_bbox(mask, size):
@@ -49,13 +53,12 @@ def generate_atlas_labels_for_percentiles():
     data = atlas_img.get_fdata()
     atlas_z_dim = data.shape[2]
     
-    # Match abide_download.py line 244: percentiles used during slice export
-    percentiles = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+    # Use percentiles from config (single source of truth with abide_download.py)
     atlas_labels = {}
 
-    logger.info(f"Pre-calculating atlas bounding boxes for {len(percentiles)} percentile slices (atlas z_dim={atlas_z_dim})...")
+    logger.info(f"Pre-calculating atlas bounding boxes for {len(ALFF_SLICE_PERCENTILES)} percentile slices (atlas z_dim={atlas_z_dim})...")
     
-    for idx, p in enumerate(percentiles):
+    for idx, p in enumerate(ALFF_SLICE_PERCENTILES):
         z = int(atlas_z_dim * p)  # Atlas z-index for this percentile
         
         if z >= atlas_z_dim:
@@ -98,9 +101,6 @@ def main():
     
     logger.info(f"Generated annotations for {len(atlas_anno)} percentile slices")
     
-    # Percentiles used in abide_download.py (7 slices per subject)
-    percentiles = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
-    
     splits = ["train", "val", "test"]
     total_images = 0
     total_labels = 0
@@ -119,7 +119,7 @@ def main():
         logger.info(f"Annotating {split} split ({len(img_files)} images)...")
         
         # Group images by subject to map z-indices to percentiles
-        from collections import defaultdict
+
         subject_slices = defaultdict(list)
         
         for img_name in img_files:
@@ -140,8 +140,8 @@ def main():
             # Sort by z-index to map to percentiles
             slice_list_sorted = sorted(slice_list, key=lambda x: x[0])
             
-            if len(slice_list_sorted) != 7:
-                logger.warning(f"{subject_id}: Expected 7 slices, got {len(slice_list_sorted)}")
+            if len(slice_list_sorted) != len(ALFF_SLICE_PERCENTILES):
+                logger.warning(f"{subject_id}: Expected {len(ALFF_SLICE_PERCENTILES)} slices, got {len(slice_list_sorted)}")
                 continue
             
             # Map each slice to its corresponding percentile index (0-6)

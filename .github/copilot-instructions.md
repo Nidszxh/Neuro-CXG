@@ -1,927 +1,599 @@
-# Neuro-CXG: AI Agent Guide
+# Neuro-CXG Project Guidelines
+**Causal Graph Neural Networks for Brain Disorder Classification from fMRI**
 
-## Quick Start
+**Last Generated:** March 9, 2026  
+**For:** AI Coding Agents (GitHub Copilot, Claude, etc.)
 
-**Pipeline**: raw fMRI → YOLO (12 regions) → features → causal graphs → GNN classifier
+---
 
-**Essential Commands**:
+## Executive Architecture
+
+Neuro-CXG is a **20-stage end-to-end medical ML pipeline** for autism spectrum disorder (ASD) classification using fMRI-derived causal brain graphs. The system achieves **CV AUC 0.7434 ± 0.0417** (March 9, 2026) with production-grade engineering: explicit validation at every stage, fold-safe harmonization, anatomically-preserving constraints, and comprehensive explainability.
+
+**Critical Design Principle:** *Configuration-driven everything* — `src/core/config.py` is the single source of truth. Never write paths, hyperparameters, or feature names directly in code.
+
+---
+
+## Code Style
+
+**Language & Formatting**
+- Python 3.x with type hints (prefer explicit over implicit)
+- Google-style docstrings for functions/classes
+- Standard logging format: `logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')`
+- Imports order: stdlib → third-party → local (see [src/models/causal_gnn.py](src/models/causal_gnn.py))
+- Never hardcode paths: always import from [src/core/config.py](src/core/config.py)
+
+**Medical Domain Constraints**
+- **Reproducibility:** seed=42 everywhere (torch, numpy, random) — required for auditability
+- **Anatomical Preservation:** YOLO augmentation uses `fliplr=0.0`, `degrees=0.0` — no rotation or flips to preserve Left/Right hemispheres and 3D alignment
+- **Fold-Safe Harmonization:** Always protect `DX_GROUP` (diagnosis) as covariate in ComBat to prevent diagnosis leakage into batch-correction
+- **Nyquist Awareness:** fMRI with TR=2s has Nyquist limit of 0.25 Hz; gamma band (0.20-0.25 Hz) is unreliable; delta/theta/alpha are safe
+- **Error Handling:** Graceful degradation (never crash), fallback to simpler methods (e.g., PCA fails → mean), log warnings, continue
+
+## Architecture
+
+### **20-Stage Pipeline Organization**
+
+Neuro-CXG follows a **deterministic, validated pipeline** with explicit failure points and recovery mechanisms.
+
+#### **Stage Groups**
+
+| Group | Stages | Purpose | Output |
+|-------|--------|---------|--------|
+| **Phase 0: Data Acquisition** | 1-3 | Download ABIDE, stratified split, manifest | `data/final/{train,val,test}/`, `master_manifest.csv` |
+| **Phase 1: Validation & Labeling** | 4-7 | Atlas check, YOLO label generation | YOLO format `.txt` annotations |
+| **Phase 2: ROI Detection** | 8 | Train YOLO26n (12 brain regions) | `best.pt` weights (mAP50-95=0.9598 v29, deployed March 9, 2026) |
+| **Phase 3: Feature Extraction** | 9-12 | Spatial + temporal extraction, harmonization | `node_attributes_harmonized.csv` (12 regions × 28 features) |
+| **Phase 4: Graph Construction** | 13-15 | Causal inference, integrity, diagnostics | `data/processed/causal_graphs/{sub}_graph.pt` |
+| **Phase 5: Model Training** | 16 | 5-fold CV with GATv2 | `models/checkpoints/best_model_fold*.pt` |
+| **Phase 6: Post-Training Analysis** | 17-20 | Evaluation, explainability, result analysis | Reports, visualizations, interpretability |
+
+#### **Module Responsibilities**
+
+```
+src/core/config.py
+├── SINGLE SOURCE OF TRUTH for all paths, hyperparameters, constants
+├── Feature definitions: temporal (20), internal (2), spatial (6) = 28 total
+├── Neural network architecture (GNN_HIDDEN_CHANNELS, GNN_NUM_LAYERS, etc.)
+├── Medical constraints (YOLO_FLIPLR=0.0, K_FOLDS=5, GRANGER_MAX_LAG=5, GRANGER_MAX_LAG_SECONDS=10.0)
+└── Diagnostic thresholds (AUC_GOOD_THRESHOLD=0.70, F1_WEAK_THRESHOLD=0.30)
+
+NOTE: `CAUSAL_LAG` is deprecated/commented out in config.py. Use GRANGER_MAX_LAG and GRANGER_MAX_LAG_SECONDS.
+
+src/data/
+├── abide_download.py → download ABIDE from S3, extract 7 z-slices per subject (ALFF percentiles [0.21, 0.3–0.8]; 0.21 captures brainstem ROIs 167–170)
+├── split.py → 2D stratified split (DX_GROUP × SITE_ID, 70/15/15)
+└── filter_to_1000.py → remove subjects missing entire lobe in spatial features
+
+src/features/
+├── extract_spatial.py → 6 features/lobe (x, y, z, size, conf_std, count) from YOLO; gate SPATIAL_MIN_REQUIRED_REGIONS=9
+├── extract_spatial_atlas.py → atlas-based spatial coords (alternative to YOLO, precomputed AAL3v1 centroids from roi_centroids.json)
+├── extract_temporal.py → 20 features/lobe (8 basic + 12 frequency domain); uses SITE_TR_MAP for per-subject TR
+├── fold_safe_harmonization.py → ComBat batch correction (neuroHarmonize, DX_GROUP protected; 5-fold CV safe)
+├── construct_causal.py → Granger causality or lagged correlation → 12×12 digraph; saves as dict not PyG Data
+├── causal_inference.py → low-level Granger/transfer-entropy computation
+├── graph_factory.py → ABIDECausalDataset (torch_geometric.Dataset subclass; assembles Data at load time)
+└── [Internal pipeline: 170 AAL ROIs → 12 lobes via PCA eigenvariate + ReHo (coherence + spatial_variance)]
+
+src/models/
+├── causal_gnn.py → CausalBrainGNN (GATv2 layers, site embedding, skip connections)
+├── gnn_model.py → 5-fold CV training orchestration + metrics + checkpointing
+└── training_utils.py → EarlyStopping, CheckpointManager, TrainingTracker, Focal Loss
+
+src/pipelines/
+├── roi_detection.py → YOLO training script (100 epochs, batch 32, medical augmentation)
+└── generate_labels.py → YOLO label generation from atlas
+
+src/validation/
+├── atlas_validator.py → verify AAL3 file exists and dimensions match
+├── audit_check.py → post-fix validation (1,000-subject count, 12-lobe completeness, feature dims, NaN/Inf check)
+├── pipeline_checks.py → comprehensive multi-level validation (YOLO quality, sparsity, etc.)
+└── dev_audit.py → development diagnostics (--features flag for deep analysis)
+
+src/analysis/
+├── diagnostics.py → TrainingMonitor (metrics tracking), CausalGraphAnalyzer (topology)
+├── node_importance.py → GradCAM node attribution, attention extraction
+├── edge_importance.py → Granger weight analysis
+├── feature_attribution.py → Captum-based feature importance (Integrated Gradients)
+└── visualizations.py → publication-ready plots
+
+src/
+├── run_pipeline.py → Main orchestrator (21 named stages (1–21) + Stage 0 pre-flight = 22 execution points; CLI flags)
+├── run_evaluation.py → Test-set evaluation (bootstrap CI, permutation test, baselines)
+├── run_explainability.py → Generate interpretability reports
+└── run_result_analysis.py → Per-subject predictions, misclassification analysis
+
+src/analysis/
+├── diagnostics.py → TrainingMonitor (metrics tracking), CausalGraphAnalyzer (topology)
+├── node_importance.py → GradCAM node attribution, attention extraction
+├── edge_importance.py → Granger weight analysis
+├── feature_attribution.py → Captum-based feature importance (Integrated Gradients)
+├── literature_validation.py → Cross-reference findings against published ASD/fMRI literature
+└── visualizations.py → publication-ready plots
+```
+
+### **Data Flow: 170 AAL ROIs → 12-Region Graphs**
+
+#### **Step 1: Temporal Aggregation**
+```
+Raw 170-ROI time series (T, 170)
+    ↓
+PCA Eigenvariate (first principal component per lobe)
+    + Regional Homogeneity (coherence + spatial_variance)
+    ↓
+12 lobe-level time series (T, 12) + (12, 2) internal features
+```
+**Why PCA instead of mean?** Simple averaging cancels signals when ROIs are anti-correlated (common in motor/cingulate). PCA preserves magnitude and direction.
+
+#### **Step 2: Graph Construction**
+```
+12 lobe time series (T, 12)
+    ↓
+Granger causality test (lag 1-5 TRs) OR lagged Pearson correlation
+    ↓
+12×12 causality matrix (directed edges, weights = -log10(p-value))
+    ↓
+Adaptive sparsification (keep top 30% edges, min 12 edges/graph)
+    ↓
+PyTorch Geometric Data object:
+  - x: (12, 28) node features [temporal(20) + internal(2) + spatial(6)]
+  - edge_index: (2, E) COO format
+  - edge_attr: (E, 1) weights
+  - y: 0/1 (Control/ASD)
+  - batch: fold assignment
+```
+
+#### **Step 3: Feature Engineering (28 dimensions)**
+
+| Category | Features | Computation | Clinical Relevance |
+|----------|----------|-------------|-------------------|
+| **Temporal (8)** | mean, std, skew, kurtosis, PSD, MSSD, range, autocorr | Descriptive statistics of ROI time series | Overall activity level, complexity |
+| **Frequency (12)** | delta/theta/alpha/beta/gamma power (×2 each) + spectral_entropy + phase_std | Welch PSD in 5 frequency bands (0.01-0.25 Hz) | Oscillatory activity per band |
+| **Internal (2)** | coherence, spatial_variance | Mean pairwise ROI correlation + variance spread | Intra-lobe synchrony (ReHo analog) |
+| **Spatial (6)** | x, y, z_depth, size, conf_std, detection_count | YOLO detection coordinates + statistics | 3D anatomical localization |
+
+**Current Status (March 9, 2026 — all P0/P1 bugs fixed):**
+- ✅ Single z-score only: `standardize=False` in NiftiLabelsMasker; z-score in construct_causal.py
+- ✅ BANDPASS_HIGH = 0.15 Hz (expanded from 0.08; retains beta band)
+- ⚠️ Beta (0.15–0.20 Hz) and gamma (0.20–0.25 Hz) sit at/near Nyquist; gamma **zeroed at runtime** for TR=2s subjects via `UNRELIABLE_FREQ_BANDS_AT_NYQUIST=("gamma",)`. Trust delta/theta/alpha.
+
+**Resolved Bugs (March 8–9, 2026 audit — all fixed):**
+- ✅ P0: `DX_GROUP` **added** to ComBat covariates in `fold_safe_harmonization.py` L258 — harmonization now preserves diagnostic signal
+- ✅ P0: Circular test-AUC ensemble weighting **fixed** in `run_evaluation.py` L274 — val-fold AUC from checkpoint used
+- ✅ P0: `site_id=None` hardcoding **fixed** in `run_evaluation.py` L160 — `batch.site_id` used
+- ✅ P0: Double z-score **fixed** in `abide_download.py` L176 — `standardize=False` in NiftiLabelsMasker; single z-score remains in construct_causal.py
+- ✅ P0: Dead lobe NaN crash **fixed** in `construct_causal.py` — NaN pre-filter before PCA aggregation
+- ✅ P1: Multi-lag Granger Bonferroni correction **applied** in `causal_inference.py` L93-95
+- ✅ P1: Fold NaN leakage **fixed** in `fold_safe_harmonization.py` — train-fold stats only
+- ✅ P1: PCA sign ambiguity **fixed** in `construct_causal.py` — correlation-with-raw-mean sign flip
+- ✅ P1: `CAUSAL_LAG` and `GNN_ONECYCLE_PATIENCE` deprecated constants **removed** from config.py
+
+**Remaining Open Issues (Phase 11):**
+- ⚠️ Gamma band zeroed at runtime for TR=2s (Nyquist 0.25 Hz); tracked via `UNRELIABLE_FREQ_BANDS_AT_NYQUIST=("gamma",)` in config (Phase 10.2)
+- ⚠️ CV–test AUC gap: 0.7434 (CV) vs 0.6487 (test) = 0.0947; GRL alpha grid search {0.05, 0.1} pending (Phase 11.2)
+- ⚠️ Per-site AUC variability: site 9 AUC=0.9500 vs site 16 AUC=0.3281 (Phase 11.2)
+- ⚠️ Disk checkpoints from Run 2 (pipeline_20260309_195751); fold3 checkpoint is from epoch=2 collapsed run
+
+### **Key Architectural Decisions & Rationales**
+
+1. **12 regions vs 170 ROIs**
+   - ✓ Improves GNN learnability on ~700 training samples (small-sample regime)
+   - ✓ Anatomically meaningful (matches clinical brain systems)
+   - ✗ Loses within-lobe heterogeneity → potential signal loss
+   - Mapping: PCA aggregation of 170 AAL ROIs per LOBE_MAPPING in config.py
+
+2. **GATv2 (Graph Attention Network v2) not GCN**
+   - ✓ Directed causal graphs require edge-dependent attention weights
+   - ✓ GATv2Conv handles `edge_attr` natively (Granger weights guide message passing)
+   - ✓ Multi-head attention improves expressiveness on small graphs
+   - ✗ Slightly slower than GCN
+   - See: [causal_gnn.py](src/models/causal_gnn.py) architecture
+
+3. **Granger Causality (default) vs lagged Pearson**
+   - ✓ Granger tests temporal precedence (X[t-lag] predicts Y[t]) — stronger causal claim
+   - ✓ Multivariate F-test controls for confounding
+   - ✗ Assumes linear relationships; requires stationarity
+   - Alternative: `transfer_entropy` (nonlinear, info-theoretic)
+   - Config: `CAUSALITY_METHOD = 'granger'` — see [causal_inference.py](src/features/causal_inference.py)
+
+4. **Site Embedding + Gradient Reversal (Optional)**
+   - ✓ Reduces site-specific scanner bias
+   - ✗ Current `GNN_GRL_ALPHA=1.0` may be too strong (impairs signal) — reverted in Phase 9
+   - Clinical detail: Different sites use different scanners (1.5T-3T, different sequences)
+   - See: [causal_gnn.py](src/models/causal_gnn.py#L175) GradientReversal class
+
+5. **Focal Loss (α=0.62, γ=2.0)**
+   - ✓ Addresses class imbalance (ASD 486 vs Control 514 in ABIDE)
+   - ✓ Focuses on hard examples during training
+   - Config: `USE_FOCAL_LOSS = True` in config.py
+   - See: [gnn_model.py](src/models/gnn_model.py#L63) FocalLoss implementation
+
+## Build and Test
+
+**Setup**
 ```bash
-# Full pipeline (auto mode — runs all missing stages)
-python src/run_pipeline.py --auto
+# Install
+pip install -r requirements.txt
 
-# Skip download + split (use existing data)
-python src/run_pipeline.py --auto --skip-download --skip-split
-
-# Show execution plan (dry run)
-python src/run_pipeline.py --dry-run
-
-# Post-training analysis only
-python src/run_pipeline.py --analysis-only
-
-# Health check
-python src/validation/pipeline_checks.py --health
-
-# Environment validation
+# Verify
 python -c "from src.core.config import validate_environment; validate_environment()"
 ```
 
-**Key Principle**: ALL constants live in [src/core/config.py](src/core/config.py) — never hardcode paths/dimensions.
-
-## Current State (March 1, 2026)
-
-**YOLO v28** (deployed): mAP50-95=0.93714, mAP50=0.98952, Precision=0.98063, Recall=0.97214, 12-region detection (production-ready, exceptional)  
-**YOLO v29**: configured as next training target (`YOLO_PROJECT_NAME = 'ROI_Detection_v29'` in config.py); weights do not yet exist  
-**GNN Latest Training**: AUC=0.6194±0.0641, F1=0.7132±0.0160, test-set ensemble AUC=0.5398 (Feb 15, 2026)  
-**Architecture**: 12 regions (AAL 170→12), 28 features (20 temporal + 2 internal ReHo + 6 spatial), 3 GAT layers, 128 channels  
-**Phase 9 Complete**: full evaluation pipeline, explainability analysis, result interpretation, 20-stage orchestrator  
-**Phase 10 Open**: fix double z-score normalisation, freq-band aliasing near Nyquist, CV–test AUC gap (details in `docs/TODO.md`)
-
-## Data Pipeline (5 Critical Steps)
-
-**Flow**: Raw fMRI → YOLO (12 detections) → Features (28D) → Causal Graphs (12×12) → GNN Classifier
-
-1. **Feature Extraction** → [src/features/extract_spatial.py]
-   - Inference: `model.predict()` with `stream=True` (RAM management)
-   - Input: Directory of subject slices named `{subject_id}_z{depth}.png`
-   - Output: 3D spatial coords aggregated per region (12 detections/subject with 6 spatial features: x, y, z_depth, size, conf_std, count)
-   - **Critical Filter**: Only subjects with ALL 12 regions detected proceed to next stage
-   - Merges with phenotype manifest to create `node_features_3d.csv`
-
-2. **Batch Effect Harmonization** → [src/features/fold_safe_harmonization.py]
-  - Removes site-specific scanner bias using neuroHarmonize (ComBat)
-   - **CRITICAL**: `DX_GROUP` (diagnosis) is protected covariate—NOT harmonized away
-   - Fills missing `AGE_AT_SCAN`/`SEX` with median/mode before ComBat
-   - Robust NaN/Inf handling with median imputation and outlier capping (5σ threshold)
-   - Output: `node_attributes_harmonized.csv` with 28 features per region (20 temporal + 2 internal + 6 spatial)
-
-3. **Stratified Data Splitting** → [src/data/split.py]
-   - Splits on `DX_GROUP` AND `SITE_ID` (2D stratification—journal requirement)
-   - 70% train (702) / 15% val (152) / 15% test (152)
-   - Preserves subject-level grouping: all slices of one subject go to same split
-   - Moves files to `data/final/{train,val,test}/{images,labels,time_series}`
-
-4. **Graph Construction** → [src/features/construct_causal.py]
-   - Aggregates 170 AAL ROIs → 12 regions using `LOBE_MAPPING` from config
-   - ✨ Smart aggregation: PCA eigenvariate (dominant signal) + Regional Homogeneity (intra-lobe coherence + spatial variance)
-   - Computes **Granger causality** (default, multi-lag 1-5 TRs) or **lagged Pearson correlation** (t-1 → t with lag=1 TR)
-   - Creates 12×12 directed adjacency matrix with -log10(p-value) or correlation weights
-  - Adaptive sparsification: 0.70 quantile (keep top 30% edges), min 12 edges/graph
-   - Output: PyTorch Geometric Data objects with node features (12, 28) and edge attributes saved as `.pt` files
-
-5. **GNN Training** → [src/models/gnn_model.py] + [src/models/causal_gnn.py]
-   - Loads graphs via `ABIDECausalDataset` (in [src/features/graph_factory.py])
-   - 5-fold stratified CV on full train set (699 subjects)
-  - ✨ Current architecture: 3 GAT layers, 128 hidden channels, GELU activation
-   - Input: 28 node features (20 temporal + 2 internal ReHo + 6 spatial)
-   - Multi-scale pooling (mean+max+sum), skip connections, LayerNorm
-   - Focal loss (α=0.62, γ=2.0) for class imbalance
-  - L2 regularization (weight_decay=1e-4), dropout 0.45, learning_rate=0.001
-  - Early stopping (patience=20, min_delta=0.0001), gradient clipping (1.0)
-   - Saves best-AUC model per fold to `models/checkpoints/best_model_fold{0-4}.pt`
-
-### Performance Metrics (March 1, 2026)
-
-**YOLO26n ROI Detector** → [results/experiments/detection/ROI_Detection_v28/]
-- **Deployed (v28)**: 100 epochs (Feb 2–4 2026)
-- **Final mAP50**: 0.98952
-- **Final mAP50-95**: 0.93714
-- **Precision**: 0.98063 (exceptional)
-- **Recall**: 0.97214 (near-perfect)
-- **Model**: YOLO26n (640×640 input, batch 32, all medical augmentation disabled)
-- **Status**: ✅ Production-ready; outstanding 12-region detection quality
-- **Deployed weights**: `results/experiments/detection/ROI_Detection_v28/weights/best.pt`
-- **Next target**: `ROI_Detection_v29` — `YOLO_PROJECT_NAME = 'ROI_Detection_v29'` in config.py
-
-**GNN Classification (5-Fold CV with 28-Feature Model - Feb 15, 2026)**
-- **Latest Training**: Feb 11-15, 2026 with Phase 3 architecture + bug fixes
-- **Mean AUC**: 0.6194 ± 0.0641 (+10.7pp over prior baseline)
-- **Mean F1**: 0.7132 ± 0.0160
-- **Mean Accuracy**: 0.6194 ± 0.0241
-- **Test-set Ensemble AUC**: 0.5398 (153 held-out subjects)
-- **Per-fold AUCs**: [0.5762, 0.5931, 0.6197, 0.7424, 0.5657]
-- **Best fold**: 0.7424 (Fold 3)
-- **Mean best epoch**: ~14.6 (range 8-24)
-- **Architecture**: 3-layer GATv2, 128 hidden channels, GELU activation, skip connections, attention pooling
-- **Features**: 28 total (20 temporal + 2 internal ReHo + 6 spatial); 1035 subjects, 7 z-slices each
-- **Loss**: Focal Loss (α=0.62, γ=2.0)
-- **Regularization**: Dropout 0.45, L2 weight decay 1e-4, early stopping patience=20
-- **Status**: ✅ Phase 3 optimized architecture with full pipeline fixes
-- **Interpretation**: 
-  - Fold 3 reaching 0.7424 AUC demonstrates strongly learnable ASD biomarkers
-  - Moderate convergence (~14.6 epochs) reflects richer signal than prior baseline
-  - Test ensemble AUC (0.5398) vs CV AUC (0.6194) gap indicates remaining overfitting
-  - 3-layer attention pooling balances capacity for 12-node graphs
-  - PCA/ReHo features capture both global signals and local connectivity
-  - Graph topology: Parietal In-Degree lower in ASD (p=0.0296, Cohen's d=-0.125)
-
-## Critical Patterns & Conventions
-
-### 1. Configuration as Single Source of Truth ✅ (Refactored January 2026)
-- **ALL** hardcoded constants must live in [src/core/config.py]
-- Import from config everywhere else (e.g., `from src.core.config import LOBE_MAPPING, NUM_LOBES`)
-- 12-region architecture: `NUM_LOBES=12` (expanded from 5 lobes January 2026 for finer granularity)
-- AAL3 → 12-region mapping: 170 ROIs (1-indexed) aggregated via `LOBE_MAPPING` dict
-- Config provides comprehensive validation functions:
-  - `validate_environment()`: Pre-flight checks (paths, CUDA, lobe mapping)
-  - `validate_graph_construction_inputs()`: Pre-checks before causal graph building
-  - `validate_gnn_training_inputs()`: Pre-checks before GNN training
-  - `validate_lobe_mapping()`: Checks completeness, no duplicates, range [1-170]
-- **Status**: ✅ All path references centralized (100% imported from config)
-
-### 2. Path Handling ✅ (Refactored January 2026)
-- **Always import paths from config**: `from src.core.config import DATA_ROOT, CHECKPOINT_DIR, CAUSAL_GRAPHS_DIR`
-- Pattern in config: `PROJECT_ROOT = Path(__file__).resolve().parents[2]` (from src/core/config.py to project root)
-- Pattern in submodules: 
-  ```python
-  sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-  from src.core.config import DATA_ROOT, DATA_FINAL, DATA_PROCESSED
-  ```
-- **Status**: ✅ ALL modules centralized (split.py, manifestor.py, generate_labels.py, pipeline_checks.py)
-- Never hardcode relative paths like `./data` or `../..`
-- Use Path().exists() for validation before loading
-
-### 3. Error Handling & Logging ✅ (Refactored January 2026)
-- **Logging**: All modules use Python `logging` instead of `print()` statements
-  - Setup in each module: 
-    ```python
-    import logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger(__name__)
-    ```
-  - Usage: `logger.info()`, `logger.warning()`, `logger.error()`, `logger.debug()`
-  - **Status**: ✅ All core modules updated (split.py, manifestor.py, generate_labels.py, pipeline_checks.py, etc.)
-
-- **Try-Catch Error Handling**: All I/O operations wrapped with specific error types
-  - **CSV Loading**: Catch `FileNotFoundError` and `pd.errors.ParserError` separately ([src/features/extract_temporal.py] lines 118-130)
-  - **File Operations**: Catch `FileNotFoundError`, `ValueError` for invalid arrays
-  - **Graph Construction**: Use `torch.isnan()`, `torch.isinf()` checks before using edge/node tensors
-  - **DataLoader**: Null-safety for graphs with zero edges (validated in [src/features/graph_factory.py] line ~145)
-  - **Status**: ✅ All data utilities updated (extract_spatial.py, fold_safe_harmonization.py, extract_temporal.py)
-
-- **Graph Edge Cases**: 
-  - Empty edge_index handled gracefully (validated in `graph_factory.py` line ~145)
-  - Zero-edge graphs detected after sparsification (validated in `construct_causal.py` line ~110)
-  - Subjects with insufficient edges skipped with warning logs
-  - Training loop skips null graphs: `if data is None: continue` in `train_one_epoch()` and `evaluate()`
-
-### 4. Tensor/Data Shapes (Critical for Graph Construction)
-- **Input time series**: `(timepoints, num_rois)` where num_rois ∈ {116, 117, 170} depending on atlas
-- **After lobe aggregation**: `(timepoints, 12)` (always 12 regions from LOBE_MAPPING)
-- **Graph node features (x)**: `(12, num_features)` where num_features = 20 (temporal) + 2 (internal ReHo) + 6 (spatial) = **28**
-  - 20 temporal: 8 basic (mean, std, skew, kurt, PSD, MSSD, range, autocorr) + 12 frequency (delta/theta/alpha/beta/gamma power + peaks + entropy + phase)
-  - 2 internal: PCA eigenvariate (dominant lobe signal), ReHo coherence (intra-lobe homogeneity)
-  - 6 spatial: x, y, z_depth, size, conf_std, detection_count
-- **Edge index**: `(2, num_edges)` — 2D tensor for PyTorch Geometric format
-- **Edge attributes**: `(num_edges,)` — causal weights (Granger: -log10(p), Pearson: correlation [-1, 1])
-- **Batch label (y)**: scalar 0 (Control) or 1 (ASD)
-
-### 5. AAL3 Neuroanatomy
-- **170 ROIs** (1-indexed, AAL standard; convert to 0-indexed in code: `aal_roi - 1`)
-- **12 Regions** in config.LOBE_MAPPING (expanded from 5 lobes for finer granularity)
-  - All 170 AAL ROIs mapped to 12 brain regions (see config for mapping details)
-- **Validation**: `config.validate_lobe_mapping()` checks completeness, no duplicates, range [1-170]
-- **Robustness**: AAL3v1 may have 164-170 ROIs (2 unused); code pads to 170 for consistency ([src/features/extract_temporal.py] line ~220)
-
-### 6. YOLO-Specific (Medical Image Tuning - CRITICAL)
-- Model size: `yolo26n` (defined in config.YOLO_MODEL_SIZE)
-- Input size: 640×640 (config.YOLO_IMGSZ)
-- Batch: 32 (config.YOLO_BATCH_SIZE)
-- **Medical augmentation disabled** (config.py enforces):
-  - `YOLO_HSV_H=0.0, YOLO_HSV_S=0.0` (no color/saturation—grayscale medical images don't need this)
-  - `YOLO_DEGREES=0.0` (no rotation—preserves exact 3D centroid coordinates for 12-region aggregation)
-  - `YOLO_FLIPLR=0.0` (no left-right flip—prevents Left/Right hemisphere confusion; critical for causal graph directionality)
-  - `YOLO_FLIPUD=0.0, YOLO_MOSAIC=0.0` (no flipping/mosaic—maintains global anatomical context)
-- Confidence threshold: 0.30 (config.YOLO_CONF_THRESHOLD; 0.35 used in extract_spatial inference)
-- Epochs: 100 (config.YOLO_EPOCHS)
-- Config file: `configs/brain.yaml` (defines 12 ROI classes for 12 brain regions)
-- **Key insight**: Medical image preprocessing is opposite of natural image YOLO—disable all augmentation that breaks anatomical alignment
-
-### 7. Causal Graph Construction Details
-- **Method**: Granger causality (default, multi-lag 1-5 TRs) or lagged Pearson correlation (baseline)
-- **Granger causality**:
-  - Tests: Does past of region i improve prediction of region j?
-  - Multi-lag: Tests lags 1-5 TRs (`GRANGER_MAX_LAG = 5`)
-  - Statistical significance: p-value < 0.05 (`GRANGER_SIGNIFICANCE_LEVEL`)
-  - Edge weights: -log10(p-value) where higher = stronger causality
-- **Lagged Pearson** (baseline):
-  - Lag: t-1 → t (1 TR lag enforces temporal precedence)
-  - Edge weights: Correlation values in [-1, 1]
-- **Sparsity**: Adaptive statistical method (0.70 quantile = keep top 30% edges, min 12 edges/graph for connectivity)
-- **Note**: `.pt` files saved by `construct_causal.py` are **dicts** (not PyG Data objects); `graph_factory.py` assembles the full `Data` object at load time
-- **On-disk dict format**:
-  ```python
-  {
-    'adj': Tensor(12, 12),          # directed causal weights
-    'internal_features': Tensor(12, 2),  # PCA eigenvariate + ReHo coherence
-    'subject_id': str,
-    'lobe_order': list
-  }
-  ```
-- **PyG Data object** (assembled by `graph_factory.py` at load time):
-  ```python
-  Data(
-    x=node_features,           # shape: (12, 28) - 20 temporal + 2 internal + 6 spatial
-    edge_index=edge_indices,   # shape: (2, num_edges)
-    edge_attr=weights,         # shape: (num_edges, 1) - Granger or correlation (unsqueezed)
-    y=diagnosis_label,         # 0 or 1
-    pos=xyz,                   # shape: (12, 3) - centroid coords
-    sub_id=string,             # for tracking
-    site_id=tensor([int]),     # site index 0-19
-    age=tensor([float]),       # normalized (age-15)/20
-    sex=tensor([float]),       # normalized (sex-1.5)
-    fiq=tensor([float])        # normalized (fiq-100)/30
-  )
-  ```
-- **Smart Aggregation** (Phase 3):
-  - PCA eigenvariate: First principal component captures dominant signal direction within each lobe (avoids cancellation)
-  - Regional Homogeneity: Intra-lobe coherence + spatial variance for local connectivity features
-  - Spatial coordinates: Aggregated from YOLO detections (mean x, y, z_depth per region)
-
-### 8. GNN Architecture & Training
-- **Model**: `CausalBrainGNN` (class in [src/models/causal_gnn.py])
-  - **Current Defaults** (Feb 2026):
-    - Input projection: Linear layer with LayerNorm (stabilizes 28 features with varying scales)
-    - Layer 1: GATv2Conv with 4 heads, concat=True
-    - Layer 2: GATv2Conv with 4 heads, concat=False (average heads)
-    - Layer 3: GATv2Conv with 4 heads, concat=False (optional when `GNN_NUM_GNN_LAYERS=3`)
-    - Skip connections: Residual links after each layer prevent over-smoothing in 12-node graphs
-    - Activation: GELU (smooth gradient flow, superior to ReLU for small graphs)
-  - **Attention pooling**: GlobalAttention pooling (configurable via `GNN_POOLING`)
-  - Output: 2-class softmax (Control vs ASD) via 3-layer classifier head (Linear→GELU→Dropout→Linear)
-  - **Optional conditioning** (disabled for visualization):
-    - Site embeddings: Optional 16-dim embeddings to reduce site-specific scanner bias
-    - Demographics: Optional age/sex/FIQ features for clinical context
-  - **Flexible feature modes**: All features always processed (no conditional logic)
-  - Weight initialization: Kaiming normal for Linear layers, zeros for biases
-  - **Regularization**:
-    - Dropout: 0.45
-    - L2 regularization: weight_decay = 1e-4
-    - Early stopping: patience=20, min_delta=0.0001
-    - Gradient clipping: max_norm=1.0
-  - **Site + Demographics conditioning** (`GNN_USE_GRL=True`, `GNN_USE_DEMOGRAPHICS=True`):
-    - Site embeddings (16-dim) concatenated to node features: `lin_in = Linear(28+16=44, 128)` when enabled
-    - Demographics (age/sex/FIQ) injected via `forward()`
-    - **GRL** (Gradient Reversal Layer): adversarial auxiliary head learns site-invariant repr.
-      `GNN_GRL_ALPHA=1.0`, `GNN_SITE_LOSS_WEIGHT=0.2`
-    - **Edge gate** (`GNN_EDGE_GATE=True`): `Linear(1→1)` modulates causal weights before GAT msg-passing
-
-- **Training details**:
-  - Optimizer: AdamW with OneCycleLR (max_lr=`GNN_ONECYCLE_MAX_LR=0.003`, configured in config)
-  - Scheduler: OneCycleLR (cosine anneal)
-  - Loss: Focal Loss (α=0.62, γ=2.0) for class imbalance (config-driven)
-  - Gradient clipping: `max_norm=1.0` (prevents explosion in small graphs)
-  - K-fold: 5-fold stratified by DX_GROUP
-  - Metrics: Accuracy, F1, **ROC-AUC**, **AUPRC** (average_precision_score), confusion matrix per fold
-  - Checkpointing: Save best model per fold (top validation AUC)
-  - **Ensemble**: AUC-weighted averaging across 5 checkpoints (weights proportional to fold val AUC)
-
-- **Current Results** (5-fold CV with enhanced architecture, Feb 15, 2026):
-  - Mean AUC: **0.6194 ± 0.0641** (+10.7pp over prior baseline)
-  - Mean F1: **0.7132 ± 0.0160**
-  - Mean Accuracy: **0.6194 ± 0.0241**
-  - Test-set Ensemble AUC: 0.5398 (153 held-out subjects)
-  - Per-fold AUCs: [0.5762, 0.5931, 0.6197, 0.7424, 0.5657]
-  - Best fold: 0.7424 (Fold 3)
-  - Mean best epoch: ~14.6 (range 8-24)
-  - **Architecture benefits**: Learnable edge weights + multi-scale pooling + bug fixes improve feature extraction
-
-## Development Workflows
-
-### Complete End-to-End Pipeline (Recommended)
-
-**For existing data (skip download and split):**
+**Run Full Pipeline** (Recommended approach)
 ```bash
-# Auto mode — runs all missing stages without prompts
+# Interactive mode (prompts for each stage)
+python src/run_pipeline.py
+
+# Automatic mode (run all missing stages)
+python src/run_pipeline.py --auto
+
+# Skip data download/split (use existing data)
 python src/run_pipeline.py --auto --skip-download --skip-split
 
-# Show execution plan without running
+# Dry run (show execution plan without running)
 python src/run_pipeline.py --dry-run
 
-# Force rebuild all intermediate files
+# Force reset all intermediate files and rebuild
 python src/run_pipeline.py --force-reset
 
-# Regenerate features only (keep images/splits)
-python src/run_pipeline.py --regenerate-features --skip-yolo
+# Run only analysis stages (17-20)
+python src/run_pipeline.py --analysis-only
+
+# Run only post-training visualization
+python src/run_pipeline.py --visualizations-only
 ```
 
-**From scratch (with ABIDE download):**
+**Individual Stages** (for development/debugging)
 ```bash
-# Full pipeline with data download (2–4 hours)
-python src/run_pipeline.py --auto
+# Stage 8: YOLO training (ROI detection, 100 epochs)
+python -m src.pipelines.roi_detection
 
-# Note: requires Phenotypic_V1_0b_preprocessed1.csv with 'TR' column
+# Stage 9: Spatial features extraction (6/lobe)
+python -m src.features.extract_spatial
+
+# Stage 11: Temporal features extraction (20/lobe: 8 time + 12 frequency)
+python -m src.features.extract_temporal
+
+# Stage 12: Fold-safe harmonization (ComBat batch correction)
+python -m src.features.fold_safe_harmonization
+
+# Stage 14: Causal graph construction (Granger → 12×12 digraphs)
+python -m src.features.construct_causal
+
+# Stage 16: GNN training (5-fold CV, ~30 min on GPU)
+python -m src.models.gnn_model
+
+# Post-training: Test evaluation with bootstrap CI
+python src/run_evaluation.py
+
+# Post-training: Explainability report generation
+python src/run_explainability.py
 ```
 
-**Pipeline execution order (20 stages):**
-
-*Core (stages 1–15):*
-1. ABIDE download — fMRI + 7 z-slices / subject (percentiles 0.2–0.8)
-2. Stratified split — 2D by DX_GROUP + SITE_ID (70/15/15)
-3. Master manifest — subject ↔ phenotype mapping
-4. Atlas validation — verify AAL3v1 files
-5. Pipeline validation — pre-flight health check
-6. Post-download integrity — PNG/NPY file count check
-7. Atlas-based label annotation — generate YOLO labels
-8. YOLO training — 12-region ROI detection (skip if weights exist)
-9. Spatial feature extraction — 3D coord aggregation, all-12-regions filter
-10. Temporal feature extraction — 20 features/ROI (8 time-domain + 12 frequency)
-11. Feature harmonization — fold-safe ComBat, protects DX_GROUP covariate
-12. Pre-GNN integrity — completeness check per split
-13. Causal graph construction — Granger causality 12×12 + adaptive sparsification
-14. Pipeline diagnostics — health report (run after graphs exist)
-15. Quality validation — YOLO quality, graph sparsity, stratification
-
-*GNN Training (stage 16):*
-16. GNN training — 5-fold stratified CV (GAT + GRL)
-
-*Post-Training Analysis (stages 17–20):*
-17. Visualizations — causal graph plots, feature heatmaps, performance figures
-18. Evaluation — bootstrap 95% CI, permutation test, baseline comparison
-19. Explainability — node/edge importance, Captum feature attribution
-20. Result analysis — per-subject predictions, misclassification, site effects
-
-### Running the Full Pipeline
+**Testing**
 ```bash
-# Validate health first
-python src/validation/pipeline_checks.py --health
-
-# Single-command full run
-python src/run_pipeline.py --auto
-
-# Skip slow analysis stages
-python src/run_pipeline.py --auto --skip-evaluation --skip-explainability
-
-# Individual stage commands
-python -m src.pipelines.roi_detection           # Train YOLO
-python -m src.features.extract_spatial          # Spatial coords
-python -m src.features.extract_temporal --add-frequency  # Temporal + freq features
-python -m src.features.fold_safe_harmonization  # ComBat harmonization
-python -m src.data.split                        # Train/val/test split
-python -m src.features.construct_causal         # Build causal graphs
-python -m src.models.gnn_model                  # Train GNN (5-fold CV)
-
-# Post-training analysis
-python src/run_evaluation.py                    # Bootstrap CI, permutation, baselines
-python src/run_explainability.py                # Node/edge importance, attribution
-python src/run_result_analysis.py               # Per-subject predictions, site effects
+pytest tests/unit/          # Unit tests (fast)
+pytest tests/integration/   # Integration tests (slow, requires data)
+pytest --cov=src tests/     # Coverage report
 ```
 
-### Testing & Validation
-```bash
-# Comprehensive health report (replaces pipeline_diagnostics.py)
-python src/validation/pipeline_checks.py --health
+**Expected Runtimes**
+| Stage | Runtime (GPU) | Notes |
+|-------|---------------|-------|
+| ABIDE Download | 30-60 min | S3 download, one-time |
+| YOLO Training | 20-30 min | 100 epochs, batch 32 |
+| Feature Extraction | 5 min | Temporal + spatial |
+| Harmonization | 2 min | 5-fold CV ComBat |
+| Graph Construction | 10 min | Granger causality |
+| GNN Training | 30-40 min | 5-fold CV, OneCycle scheduler |
+| **Total Pipeline** | **~2 hours** | Sequential execution |
 
-# Post-download dataset integrity check
-python src/validation/pipeline_checks.py --dataset
+## Project Conventions
 
-# Pre-GNN distribution check
-python src/validation/pipeline_checks.py --distribution
+### **Feature Engineering** (28 features/lobe)
+- **Temporal (20)**: 8 basic (mean, std, skew, kurtosis, psd, mssd, range, autocorr) + 12 frequency (delta/theta/alpha/beta/gamma power×2 + spectral_entropy + phase_std)
+- **Internal (2)**: Regional Homogeneity coherence + spatial_variance
+- **Spatial (6)**: x, y, z_depth, size, conf_std, detection_count
+- **Order matters**: `ALL_FEATURE_NAMES = temporal + frequency + internal + spatial` ([config.py](src/core/config.py#L113-L119))
 
-# Class imbalance analysis with recommendations
-python src/validation/pipeline_checks.py --class-analysis
+### **Dataset Loading Pattern**
+```python
+from src.features.graph_factory import ABIDECausalDataset
+from torch_geometric.loader import DataLoader
 
-# Comprehensive health report
-python src/validation/pipeline_checks.py --health
+train_dataset = ABIDECausalDataset(split='train')  # Validates on __init__
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 
-# Health report with deep file validation (slower)
-python src/validation/pipeline_checks.py --health --deep
-
-# Run all integrity checks (default)
-python src/validation/pipeline_checks.py
-
-# Check dataset loading (verify labels, shapes, sample counts)
-python -c "from src.features.graph_factory import ABIDECausalDataset; \
-ds = ABIDECausalDataset('train'); print(f'Loaded {len(ds)} subjects, first graph has {ds[0].x.shape[0]} nodes')"
-
-# Validate lobe mapping before graph construction
-python -c "from src.core.config import validate_lobe_mapping; validate_lobe_mapping(); print('✓ LOBE_MAPPING valid')"
-
-# Validate entire environment
-python -c "from src.core.config import validate_environment; validate_environment()"
-
-# Run fold-safe harmonization (handles NaN/Inf robustly)
-python src/features/fold_safe_harmonization.py
+for batch in train_loader:
+    logits = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
 ```
 
-### Debugging Data Issues
-
-**If graphs aren't loading:**
-1. Check manifest exists: `ls -la data/processed/Phenotypic_V1_0b_preprocessed1.csv`
-2. Verify graphs exist: `ls data/processed/causal_graphs/ | wc -l`
-3. Load single graph: `python -c "import torch; g=torch.load('data/processed/causal_graphs/Caltech_0051456_graph.pt'); print(f'Nodes: {g.x.shape[0]}, Edges: {g.edge_index.shape[1]}')"` 
-
-**If features are missing:**
-- Check `node_features_3d.csv` exists (output of [src/features/extract_spatial.py])
-- Verify all-12-regions filter: `python -c "import pandas as pd; df=pd.read_csv('data/processed/metadata/node_features_3d.csv'); print(f'Complete subjects: {len(df)}')"`
-- If count dropped significantly, regions weren't detected → check YOLO model path in [src/features/extract_spatial.py]
-
-**If temporal features CSV is corrupted:**
-- **Symptom**: `pandas.errors.ParserError: Error tokenizing data. C error: Expected 1 fields in line 5, saw 986`
-- **Cause**: CSV has header comments or malformed structure
-- **Fix**: Delete and regenerate: `rm data/metadata/node_attributes_temporal.csv && python src/features/extract_temporal.py`
-- **Note**: As of Jan 2026, `extract_temporal.py` writes clean CSV without header comments
-
-**If harmonization fails with NaN warnings:**
-- Use fold-safe harmonization: `python src/features/fold_safe_harmonization.py`
-- Or via pipeline: `python src/run_pipeline.py --run-safe-harmonize`
-- Fold-safe harmonization includes:
-  - Pre-harmonization NaN/Inf detection
-  - Feature-wise median imputation
-  - Outlier capping (5σ threshold)
-  - Post-harmonization validation
-
-**If training crashes with CUDA OOM:**
-- Reduce `GNN_BATCH_SIZE` from 32 to 16 in `config.py`
-- Check GPU memory: `nvidia-smi` (need ~6GB for batch 32)
-- Reduce YOLO batch from 24 to 16 if retraining ROI detector
-
-**If stratification fails:**
-- Ensure `SITE_ID` and `DX_GROUP` columns exist in phenotype CSV
-- Check no subjects missing from manifest: `python -c "import pandas as pd; df=pd.read_csv('data/processed/Phenotypic_V1_0b_preprocessed1.csv'); print(f'Groups: {df.DX_GROUP.value_counts().to_dict()}')"`
-
-**If atlas validation fails:**
-- **166 ROI atlas error** (fixed Jan 2026): Pipeline now accepts 164-170 ROIs for AAL3v1
-- Run atlas validator: `python src/validation/atlas_validator.py`
-- Check atlas exists: `ls -la data/atlases/AAL3v1.nii`
-
-**If ABIDE download fails:**
-- **Missing 'TR' column error**: Phenotype CSV missing required column for download
-- **Solution**: Skip download with existing data: `python src/run_pipeline.py --skip-split --run-manifest`
-- **Path error** (fixed Jan 2026): Ensure `abide_download.py` uses `parents[2]` not `parents[0]`
-
-**If argparse conflicts occur:**
-- **Symptom**: `error: unrecognized arguments` when pipeline calls submodules
-- **Fix** (applied Jan 2026): Pipeline now calls `extract_temporal` via subprocess, not direct import
-- Affected file: `run_pipeline.py` uses `subprocess.run()` for isolated argument parsing
-
-## Common Pitfalls & Code Anti-Patterns
-
-**Path Handling:**
-- ❌ **Bad**: `Path("./data")` or `Path("../../../data")` (relative paths break across modules)
-- ✅ **Good**: Import from config: `from src.core.config import DATA_ROOT, DATA_METADATA`
-- **Status**: split.py, manifest.py, generate_labels.py still use hardcoded paths—refactor when touching these files
-
-**Graph Construction:**
-- ❌ **Bad**: Assuming all subjects have 12 regions detected (some have missing detections)
-- ✅ **Good**: extract_spatial.py enforces `node_count == 12` filter; only complete subjects proceed
-- **Impact**: Graph shape assumptions depend on this filter; skip it and downstream training crashes with shape mismatches
-
-**Config Duplication:**
-- ❌ **Bad**: Hardcoding `LOBE_MAPPING` or `NUM_LOBES` in multiple files
-- ✅ **Good**: Import once from config in every module that needs it
-- **Status**: Code is clean; keep it that way
-
-**Temporal Features:**
-- ❌ **Bad**: Skipping `fold_safe_harmonization.py` and feeding raw temporal CSV (170-ROI format) to the GNN
-- ✅ **Good**: `extract_temporal.py` outputs 170 ROIs × 20 features; `fold_safe_harmonization.py` aggregates → 12 regions × 20 features via `ROIAggregator.aggregate_to_lobes()`
-- **Output shapes**: `node_attributes_temporal.csv` = `(N, 3401)` (170 ROIs × 20 + subject_id); `node_attributes_harmonized.csv` = `(N, 241)` (12 regions × 20 + subject_id)
-
-**YOLO Augmentation:**
-- ❌ **Bad**: Enabling `fliplr=True` or `degrees=15` for medical imaging (breaks anatomical consistency)
-- ✅ **Good**: All augmentation disabled in [src/core/config.py]; medical images require anatomical alignment
-- **Reason**: Left-right flips reverse hemisphere signals; rotations misalign Z-depth slices
-
-**Graph Edge Attributes:**
-- ❌ **Bad**: Missing `edge_attr` in PyTorch Geometric Data objects (GAT expects it)
-- ✅ **Good**: Always include causal correlation weights: `Data(x=..., edge_index=..., edge_attr=weights)`
-- **Shape**: `edge_attr` must be `(num_edges, 1)` float tensor — shaped by `.unsqueeze(1)` in `graph_factory.py`
-
-**Protected Covariates:**
-- ❌ **Bad**: Omitting `DX_GROUP` (diagnosis) from the covariates or harmonizing it away
-- ✅ **Good**: Include diagnosis as a protected covariate in ComBat/neuroHarmonize (journal requirement)
-- **Location**: [src/features/fold_safe_harmonization.py] enforces this (harmonize.py was deprecated)
-
-## Key Files Reference
-
-| File | Purpose |
-|------|---------|
-| [src/core/config.py] | ALL constants, paths, hyperparameters; 4 validation functions |
-| [src/run_pipeline.py] | Unified entry point — **20-stage orchestrator** (15 core + 1 GNN + 4 post-training) |
-| [src/run_evaluation.py] | Bootstrap 95% CI (N=2000), permutation test (N=1000), SVM/RF/MLP baselines |
-| [src/run_explainability.py] | Captum integrated gradients, node/edge importance, literature validation |
-| [src/run_result_analysis.py] | Per-subject predictions CSV, misclassification FP/FN profiles, site-effect AUC, calibration |
-| **Validation & Diagnostics** | |
-| [src/validation/pipeline_checks.py] | Post-download, pre-GNN, health reports, class analysis, quality validation (1727 lines) |
-| [src/validation/atlas_validator.py] | Atlas file validation (existence, structure, ROI range 164–170) |
-| [src/validation/dev_audit.py] | Deep validation + feature diagnostics (merged from code_audit.py + feature_diagnostics.py, Feb 28, 2026) |
-| [src/validation/diagnose_features.py] | Per-feature-group statistics, z-score audit, single-graph + corpus-level diagnostics; CLI debugging tool (NEW, March 1, 2026) |
-| **Feature Engineering & Graphs** | |
-| [src/features/extract_spatial.py] | YOLO inference → 3D spatial aggregation; all-12-regions filter |
-| [src/features/extract_temporal.py] | 20 temporal features/ROI: 8 time-domain + 12 frequency (incl. former frequency_features.py, Feb 28, 2026) |
-| [src/features/causal_inference.py] | Granger causality & transfer entropy for directed graph construction |
-| [src/features/fold_safe_harmonization.py] | **Aggregates 170 ROIs→12 regions** + ComBat harmonization + NaN/Inf handling; protects DX_GROUP |
-| [src/features/construct_causal.py] | Granger/lagged correlation; PCA+ReHo aggregation; saves graph dicts (.pt files) |
-| [src/features/graph_factory.py] | ABIDECausalDataset — assembles PyG Data(x=(12,28), edge_index, y, site/demo) at load time |
-| **Data Pipeline** | |
-| [src/data/split.py] | 2D stratified split (DX_GROUP + SITE_ID); preserves subject-level grouping |
-| [src/data/abide_download.py] | ABIDE S3 download; 7-slice ALFF export (z-percentiles 0.2–0.8); saves `*_ts.npy` + `*_roi_labels.npy` |
-| [src/utils/manifestor.py] | Master manifest (subject_id, split, DX_GROUP, SITE_ID, TR, AGE, SEX, FIQ, HANDEDNESS) |
-| **Models** | |
-| [src/models/causal_gnn.py] | CausalBrainGNN — GATv2 (3 layers, 4 heads, 128 channels) + GRL + learnable edge gate |
-| [src/models/gnn_model.py] | 5-fold CV; FocalLoss(α=0.62,γ=2.0) + OneCycleLR; AUC+AUPRC+F1; AUC-weighted ensemble |
-| [src/models/training_utils.py] | EarlyStopping, WarmupScheduler, TrainingTracker, CheckpointManager, train_fold_with_onecycle |
-| [src/pipelines/roi_detection.py] | YOLO training entry point |
-| **Experiments** | |
-| [src/experiments/run_ablations.py] | 5 ablation studies (A–E): FlatMLP, spatial-only, temporal-only, Pearson edges, no-site; outputs to `RESULTS_ABLATIONS_DIR` |
-| [src/experiments/data_quality.py] | 3 data quality experiments: cross-site AUC, subject count audit, atlas-centroid baseline; outputs to `RESULTS_DATA_QUALITY_DIR` |
-| **Explainability Analysis** | |
-| [src/analysis/edge_importance.py] | Phase 8.2: Gradient-based edge attribution + edge-masking (ΔP); group-level 12×12 ASD vs Control matrices |
-| [src/analysis/node_importance.py] | Phase 8.1: GradCAM node importance + GAT attention-weight extraction; aggregated by diagnosis class |
-| [src/analysis/literature_validation.py] | Phase 8.4: Cross-references top regions vs known ASD networks (DMN, Social Brain, Salience, Sensorimotor, Visual, Subcortical) |
-| **Data Utilities** | |
-| [src/data/filter_to_1000.py] | Removes 25 subjects missing spatial features; produces balanced 1 000-subject dataset (486 ASD, 514 Control) |
-| **Tests** | |
-| [tests/unit/test_config.py] | Unit tests for config constants and validation functions |
-| [tests/unit/test_features.py] | Unit tests for feature extraction and harmonization |
-| [tests/integration/test_dataset.py] | Integration tests for ABIDECausalDataset loading |
-| [tests/integration/test_graph_construction.py] | Integration tests for causal graph construction pipeline |
-
-## Integration Points & Critical Dependencies
-
-### Data Flow Checkpoints
-- **[src/features/extract_spatial.py]** → requires: `best.pt` (YOLO weights in results/), PNG images in `data/final/{train,val,test}/images/`
-- **[src/features/fold_safe_harmonization.py]** → requires: temporal features CSV from extract_temporal.py
-- **[src/features/construct_causal.py]** → requires: node_attributes_harmonized.csv, time series .npy files in `data/final/{split}/time_series/`
-- **[src/models/gnn_model.py]** → requires: all `.pt` graphs in `data/processed/causal_graphs/`, master_manifest.csv, harmonized features
-  - Loads graphs via `ABIDECausalDataset` with configurable site/demographic conditioning
-  - Supports model variants: full YOLO features vs coords-only, with/without site embeddings
-
-### Protected Covariates in Harmonization
-In [src/features/fold_safe_harmonization.py], `DX_GROUP` (diagnosis) is a protected covariate passed to neuroHarmonize so batch harmonization doesn't remove disease signal. This is a journal Q1 requirement. Missing values in `AGE_AT_SCAN`/`SEX` are imputed (median/mode) BEFORE ComBat.
-
-### Robust Harmonization with Safe NaN Handling
-[src/features/fold_safe_harmonization.py] provides production-grade harmonization with:
-- Pre-harmonization NaN/Inf detection and repair
-- Feature-wise median imputation for missing values
-- Outlier capping (values beyond 5 standard deviations)
-- Post-harmonization validation (ensures zero NaNs)
-- Comprehensive logging for debugging
-
-### Dataset Filtering: All-12-Regions Requirement
-[src/features/extract_spatial.py] enforces that only subjects with ALL 12 brain regions detected proceed to GNN training. This is critical: 12-node graphs assume complete detection. Check the `node_count == 12` filter before downstream processing.
-
-### Stratified k-fold Details
-[src/data/split.py] performs 2D stratification on both `DX_GROUP` (diagnosis) AND `SITE_ID` (scanner site). This ensures:
-- Balanced ASD/Control across folds (addresses class imbalance)
-- Balanced sites across folds (addresses batch effects from different scanners)
-
-## Recent Fixes & Important Changes (January 2026)
-
-### Summary of January 2026 Changes
-
-**Documentation Fully Synchronized** (January 28, 2026)
-- All .md files updated to reflect current project status
-- README.md, ROADMAP.md, PIPELINE_DATAFLOW.md, copilot-instructions.md synchronized
-- Added code_audit.py to validation module documentation (later merged into dev_audit.py, Feb 28)
-- Updated YOLO performance metrics to v25 (mAP50-95: 0.908)
-- Clarified validation folder structure with 4 modules
-
-**YOLO Training Completed** (January 21, 2026)
-- Trained YOLO26n for 100 epochs on brain region detection
-- Achieved mAP50-95=0.908 (v25); mAP50=0.976; production-ready performance
-- Precision 0.9996, Recall 0.9938 at epoch 100
-- Model deployed to `results/experiments/detection/ROI_Detection_v20/weights/best.pt`
-- Full training metrics in `results/experiments/detection/ROI_Detection_v20/results.csv`
-
-**GNN Evolution & Current State** (January 22, 2026)
-- **Hybrid v1 (Current Production)**: AUC=0.5832 ± 0.0476 with Focal Loss
-  - 3-layer GATv2, coordinates-only features (3D spatial)
-  - +8.9% AUC improvement over baseline
-  - F1=0.6808 ± 0.0041 (excellent stability)
-- **Baseline (Jan 21)**: AUC=0.5354 ± 0.0562 (2-layer GATv2, Cross-Entropy)
-- **Next Target**: AUC=0.650 with full 28-feature inputs and conditioning
-- All fold checkpoints saved to `models/checkpoints/best_model_fold{0-4}.pt`
-
-### Comprehensive Data Robustness Improvements (January 20, 2026)
-- **[src/data/abide_download.py]** - Enhanced extraction robustness:
-  - Added idempotency check: skips processing if `_ts.npy` already exists (prevents redundant re-downloads)
-  - Added `ensure_finite=True` to NiftiLabelsMasker for NaN safety
-  - Added ROI count validation: fails immediately if extracted time series ≠ 170 ROIs (catches atlas resampling issues)
-  - Added non-finite value check after masker processing (redundant safety)
-  - Improved normalization: uses conditional denominator check instead of epsilon addition (prevents division artifacts)
-  - Better image quality: uses `Image.LANCZOS` resampling for sharper brain slice downsampling
-  - Added `.str.strip()` on FILE_ID to prevent whitespace match failures
-
-- **[src/data/split.py]** - Enhanced stratification:
-  - Added `.str.strip()` on FILE_ID for consistent matching with image filenames
-  - Added singleton group filtering: removes groups with <3 subjects (prevents stratification ValueError)
-  - Logs filtered subject count for transparency
-
-- **[src/validation/pipeline_checks.py]** - Consolidated dataset validation (Jan 2026):
-  - Merged check_progress.py and class_distribution.py functionality
-  - Provides comprehensive health reports with metadata matching via `.str.strip()` on FILE_ID
-
-- **[src/validation/pipeline_checks.py]** - Added ROI validation:
-  - Added `EXPECTED_ROIS = 170` constant for AAL3 atlas
-  - Validates time series files have correct ROI count (catches atlas mismatches early)
-
-- **[src/utils/manifestor.py]** - Fixed metadata matching:
-  - Added `.str.strip()` on FILE_ID to prevent merge failures due to whitespace
-  - Note: Module generates master_manifest.csv with subject-phenotype mappings
-
-- **[src/features/extract_temporal.py]** - Added ROI validation:
-  - Added `EXPECTED_ROIS = 170` constant
-  - Warns if time series doesn't have 170 ROIs (catches atlas mismatches during feature extraction)
-
-**Impact**: These changes make the pipeline more robust by catching errors at extraction time (not during GNN training), handling interrupted runs gracefully, and preventing silent failures from whitespace/stratification issues.
-
-### Pipeline Integration & Consolidation (January 20, 2026)
-- **[src/run_pipeline.py]** - Integrated pipeline_checks.py as optional pipeline stage:
-  - Added `--run-comprehensive-validation` flag for quality checks (YOLO quality, graph sparsity, feature preprocessing, stratification)
-  - Added "comprehensive_validation" stage (position 6, after diagnostics)
-  - Fixed atlas_validation condition: now validates unless explicitly skipped with `--skip-atlas-validation`
-  - Updated execution order to include all 15 stages in proper sequence
-  - All references now use `src.validation.pipeline_checks` for both post-download and pre-GNN checks
-
-- **[src/validation/pipeline_checks.py]** - NEW: Combined integrity check module ✨
-  - **Replaces**: integrity_check.py + integrity_check2.py (consolidated into single module)
-  - **Functions**:
-    - `check_dataset_integrity()` - Post-download: validates PNG files, NPY files, checks for incomplete subjects
-    - `check_distribution()` - Pre-GNN: checks slice distribution across train/val/test, verifies image/label pairing
-  - **Usage**: `python src/validation/pipeline_checks.py` or `--dataset` or `--distribution` flags
-  - **Integration**: Called from run_pipeline.py stages "post_download_integrity" and "pre_gnn_integrity"
-  - **Benefits**: Single source of truth, reduced code duplication, centralized validation logic
-
-- **Validation Folder Structure** (March 1, 2026):
-  ```
-  src/validation/
-  ├── atlas_validator.py       (atlas file structure & ROI validation)
-  ├── dev_audit.py             (merged code_audit.py + feature_diagnostics.py; dev-only CLI tool)
-  ├── diagnose_features.py     (per-feature-group stats, z-score audit, single-graph + corpus-level diagnostics)
-  └── pipeline_checks.py       (unified: post-download + pre-GNN checks + health reports + class analysis)
-  ```
-  - Status: All modules integrated into run_pipeline.py
-  - Added: diagnose_features.py (March 1, 2026) — standalone CLI for feature-level debugging
-  - Deleted: integrity_check.py, integrity_check2.py, pipeline_diagnostics.py (merged into pipeline_checks.py)
-  - Deleted: code_audit.py, feature_diagnostics.py (merged into dev_audit.py, February 28, 2026)
-  - Deleted: frequency_features.py (merged into extract_temporal.py, February 28, 2026)
-
-## Recent Fixes & Important Changes (February 2026) ✨ NEW
-
-### Phase 3 Architecture Simplification & Smart Aggregation (February 12-14, 2026)
-
-**Architecture Simplification (Problem & Solution):**
-- **Problem**: Fold 4 collapse and high variance across folds indicated overfitting on 12-node graphs
-- **Solution**: Simplified from 3 layers to 2 layers, reduced hidden channels 256→64, added GELU activation
-- **Results**: Stable baseline AUC 0.5593 ± 0.0156 with consistent training across folds (low variance)
-
-**Smart Aggregation Implementation:**
-- Replaced simple mean aggregation with PCA eigenvariate extraction
-  - Captures dominant signal direction within each lobe (avoids cancellation from opposing signals)
-  - Added Regional Homogeneity (ReHo) features: intra-lobe coherence + spatial variance
-  - Total features: 26 → 28 (20 temporal + 2 internal + 6 spatial)
-- NaN safety: Added torch.isnan() and torch.isinf() checks in construct_causal.py and graph_factory.py
-
-**Configuration Centralization:**
-- Created FEATURE_GROUPS registry with explicit 28 features (temporal, frequency, internal, spatial)
-- GNN_IN_CHANNELS automatically calculated: len(ALL_FEATURE_NAMES) = 28
-- Removed deprecated imports: GNN_LEARNING_RATE_TUNED, GNN_HIDDEN_CHANNELS_TUNED, GNN_ENSEMBLE_MODE, GNN_NUM_GNN_LAYERS
-
-**Hyperparameter Tuning (Current Defaults):**
-- GNN_HIDDEN_CHANNELS: 128
-- GNN_DROPOUT: 0.45
-- GNN_WEIGHT_DECAY: 1e-4 (L2 regularization added)
-- CAUSALITY_METHOD: 'granger'
-- SPARSITY_QUANTILE: 0.70 (keep top 30% edges, min 12/graph)
-- FocalLoss: α=0.62, γ=2.0
-- Early stopping: patience=20, min_delta=0.0001
-
-**Code Synchronization & Fixes:**
-- Fixed AdamW optimizer: Removed duplicate weight_decay parameter, added closing parenthesis
-- Updated all 3 CausalBrainGNN instantiations to use config values consistently
-- Fixed visualizations.py: Disabled site_embedding and demographics for feature attribution (28-dim input)
-- Verified all Python files compile successfully (100% pass rate)
-- All imports resolve correctly, no missing config variables
-
-**Performance & Validation:**
-- Mean AUC: 0.6194 ± 0.0641 (+10.7pp over prior baseline of 0.5593)
-- Per-fold AUCs: [0.5762, 0.5931, 0.6197, 0.7424, 0.5657]
-- Mean best epoch: ~14.6 (range 8-24)
-- Test-set ensemble AUC: 0.5398 (153 held-out subjects)
-- No individual fold collapse (all > 0.5657)
-- Early stopping prevents overfitting while maintaining signal detection
-
-**Documentation Updates (Feb 15, 2026):**
-- README.md: Updated to v28 YOLO metrics, current GNN results, 7-slice convention
-- .github/copilot-instructions.md: Comprehensive Phase 3 + bug-fix update (this file)
-- ROADMAP.md: Added Phase 3 sprint details, updated Phase 4-6 descriptions
-- TODO.md: Updated config examples, corrected CAUSALITY_METHOD to 'granger'
-- DATAFLOW.md: Updated hyperparameters and feature pipeline
-
-## Recent Fixes & Important Changes
-
-### February 2026 Updates ✨ NEW
-
-#### YOLO v28 Training Complete (February 2-4, 2026)
-- **Training**: 100 epochs completed on 12-region brain detection
-- **Performance**: mAP50-95=0.93714, mAP50=0.98952
-- **Precision/Recall**: 0.98063 / 0.97214 (exceptional, near-perfect)
-- **Deployment**: results/experiments/detection/ROI_Detection_v28/weights/best.pt
-- **Status**: Production-ready with outstanding detection quality for all 12 brain regions
-
-#### GNN Retraining with Full Pipeline Fixes (February 11-15, 2026)
-- **Latest Training**: 5-fold CV completed after applying all Phase 3 bug fixes
-- **Performance**: Mean AUC 0.6194 ± 0.0641, Mean F1 0.7132 ± 0.0160 (+10.7pp AUC over prior baseline)
-- **Per-fold AUCs**: [0.5762, 0.5931, 0.6197, 0.7424, 0.5657]
-- **Best fold**: Fold 3 at 0.7424
-- **Mean best epoch**: ~14.6 (range 8-24)
-- **Training characteristics**:
-  - Moderate convergence: ~14.6 epochs average (vs prior 6.4 — richer signal from fixed pipeline)
-  - Fold 3 reaching 0.7424 demonstrates strong learnable ASD biomarkers
-  - Early stopping patience=20 allows full signal extraction
-  - Test-set ensemble AUC: 0.5398 (153 held-out subjects)
-- **Model checkpoints**: All updated Feb 15, 2026 (models/checkpoints/best_model_fold{0-4}.pt)
-- **Data**: 1035 subjects total, 7 z-slices each (z-percentiles 0.2/0.3/0.4/0.5/0.6/0.7/0.8), 7245 PNGs
-- **Graphs**: 1035 causal graphs, mean 79.2 edges/144 max (55% density)
-
-#### Critical Bug Fixes Applied (February 15, 2026)
-- **`DEFAULT_TR = 2.0`**: Added missing constant to `config.py` (fallback TR for per-subject lookup)
-- **neuroHarmonize `SITE` column**: `prepare_covariates` in `fold_safe_harmonization.py` renamed `SITE_ID→SITE`, dropped `subject_id` — neuroHarmonize requires exact `SITE` name
-- **Site embedding zero-padding**: `CausalBrainGNN.forward()` zero-pads 16-dim site embedding when `site_id=None` to maintain `lin_in` input shape (44-dim = 28 + 16) — fixes `(N×28)@(44×128)` shape mismatch during attribution
-- **Pipeline stage ordering**: `causal_graphs` stage now runs before `diagnostics`/`quality_validation` in `run_pipeline.py` — fixes false "no graphs found" critical error
-- **`TARGET_SLICES = 7`**: `pipeline_checks.py` updated from 5 to 7 (abide_download saves 7 z-slices at percentiles 0.2–0.8)
-- **`check_distribution` paths**: Fixed `DATA_PROCESSED → DATA_FINAL` for split image directories
-- **Graph topology palette**: `dx_group` mapped to string labels `"ASD"/"Control"` before seaborn boxplot — fixes `KeyError: missing keys {'1', '2'}`
-- **`visualize_accuracy_metrics` glob**: Fixed path from `RESULTS_DIR/*.json` to `RESULTS_DIR/experiments/training/*.json`
-
-#### Model Architecture Enhancements (February 12-14, 2026)
-- **Enhanced GNN Architecture** ([src/models/causal_gnn.py]):
-  - **Edge gating**: Linear(1→1) gate on causal weights before message passing
-  - **Pooling**: GlobalAttention pooling when `GNN_POOLING=attention`
-  - **Site embeddings**: Optional 16-dim embeddings to reduce site-specific scanner bias
-  - **Demographics conditioning**: Optional age/sex/FIQ inputs for clinical context
-  - **Layer architecture refinement**: Layer 3 uses concat=False to average attention heads
-  - **Status**: Production-ready with improved capacity and interpretability
-
-- **Feature Pipeline Updates** ([src/features/construct_causal.py]):
-  - **GPU-accelerated Granger causality**: compute_granger_causality_gpu() for faster graph construction
-  - **Multi-lag causality**: compute_multilag_causality() tests temporal dynamics across 1-5 TRs
-  - **Improved error handling**: Better NaN/Inf checks in causal matrix computation
-  - **Adaptive sparsification**: Statistical method maintains min 12 edges/graph for connectivity
-
-- **Training Utilities** ([src/models/training_utils.py]):
-  - Enhanced metric computation and logging
-  - Better checkpoint management for model variants
-  - Improved focal loss implementation for class imbalance
-
-- **Impact**: These architectural improvements position the model for AUC gains when fully leveraging 28-feature inputs and site/demographic conditioning
-
-#### Validation Folder Finalized (March 1, 2026)
-- **Complete structure**: 4 modules fully integrated
-  - atlas_validator.py: Atlas file structure & ROI validation
-  - dev_audit.py: Deep validation + feature diagnostics (merged from code_audit.py + feature_diagnostics.py)
-  - diagnose_features.py: Per-feature-group statistics, z-score double-normalisation audit, single-graph and corpus-level checks (NEW, March 1, 2026)
-  - pipeline_checks.py: Post-download, pre-GNN, health reports, class analysis, quality validation
-- **Integration**: All modules callable from run_pipeline.py
-- **Documentation**: Synchronized across README.md, ROADMAP.md, DATAFLOW.md, copilot-instructions.md
-- **Added**: diagnose_features.py (March 1, 2026)
-- **Deleted**: code_audit.py, feature_diagnostics.py (merged into dev_audit.py)
-- **Deleted**: frequency_features.py (merged into extract_temporal.py)
-
-### January 2026 Updates
-
-### Validation Module Consolidation (January 26, 2026)
-- **[src/validation/pipeline_checks.py]** - Now serves as the single source of truth for all validation operations:
-  - `check_dataset_integrity()` - Post-download validation
-  - `check_distribution()` - Pre-GNN validation
-  - `analyze_class_distribution()` - Class imbalance analysis
-  - `generate_health_report()` - Comprehensive pipeline health check (replaces pipeline_diagnostics.py)
-- **Deleted files**: pipeline_diagnostics.py merged into pipeline_checks.py for better maintainability
-- **Why it matters**: Single validation module reduces code duplication and provides unified interface for all data quality checks
-
-### Path Resolution Fixes
-- **[src/data/abide_download.py]** - Fixed `PROJECT_ROOT = Path(__file__).resolve().parents[2]` (was parents[0], incorrectly pointed to src/data/ instead of project root)
-
-### CSV/Data Format Fixes
-- **[src/features/extract_temporal.py]** - Removed CSV header comments (`# atlas_name:` etc.) that broke pandas CSV parsing. Now writes clean CSV directly with `df.to_csv()`. Metadata moved to accompanying `.roi_coverage.json` file.
-- **[src/features/fold_safe_harmonization.py]** - Fixed pandas FutureWarning by replacing `df[col].fillna(..., inplace=True)` with proper assignment `df[col] = df[col].fillna(...)`
-
-### Pipeline Diagnostics & Validation
-- **[src/validation/pipeline_checks.py]** - Consolidated all validation functions including health reports, ROI validation (accepts 164-170 ROIs for AAL3v1 variants), class distribution analysis
-- **[src/run_pipeline.py]** - Major refactor (January 2026):
-  - Changed `extract_temporal` invocation from direct import to subprocess call (avoids argparse conflicts with sys.argv)
-  - Integrated all new diagnostic and harmonization tools
-  - Fixed atlas validation logic
-  - Note: `--run-diagnostics`, `--run-safe-harmonize`, `--run-comprehensive-validation` flags were added in Jan 2026 and later removed/replaced in the March 2026 CLI cleanup; current flags are documented in the **March 1, 2026** changes section above
-
-### Atlas Support
-- **AAL3v1 (166 ROIs)** is now fully supported alongside AAL116/117/170 variants
-- Temporal feature extraction correctly detects 164 ROIs from AAL3v1 (2 ROIs may be empty/unused in specific templates)
-
-### Model Checkpoints (March 1, 2026)
-- **YOLO26n deployed (v28)**: `results/experiments/detection/ROI_Detection_v28/weights/best.pt` (mAP50-95=0.93714, mAP50=0.98952)
-- **YOLO26n base**: `yolo26n.pt` in project root and `models/pretrained/yolo26n.pt`
-- **YOLO next target**: `ROI_Detection_v29` — `YOLO_PROJECT_NAME = 'ROI_Detection_v29'` in config.py; weights not yet generated
-- **GNN folds**: `models/checkpoints/best_model_fold{0-4}.pt` (updated Feb 15, 2026; Mean AUC=0.6194±0.0641, best fold 0.7424)
-- **GNN baseline**: `models/checkpoints_baseline/best_model_fold{0-4}.pt` (archived Jan 2026)
-
-## Recent Fixes & Important Changes (March 1, 2026) ✨ LATEST
-
-### Phase 9 Complete — Full Post-Training Analysis Pipeline
-
-**New post-training runner scripts:**
-- **[src/run_evaluation.py]** (898 lines): Bootstrap 95% CI (N=2000), permutation test (N=1000), SVM/RF/MLP baseline comparison; outputs to `RESULTS_EVALUATION_DIR`
-- **[src/run_explainability.py]** (441 lines): Orchestrates Phases 8.1–8.4 — node importance, edge importance, feature attribution, literature validation; outputs to `results/explainability/`
-- **[src/run_result_analysis.py]** (776 lines): Per-subject predictions CSV, FP/FN misclassification profiles, site-effect AUC bars, calibration reliability diagram, severity correlation; outputs to `RESULTS_DIR/analysis/`
-
-**New explainability sub-modules (`src/analysis/`):**
-- **[src/analysis/node_importance.py]** (512 lines): `NodeImportanceAnalyzer` — GradCAM + GAT attention-weight extraction; `AttentionWeightExtractor` reads `_alpha` after each GATv2Conv forward
-- **[src/analysis/edge_importance.py]** (461 lines): `EdgeImportanceAnalyzer` — gradient attribution (`GradientEdgeAttributor`) + edge-masking (ΔP method, `EdgeMaskingAnalyzer`); produces 12×12 group-level heatmaps
-- **[src/analysis/literature_validation.py]** (436 lines): `validate_important_regions()` cross-references top-ranked regions against 6 known ASD networks (DMN, Social Brain, Salience, Sensorimotor, Visual, Subcortical); `generate_report()` writes JSON + text
-
-**New data utility:**
-- **[src/data/filter_to_1000.py]** (309 lines): Identifies and removes 25 subjects missing YOLO spatial features; produces balanced 1 000-subject dataset (486 ASD, 514 Control); supports `--backup` / `--restore-backup` flags
-
-**New validation tool:**
-- **[src/validation/diagnose_features.py]** (589 lines): CLI tool for feature-level debugging; audits single graphs and the full corpus; checks per-group stats (temporal/frequency/internal/spatial), z-score double-normalisation, edge distribution; reads `FEATURE_GROUPS` slices from config
-
-**New test suite (`tests/`):**
-- `tests/unit/test_config.py` — config constants and validation functions
-- `tests/unit/test_features.py` — feature extraction and harmonization
-- `tests/integration/test_dataset.py` — ABIDECausalDataset loading
-- `tests/integration/test_graph_construction.py` — causal graph construction pipeline
-
-**Config additions (`src/core/config.py`):**
-- `RESULTS_TRAINING_DIR` = `results/experiments/training`
-- `RESULTS_ABLATIONS_DIR` = `results/experiments/ablations`
-- `RESULTS_DATA_QUALITY_DIR` = `results/experiments/data_quality`
-- `RESULTS_EVALUATION_DIR` = `results/evaluation`
-- `RESULTS_FIGURES_DIR` = `results/figures`
-- `validate_training_health()` and `log_training_diagnostics()` diagnostic helpers
-- AUC/F1/Loss threshold constants (`AUC_RANDOM_THRESHOLD`, `AUC_GOOD_THRESHOLD`, etc.)
-
-**Pipeline extended to 20 stages:**
-- Core stages 1–12 unchanged (download → pre_gnn_integrity)
-- Stage 13: causal_graphs — now runs **before** diagnostics/quality_validation (ordering fix)
-- Stage 14: diagnostics — health report after graphs are built
-- Stage 15: quality_validation — YOLO quality, sparsity checks
-- Stage 16: GNN training (5-fold CV, unchanged)
-- Stages 17–20: visualizations, evaluation, explainability, result_analysis
-
-**CLI updated** (`src/run_pipeline.py`):
-- `--analysis-only`: run only stages 17–20 (post-training analysis)
-- `--visualizations-only`: run only stage 17
-- `--skip-visualizations`, `--skip-evaluation`, `--skip-explainability`, `--skip-result-analysis`: skip individual post-training stages
-- `--skip-diagnostics`, `--skip-comprehensive-validation`: skip health-check stages
-- `--regenerate-features`: regenerate spatial/temporal/harmonization/graphs (keeps images/splits)
-- Note: obsolete flags `--run-diagnostics`, `--run-safe-harmonize`, `--run-comprehensive-validation` removed
-
-**Documentation synchronized (March 1, 2026):**
-- README.md, ROADMAP.md, docs/DATAFLOW.md, and this file all updated to reflect 20-stage pipeline, v28/v29 YOLO status, Phase 9 completions, and Phase 10 open items
-
-## Known Issues & Open Items (Phase 10)
-
-Documented in `docs/TODO.md` (code audit Feb 23, 2026). These are the root causes of the current ~0.62 AUC ceiling:
-
-1. **Double z-score normalisation** — `abide_download.py` uses `standardize='zscore_sample'` AND `construct_causal.py` z-scores again. Fix: set `standardize=False` in NiftiLabelsMasker.
-2. **Frequency band aliasing** — beta/gamma bands (0.15–0.25 Hz) are near the fMRI Nyquist limit (TR=2 s → Nyquist=0.25 Hz). These 12 frequency features may add noise. Track via ablation.
-3. **CV–test AUC gap** — Mean CV AUC 0.6194 vs test ensemble AUC 0.5398 (gap of 0.0796). Stronger site-invariance (higher GRL alpha) and test-time augmentation are next candidates.
-4. **YOLO v29 training** — config is set but training run has not been executed yet.
-
-## Medical/Scientific Context
-
-- **Diagnosis label**: 0=Control (healthy), 1=ASD (autism spectrum disorder)
-- **Data source**: ABIDE initiative (public fMRI dataset, multi-site, ~1000 subjects)
-- **Causal inference goal**: Identify region→region influence patterns distinctive to ASD using lagged correlations
-- **Explainability**: Edge weights in causal graph provide subject-specific feature importance (gradient-based saliency in `causal_gnn.py::get_node_importance()`)
-- **Medical tuning**: YOLO augmentation disabled for grayscale medical images; preserves anatomical alignment
-- **Graph construction**: Granger causality (default) or lagged Pearson correlation between brain regions
-- **Key metrics**: 
-  - **YOLO detection**: mAP50-95=0.93714 (v28, outstanding; 12-region detection highly reliable)
-  - **GNN classification (5-fold CV)**: AUC=0.6194±0.0641, F1=0.7132±0.0160 (Feb 15, 2026)
-  - Training characteristics: Moderate convergence (~14.6 epochs), Fold 3 peak AUC=0.7424
-  - Test-set ensemble AUC: 0.5398 (153 held-out subjects)
-  - Graph topology finding: Parietal In-Degree lower in ASD (p=0.0296, Cohen's d=-0.125)
-  - Architecture features: Learnable edge weights, multi-scale pooling, optional site/demographic conditioning
-- **Imbalanced classification**: 2D stratified CV (DX_GROUP + SITE_ID) ensures balanced evaluation
-
-### Why These Design Choices?
-
-**12-Region Aggregation:**
-- Reduces 170×170=28,900 edges to 12×12=144 edges (computational efficiency)
-- Anatomically interpretable for clinical validation
-- Finer granularity than 5-lobe system: separates functionally distinct areas (e.g., motor/premotor, insula, cingulate)
-- Reduces scanner-specific noise through within-region averaging
-- Better statistical power with limited samples (n~1000)
-
-**Multi-Head GAT with Learnable Edge Weights:**
-- 4 attention heads per layer (balanced capacity for 28-feature input)
-- Edge gating (Linear 1→1) modulates causal weights before message passing
-- Final layer uses concat=False to average head outputs
-- Still efficient for 12-node graphs (not redundant like 8+ heads)
-- Maintains edge_attr integration with learned transformation
-- Skip connections prevent over-smoothing across 3 layers
-- Attention pooling captures diverse graph properties
-
-**Granger Causality (not just lagged correlation):**
-- Statistical rigor: Tests null hypothesis with p-values
-- Multi-lag testing: Captures dynamics across multiple timescales (1-5 TRs)
-- Directed causality: Region i \u2192 j if past of i improves prediction of j
-- Interpretable edge weights: -log10(p-value) where higher = stronger
-- Baseline alternative: Lagged Pearson for computational efficiency
-
-**Frequency-Domain Features (12 new):**
-- Gamma-band abnormalities documented in ASD (Rojas et al., 2008)
-- Spectral entropy captures oscillatory complexity
-- Phase stability metrics for synchrony analysis
-- 86% feature expansion (14 \u2192 26) for richer representation
+### **Checkpoint Management** ([training_utils.py](src/models/training_utils.py))
+```python
+from src.models.training_utils import CheckpointManager
+
+ckpt_mgr = CheckpointManager(CHECKPOINT_DIR, prefix="best_model")
+ckpt_mgr.save(model, optimizer, epoch=10, metrics={'auc': 0.65})
+model, optimizer, metadata = ckpt_mgr.load("best_model_fold0.pt")
+```
+
+### **Error Handling: Graceful Degradation**
+- Never propagate errors downstream
+- Fallback to simpler methods (e.g., PCA fails → use mean aggregation)
+- Log warnings, continue processing
+- Early validation in `__init__` or at function entry (fail fast)
+
+**Example Pattern:**
+```python
+# In construct_causal.py, aggregate_to_lobes()
+try:
+    # Try PCA
+    u, s, vh = torch.linalg.svd(centered, full_matrices=False)
+    dominant_signal = u[:, 0] * s[0]
+except Exception as e:
+    logger.debug(f"SVD failed ({str(e)}), falling back to mean")
+    dominant_signal = roi_data.mean(dim=1)  # Graceful fallback
+```
+
+### **Validation Patterns** (Multi-level integrity checking)
+
+**1. Early Validation (prevent bad data from propagating)**
+```python
+# graph_factory.py: ABIDECausalDataset.__init__
+def _validate_feature_dimensions(self):
+    """Ensure loaded features match config expectations."""
+    sample_sub = self.node_attr.index[0]
+    temporal = self._get_subject_temporal(sample_sub)
+    
+    if temporal.shape != (NUM_LOBES, NUM_TEMPORAL_FEATURES):
+        raise ValueError(f"Shape mismatch: expected ({NUM_LOBES}, {NUM_TEMPORAL_FEATURES}), got {temporal.shape}")
+```
+
+**2. Comprehensive Checks (pipeline_checks.py)**
+- Atlas integrity (AAL3 dimensions, ROI count range 164-170)
+- Post-download integrity (PNG/NPY file validation)
+- Feature distribution (NaN/Inf detection, outlier checking)
+- Graph sparsity (ensure minimum edge count)
+- Stratification correctness (DX + SITE balancing)
+
+**3. Fold-Safe Validation**
+- Harmonization: Train on fold i, apply to val/test i (never leakage)
+- Graphs: Built per-subject, never aggregated across folds
+- Metrics: Computed per-fold, then aggregated with proper CI
+
+### **Data Shapes** (Expected)
+| Type | Shape | Notes |
+|------|-------|-------|
+| Node features | `(12, 28)` | 12 lobes × 28 features |
+| Causal adjacency | `(12, 12)` | Directed graph edges |
+| GNN input x | `(N_nodes, 28)` | Batched graphs (N ≈ 12 × batch_size) |
+| Edge index | `(2, E)` | COO sparse format |
+| Model output | `(B, 2)` | Batch × {Control, ASD} logits |
+| Harmonized tensor | `(1035, 12, 20)` | 1035 subjects × 12 lobes × 20 temporal features |
+
+### **Constants** (Import from config, never hardcode)
+```python
+from src.core.config import (
+    NUM_LOBES,               # 12 regions
+    GNN_IN_CHANNELS,         # 28 features
+    NUM_TEMPORAL_FEATURES,   # 20
+    NUM_SPATIAL_FEATURES,    # 6
+    CHECKPOINT_DIR,          # models/checkpoints/
+    MASTER_MANIFEST,         # data/metadata/master_manifest.csv
+    K_FOLDS,                 # 5
+    LOBE_MAPPING,            # {lobe_id: [roi_indices]}
+    ALL_FEATURE_NAMES,       # Complete feature list (order-critical)
+)
+```
+
+### **Reproducibility Checklist**
+When making changes to feature extraction or hyperparameters:
+1. Set `torch.manual_seed(42)`, `np.random.seed(42)`, `random.seed(42)`
+2. Test on same data split (use `--skip-download --skip-split` flag)
+3. Compare to known baseline AUC (CV: 0.7434 ± 0.0417, per-fold: [0.7317, 0.7576, 0.7606, 0.6709, 0.7964])
+4. Report fold-wise metrics, not just mean
+5. Include bootstrap 95% CI in all results
+
+## Integration Points
+
+**PyTorch Geometric**
+- Inherit from `torch_geometric.data.Dataset` (see [graph_factory.py](src/features/graph_factory.py))
+- Return `torch_geometric.data.Data(x=..., edge_index=..., edge_attr=..., y=...)`
+- Use `DataLoader` for batching
+- GNN forward signature: `model(x, edge_index, edge_attr, batch)`
+
+**YOLO (Ultralytics)**
+- Load: `YOLO(YOLO_WEIGHTS_PATH)` ([config.py](src/core/config.py#L126))
+- Train: `model.train(**YOLO_TRAIN_CONFIG)` (consolidated config, no parameter duplication)
+- Predict: `model.predict(img_path, conf=YOLO_CONF_THRESHOLD)`
+
+**neuroHarmonize (ComBat)**
+- Fold-safe: fit on train, transform val/test ([fold_safe_harmonization.py](src/features/fold_safe_harmonization.py))
+- Protect covariates: `batch_col='SITE_ID', covars='DX_GROUP'`
+
+**Statsmodels (Granger Causality)**
+- Multi-lag test (1-5 TRs): `grangercausalitytests(data, maxlag=5)`
+- Extract p-value: `test[lag][0]['ssr_ftest'][1]` ([causal_inference.py](src/features/causal_inference.py))
+
+**Captum (Explainability)**
+- GradCAM: `LayerGradCam(model, model.conv1)` ([node_importance.py](src/analysis/node_importance.py))
+- Integrated Gradients, Saliency, DeepLift ([feature_attribution.py](src/analysis/feature_attribution.py))
+
+## Hidden Implementation Details (Advanced)
+
+### **Feature Extraction Edge Cases**
+
+1. **Frequency Features Near Nyquist**
+   - Current: TR=2.0s → Nyquist = 0.25 Hz
+   - Beta (0.15-0.20 Hz) and Gamma (0.20-0.25 Hz) sit at/near Nyquist
+   - **Issue**: fMRI aliasing risk in high-frequency bands
+   - **Workaround**: Trust delta/theta/alpha (0.01-0.15 Hz), treat gamma skeptically
+   - **Future**: Phase 10.2 will audit these and possibly remove unreliable bands
+
+2. **PCA Eigenvariate vs Mean Aggregation**
+   - ROIs within a lobe can be **anti-correlated** (motor, cingulate areas)
+   - Simple mean averaging cancels opposing signals
+   - PCA's first PC preserves signal amplitude and direction
+   - **Trade-off**: Eigenvariate captures dominant variance, loses smaller orthogonal patterns
+   - **Code**: [construct_causal.py](src/features/construct_causal.py#L40-L60)
+
+3. **Double Z-Score Normalization Issue**
+   - `abide_download.py` line 82: `standardize='zscore_sample'` in NiftiLabelsMasker
+   - `construct_causal.py` line 40: Manual z-scoring again before correlation
+   - **Impact**: Compresses signal variance → weaker biomarkers
+   - **Status**: Known issue, Phase 10.1 fix pending
+
+### **Graph Construction Edge Cases**
+
+1. **Minimum Edge Preservation**
+   ```python
+   # construct_causal.py: adaptive sparsification
+   MIN_EDGES_PER_GRAPH = 12  # Ensure connectivity for 12-node graphs
+   SPARSITY_QUANTILE = 0.70  # Keep top 30% edges
+   
+   # If top 30% < 12 edges, increase threshold
+   num_edges = (adj != 0).sum()
+   if num_edges < MIN_EDGES_PER_GRAPH:
+       adjust_threshold()  # Fall back to less sparse graph
+   ```
+
+2. **Zero-Edge Graphs**
+   - Subject has extremely weak connectivity → all edges pruned
+   - **Handling**: Skip graph with warning log (see graph_factory.py _validate_subjects)
+
+3. **NaN/Inf Propagation**
+   ```python
+   # Graceful handling in aggregate_to_lobes()
+   if torch.isnan(signal).any() or torch.isinf(signal).any():
+       lobe_signals.append(torch.zeros(...))  # Don't crash, use zero
+       logger.warning("NaN/Inf detected, using zero signal")
+   ```
+
+### **Training Loop Patterns**
+
+1. **5-Fold Stratified CV**
+   ```python
+   # gnn_model.py: stratified k-fold ensures DX + SITE balance per fold
+   splitter = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+   splits = splitter.split(manifest, manifest['DX_GROUP'])
+   
+   for fold, (train_idx, val_idx) in enumerate(splits):
+       # Train on fold, validate on fold (never test)
+       train_loader = DataLoader(train_dataset[train_idx], ...)
+   ```
+
+2. **OneCycle Learning Rate Schedule**
+   ```python
+   # training_utils.py: OneCycle LR from GNN_LEARNING_RATE to GNN_ONECYCLE_MAX_LR
+   scheduler = torch.optim.lr_scheduler.OneCycleLR(
+       optimizer,
+       max_lr=GNN_ONECYCLE_MAX_LR,  # 0.002
+       total_steps=total_epochs * steps_per_epoch
+   )
+   ```
+
+3. **Early Stopping Logic**
+   ```python
+   # Monitor validation AUC, stop if no improvement for 20 epochs
+   early_stop = EarlyStopping(patience=30, mode='max')
+   for epoch in range(100):
+       val_auc = validate(model, val_loader)
+       if early_stop(val_auc):  # Returns True when patience exhausted
+           break
+   ```
+
+### **Fold-Safe Harmonization Pipeline**
+
+```python
+# fold_safe_harmonization.py: Multi-step process
+for fold_id in range(K_FOLDS):
+    # 1. Fit ComBat on train data only
+    train_features = features_df.iloc[train_idx]
+    train_manifest = manifest_df.iloc[train_idx]
+    
+    model, train_harm = harmonizationLearn(
+        train_features,
+        train_manifest,
+        batch_col='SITE_ID',
+        covars='DX_GROUP'  # ← CRITICAL: Protect diagnosis
+    )
+    
+    # 2. Apply to val/test using fitted model
+    val_features = features_df.iloc[val_idx]
+    val_harm, _ = harmonizationApply(
+        val_features,
+        model,
+        batch_col='SITE_ID'
+    )
+    
+    # 3. Write combined output for graph_factory
+    combined = pd.concat([train_harm, val_harm, ...])
+```
+
+### **Permutation Testing (run_evaluation.py)**
+
+```python
+# Bootstrap CI: resample with replacement N=2000 times
+bootstrap_aucs = []
+for _ in range(2000):
+    sample_idx = np.random.choice(len(y_test), size=len(y_test), replace=True)
+    auc = roc_auc_score(y_test[sample_idx], y_pred[sample_idx])
+    bootstrap_aucs.append(auc)
+
+ci_lower = np.percentile(bootstrap_aucs, 2.5)
+ci_upper = np.percentile(bootstrap_aucs, 97.5)
+
+# Permutation test: shuffle labels N=1000 times
+null_aucs = []
+for _ in range(1000):
+    y_shuffled = np.random.permutation(y_test)
+    auc = roc_auc_score(y_shuffled, y_pred)
+    null_aucs.append(auc)
+
+p_value = (np.array(null_aucs) >= observed_auc).mean()
+```
+
+## Security
+
+**Sensitive Data**
+- ABIDE data: public dataset, no PHI (Protected Health Information)
+- Phenotypic CSV: anonymized subject IDs (`sub-XXXX`)
+- No credentials in code: AWS S3 access via boto3 (credentials in `~/.aws/`)
+
+**Authentication**
+- ABIDE S3 bucket: public read-only access (s3://fcp-indi/data/Projects/ABIDE)
+- No authentication required for data download
+
+**Validation & Integrity**
+- Atlas validation: verify AAL3 file exists and dimensions match ([atlas_validator.py](src/validation/atlas_validator.py))
+- Post-download integrity: check PNG/NPY files exist for all subjects ([audit_check.py](src/validation/audit_check.py))
+- Pre-GNN validation: check feature dimensions and NaN/Inf values ([pipeline_checks.py](src/validation/pipeline_checks.py))
+
+## Performance Characteristics
+
+**Current Baseline (Feb 2026)**
+- **CV AUC**: 0.7434 ± 0.0417 (5 folds; per-fold: [0.7317, 0.7576, 0.7606, 0.6709, 0.7964])
+- **Test AUC**: 0.6487 [0.5618, 0.7300] (ensemble on 155 test subjects; p=0.0020 global / 0.0010 within-site)
+- **Test F1**: 0.6738 | **AUPRC**: 0.6459 | **Sensitivity**: 0.7975 | **Specificity**: 0.4079
+- **CV–test gap**: 0.0947 (site-DX correlations; GRL alpha grid search pending)
+- **Best fold**: Fold 4 (AUC=0.7964); **Best epochs**: [42, 81, 75, 72, 75]
+- **Source**: pipeline_20260309_194459.log (authoritative; second run 195751 overwrote checkpoints with worse results)
+
+**Computational Requirements**
+- GPU: NVIDIA V100 or RTX3090+ (11GB+ VRAM recommended)
+- CPU: 16+ cores for parallel processing
+- Memory: 32GB RAM for harmonization/graph construction steps
+
+**Known Bottlenecks (Phase 10 Roadmap)**
+1. Double z-score normalization compresses signal (Phase 10.1)
+2. Frequency features near Nyquist have aliasing risk; gamma band flagged via `UNRELIABLE_FREQ_BANDS_AT_NYQUIST` (Phase 10.2)
+3. CV-test gap suggests site-specific patterns → stronger harmonization needed (Phase 10.3)
+4. P0 critical bugs in harmonization + evaluation scripts (see audit `plan-neuroCxgAudit.md`)
+
+---
+
+**Reference Documents**
+- [CODEBASE_ARCHITECTURE_REPORT.md](../CODEBASE_ARCHITECTURE_REPORT.md) — Comprehensive 10-section analysis
+- [AI_AGENT_QUICK_REFERENCE.md](../AI_AGENT_QUICK_REFERENCE.md) — Code patterns & debugging checklists
+- [docs/DATAFLOW.md](../docs/DATAFLOW.md) — Visual pipeline flow (20 stages)
+- [docs/ROADMAP.md](../docs/ROADMAP.md) — Phase-by-phase implementation roadmap

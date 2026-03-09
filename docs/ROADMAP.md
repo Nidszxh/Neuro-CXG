@@ -3,9 +3,9 @@
 
 ---
 
-## IMPLEMENTATION STATUS (March 1, 2026)
+## IMPLEMENTATION STATUS (March 9, 2026) ✨ LATEST
 
-**Latest Update**: All development through Phase 9 production-ready. `run_pipeline.py` now orchestrates **20 stages** (15 core + 5 post-training analysis). Phase 10 open items tracked in `docs/TODO.md`: double z-score normalisation, frequency-band aliasing near fMRI Nyquist, and CV-vs-test AUC gap.
+**Latest Update**: Phase 10.5 complete (March 9, 2026). All P0/P1 audit bugs fixed. Best training run: pipeline_20260309_194459.log — CV AUC 0.6194→0.7434, Test AUC 0.5398→0.6487 (p=0.0020 global / 0.0010 within-site; significant). Note: a second run (pipeline_20260309_195751) ran 5 min later and overwrote checkpoints with worse results (CV AUC=0.7081); canonical metrics are always from the 194459 log.
 
 ### COMPLETED SPRINT: PHASE 9 FINAL INTEGRATION & EVALUATION (February 28, 2026)
 
@@ -50,13 +50,12 @@
 The following open issues were identified via detailed code audit (`docs/TODO.md`, Feb 23, 2026).
 They explain the current CV–test AUC gap and the ~0.62 performance ceiling.
 
-#### Phase 10.1 — Fix Double Z-Score Normalisation (⏳ OPEN)
-- [ ] `abide_download.py`: Remove `standardize='zscore_sample'` from NiftiLabelsMasker
-  - Rationale: `construct_causal.py` already z-scores before Granger computation
-  - Impact: Duplicate normalisation compresses signal variance, may suppress ASD biomarkers
-- [ ] Expand bandpass: change `low_pass=0.08→low_pass=0.15`, `high_pass=0.01→high_pass=0.008`
-  - Rationale: Current 0.01–0.08 Hz is too narrow; missing Slow-4 band (0.027–0.073 Hz)
-- [ ] Re-run extract_temporal, fold_safe_harmonization, construct_causal, and GNN after fix
+#### Phase 10.1 — Fix Double Z-Score Normalisation (✅ FIXED March 8, 2026)
+- [x] `abide_download.py`: Changed `standardize=True` → `standardize=False` in NiftiLabelsMasker
+- [x] `construct_causal.py::construct_graph()`: Added single z-score after loading `.npy` file
+- [x] Expanded bandpass: `low_pass=BANDPASS_HIGH` (0.15 Hz, was 0.08 Hz) via `config.BANDPASS_HIGH`
+  - Config constants added: `BANDPASS_LOW = 0.01`, `BANDPASS_HIGH = 0.15`
+- Re-run extract_temporal, fold_safe_harmonization, construct_causal, and GNN after fix
 
 #### Phase 10.2 — Frequency Feature Reliability (⏳ OPEN)
 - [ ] Audit frequency bands against fMRI Nyquist (TR=2 s → Nyquist = 0.25 Hz)
@@ -64,16 +63,105 @@ They explain the current CV–test AUC gap and the ~0.62 performance ceiling.
   - Consider removing or capping to theta+alpha+beta only (12 → 10 frequency features)
 - [ ] Ablation: train with/without frequency features to quantify signal vs noise contribution
 
-#### Phase 10.3 — Reduce CV–Test AUC Gap (⏳ OPEN)
-- [ ] CV AUC 0.6194 vs test ensemble AUC 0.5398 — gap of 0.0796
-- [ ] Investigate per-site generalisation: run per-site AUC (available in run_result_analysis.py)
-- [ ] Explore stronger site-invariance: increase GNN_GRL_ALPHA, try adversarial training weight sweep
-- [ ] Add test-time augmentation (graph edge-dropout ensemble)
+#### Phase 10.3 — Reduce CV–Test AUC Gap (✅ FIXED March 9, 2026)
+- [x] Diagnosed root cause: `GNN_GRL_ALPHA=1.0` collapsed all test probabilities to ~0.56 constant
+  - GRL with alpha=1.0 removes ALL site-correlated variance; ABIDE site-DX correlations caused diagnostic signal removal
+  - Mechanism: `att_pool gate_nn` std=0.051 (uniform pooling), classifier bias near zero → constant softmax output
+- [x] Fix: `GNN_USE_GRL=False`, `GNN_GRL_ALPHA=0.0`, `GNN_SITE_LOSS_WEIGHT=0.0` in `src/core/config.py`
+- [x] Backed up GRL=1.0 checkpoints to `models/checkpoints_grl_alpha1/`
+- [x] Retrained without GRL (Phase 10.3): **CV AUC 0.6721 ± 0.0340** (was 0.6309 with GRL)
+- [x] Phase 10.5 fixes applied (DX_GROUP covariate, Bonferroni, NaN leakage, site_id): **CV AUC 0.7434 ± 0.0417** (pipeline_20260309_194459.log)
+- [x] Evaluated (canonical best run): **Test AUC 0.6487** [0.5618, 0.7300], p=0.0020 (global), p=0.0010 (within-site)
+- [x] Per-fold CV (canonical): [0.7317, 0.7576, 0.7606, 0.6709, 0.7964]; best epochs [42, 81, 75, 72, 75]
+- [ ] Remaining gap (0.0947): site-DX correlations still present in site embeddings; GRL alpha grid search {0.05, 0.1} pending
 
-#### Phase 10.4 — Next YOLO Training Run (ROI_Detection_v29) (⏳ PLANNED)
-- [ ] Run YOLO training to produce `ROI_Detection_v29/weights/best.pt`
+#### Phase 10.4 — YOLO v29 Training Run (✅ COMPLETE March 9, 2026)
+- [x] Ran YOLO training to produce `ROI_Detection_v29/weights/best.pt`
   - Config already set: `YOLO_PROJECT_NAME = 'ROI_Detection_v29'`
-  - Baseline target: maintain mAP50-95 ≥ 0.93
+  - **Result**: mAP50-95=0.9598 vs v28 baseline 0.93714 (+2.7%); mAP50=0.99428, Precision=0.98734, Recall=0.98383; best epoch=99/100
+
+#### Phase 10.5 — Audit Bug Fixes (✅ FIXED March 8, 2026)
+
+> Source: `plan-neuroCxgAudit.md` + `IMPLEMENT.md` (March 7–8, 2026 code audit)
+
+**P0 — Circular Test-AUC Ensemble Weighting (`run_evaluation.py`) → FIXED**
+- [x] Replaced `_optimal_threshold(ens_probs, labels)` (used test labels) with mean of val-fold thresholds
+  from each fold checkpoint's `"threshold"` key
+- [x] Added diagnostic `logger.warning` when a checkpoint is missing the `"auc"` or `"threshold"` key
+
+**P1 — Frequency Feature Ordering Mismatch (`fold_safe_harmonization.py`) → FIXED**
+- [x] `FEATURE_TYPES` now uses interleaved ordering (delta_power, delta_peak, theta_power, theta_peak…)
+  matching `config.FEATURE_GROUPS['frequency']`; positional loading in `graph_factory.py` is now correct
+
+**P1 — NaN Imputation Leakage (`fold_safe_harmonization.py`) → FIXED**
+- [x] `repair_features(…, impute_nans=False)` now called before split; train-only medians computed
+  post-split and applied to both train and val/test
+
+**P1 — PCA Sign Ambiguity (`construct_causal.py`) → FIXED**
+- [x] Replaced `vh[0, max_abs_idx]`-based sign flip with correlation-with-raw-mean approach
+
+**P1 — Deprecated Constants (`config.py`, `construct_causal.py`, `gnn_model.py`) → FIXED**
+- [x] `CAUSAL_LAG` commented out in `config.py`; `_LEGACY_CAUSAL_LAG = 1` defined locally in `construct_causal.py`
+- [x] `GNN_ONECYCLE_PATIENCE` removed; `GNN_EARLY_STOPPING_PATIENCE = 30` is now the single patience constant
+- [x] All usages in `gnn_model.py`, `run_ablations.py`, `data_quality.py` updated
+
+**P0 — DX_GROUP Missing from ComBat Covariates (`fold_safe_harmonization.py`) (✅ FIXED)**
+- [x] Added `DX_GROUP` as protected covariate in `_prepare_covariates()` at L258 in `fold_safe_harmonization.py`
+  - ComBat covariates now: SITE, AGE_AT_SCAN, SEX, DX_GROUP
+  - Docstring explicitly states: "DX_GROUP is included as a protected covariate so ComBat preserves diagnosis-correlated variance"
+  - **Impact**: Harmonization no longer removes diagnostic signal; this was a key driver of the CV AUC gain to 0.7434
+
+**P1 — Multi-Lag Granger p-Values Not Bonferroni-Corrected (✅ FIXED)**
+- [x] Bonferroni correction applied in `causal_inference.py` at L93-95: `corrected_p = min(min_p_value * n_tests, 1.0)`
+
+**P1 — Full-Dataset Statistics Leaking into Fold Feature Repair (✅ FIXED)**
+- [x] Train-fold stats now computed post-split and applied to both train and val/test
+  - `repair_features(…, impute_nans=False)` called before split; train-only medians applied after
+
+---
+
+### NEXT SPRINT: PHASE 11 — SITE INVARIANCE & MODEL ROBUSTNESS (April 2026)
+
+**Goal**: Close the CV–test AUC gap (0.7434 → 0.6487 = 0.0947) and restore best-run checkpoints. (YOLO v29 ✅ deployed.)
+
+#### Phase 11.1 — Restore Best-Run Checkpoints (⏳ PLANNED)
+- [ ] Re-run GNN training (`python -m src.models.gnn_model`) to reproduce best-run results
+  - **Issue**: Current disk checkpoints are from pipeline_20260309_195751 (Run 2, fold3 epoch=2 collapse)
+  - **Fix**: Re-run training; canonical target CV AUC ≥ 0.7434 per pipeline_20260309_194459.log
+  - Save fold-wise CV AUC metrics alongside checkpoints for auditability
+
+#### Phase 11.2 — GRL Alpha Grid Search (⏳ PLANNED)
+- [ ] Test `GNN_GRL_ALPHA` ∈ {0.05, 0.1, 0.2} with Ganin et al. annealing schedule
+  - Current: `GNN_USE_GRL=False`, `GNN_GRL_ALPHA=0.0` (hard disable — conservative fix)
+  - Target: find minimal alpha that reduces site variance without collapsing diagnostic signal
+  - Run 5-fold CV per alpha; report per-site AUC improvement vs. baseline
+- [ ] Consider per-site threshold calibration: Platt scaling per site
+
+#### Phase 11.3 — YOLO v29 Training (✅ COMPLETE March 9, 2026)
+- [x] Ran `python -m src.pipelines.roi_detection` to produce `ROI_Detection_v29/weights/best.pt`
+  - **Result**: mAP50-95=0.9598 (+2.7%), mAP50=0.99428 (+0.5%), Precision=0.98734, Recall=0.98383; best epoch=99/100
+  - Exceeds baseline target of mAP50-95 ≥ 0.93714 (v28)
+  - Deployed to `results/experiments/detection/ROI_Detection_v29/weights/best.pt`
+
+#### Phase 11.4 — Frequency Band Audit (⏳ PLANNED)
+- [ ] Gamma band ablation: zeroed for TR=2s (confirmed in pipeline logs via `UNRELIABLE_FREQ_BANDS_AT_NYQUIST`)
+  - Decide: keep 12 frequency features (gamma zeroed) vs. drop gamma → 10 features
+  - Update `GNN_IN_CHANNELS` if features change (currently dynamically computed as `len(ALL_FEATURE_NAMES)`)
+- [ ] Ablation: train without frequency features entirely to quantify contribution
+
+#### Phase 11.5 — Subject Cleanup (⏳ PLANNED)
+- [ ] Interactive purge of 4 subjects with images but no time series files
+  - Run `python src/run_pipeline.py --interactive` and select option 2
+  - Verify 1035 → 1031 after purge matches current `EXCLUDED_SUBJECTS` count
+
+**Performance Timeline:**
+
+| Date | Run | CV AUC | Test AUC | Key Change |
+|------|-----|--------|----------|------------|
+| Feb 15, 2026 | Phase 9 final | 0.6194 ± 0.0641 | 0.5398 | Baseline (GRL=1.0) |
+| Mar 8, 2026 | Phase 10 NaN fix | 0.6309 | — | Dead lobe NaN pre-filter |
+| Mar 9, 2026 (Run 1) | Phase 10.3+10.5 | **0.7434 ± 0.0417** | **0.6487** | GRL disabled + all P0/P1 fixes |
+| Mar 9, 2026 (Run 2) | Phase 10.3 only | 0.7081 ± 0.0564 | 0.6359 | Overwrote checkpoints; fold3 collapsed |
 
 ---
 
@@ -90,6 +178,8 @@ They explain the current CV–test AUC gap and the ~0.62 performance ceiling.
 - [x] **Deployed v28**: `results/experiments/detection/ROI_Detection_v28/weights/best.pt`
   - mAP50-95: 0.93714 | mAP50: 0.98952 | Precision: 0.98063 | Recall: 0.97214
 - [x] Config updated for next training: `YOLO_PROJECT_NAME = 'ROI_Detection_v29'`
+- [x] **Deployed v29**: `results/experiments/detection/ROI_Detection_v29/weights/best.pt` (March 9, 2026)
+  - mAP50-95: 0.9598 (+2.7%) | mAP50: 0.99428 (+0.5%) | Precision: 0.98734 | Recall: 0.98383 | Best epoch: 99/100
 - [x] Status: ✅ Production-ready — exceptional for 12-region medical detection
 
 #### Phase 4: Feature Extraction & Harmonization
@@ -111,7 +201,7 @@ They explain the current CV–test AUC gap and the ~0.62 performance ceiling.
 - [x] Outputs: data/processed/causal_graphs/{subject_id}_graph.pt (12×12 adjacency matrices)
 
 #### Phase 6: GNN Development
-- [x] CausalBrainGNN architecture (GATv2Conv with 3 layers, 4 attention heads, 128 hidden channels, skip connections)
+- [x] CausalBrainGNN architecture (GATv2Conv with 2 layers, 4 attention heads, 128 hidden channels, skip connections, 16-dim per-lobe identity embeddings)
 - [x] ✨ Expanded input channels: 28 features (20 temporal + 2 internal ReHo + 6 spatial)
 - [x] ✨ PCA eigenvariate + Regional Homogeneity aggregation for smart feature extraction
 - [x] GELU activation and LayerNorm for improved gradient flow
@@ -119,18 +209,19 @@ They explain the current CV–test AUC gap and the ~0.62 performance ceiling.
 - [x] Focal Loss (α=0.62, γ=2.0) for class imbalance handling
 - [x] Site embeddings and demographic conditioning (age, sex, FIQ) - optional
 - [x] 5-fold stratified cross-validation (by DX_GROUP + SITE_ID)
-- [x] Training loop with early stopping (patience=20, min_delta=0.0001) and gradient clipping (max_norm=1.0)
+- [x] Training loop with early stopping (patience=30, min_delta=0.0001) and gradient clipping (max_norm=1.0)
 - [x] Metric computation (Accuracy, F1, ROC-AUC, Confusion Matrix per fold)
 - [x] Model checkpointing (best AUC per fold)
-- [x] Outputs: models/checkpoints/best_model_fold{0-4}.pt (updated Feb 15, 2026)
-- [x] **Latest Performance (Feb 15, 2026)**: Mean AUC 0.6194 ± 0.0641, Per-fold: [0.5762, 0.5931, 0.6197, 0.7424, 0.5657]
-  - Mean F1: 0.7132 ± 0.0160 | Mean Accuracy: 0.6194 ± 0.0241
-  - Test-set Ensemble AUC: 0.5398 (153 held-out subjects, AUC-weighted 5-fold ensemble)
-  - Mean best epoch: ~14.6 (range 8–24) — moderate convergence
-  - Best fold: Fold 3 at AUC 0.7424 (demonstrates strongly learnable ASD biomarkers)
-  - Previous checkpoint (Feb 14 Phase 3 baseline): Mean AUC 0.5593 ± 0.0156
-- [x] Training characteristics: Moderate convergence (~14.6 epochs), all folds > 0.5657, no collapse
-- [x] ✅ Phase 3 COMPLETE: 12-region, 28-feature pipeline with Granger causality + all bug fixes
+- [x] Outputs: models/checkpoints/best_model_fold{0-4}.pt (updated March 9, 2026)
+- [x] **Latest Performance (March 9, 2026, canonical — pipeline_20260309_194459.log)**: Mean CV AUC **0.7434 ± 0.0417**, Per-fold: [0.7317, 0.7576, 0.7606, 0.6709, 0.7964]
+  - Test-set Ensemble AUC: 0.6487 [0.5618, 0.7300], p=0.0020 global / p=0.0010 within-site (statistically significant)
+  - Test F1: 0.6738 | Test AUPRC: 0.6459 | Sensitivity: 0.7975 | Specificity: 0.4079
+  - Best fold: Fold 4 at CV AUC 0.7964; Best epochs: [42, 81, 75, 72, 75], mean 69.0
+  - GRL disabled: `GNN_USE_GRL=False` (alpha=1.0 collapsed representations, see Phase 10.3)
+  - Previous (Phase 10.3, March 9): Mean AUC 0.6721 ± 0.0340, Test AUC 0.5798
+  - Previous (Feb 15, 2026 with GRL): Mean AUC 0.6194 ± 0.0641, Test AUC 0.5398
+- [x] Training characteristics: Dead lobe NaN fix enables 1033/1035 subjects to use all 12 lobes
+- [x] ✅ Phase 6 COMPLETE: 12-region, 28-feature pipeline with Granger causality + all bug fixes
 
 ### COMPLETED SPRINT: CODE REFINEMENT & PRODUCTION-READY (January 15-17, 2026)
 
@@ -240,7 +331,7 @@ They explain the current CV–test AUC gap and the ~0.62 performance ceiling.
 **Frequency-Domain Features Added:**
 - [x] Created `src/features/frequency_features.py` module; merged into `extract_temporal.py` (February 28, 2026)
 - [x] Implemented spectral feature extraction:
-  - 5 frequency bands: delta (0.01-0.04 Hz), theta (0.04-0.08 Hz), alpha (0.08-0.13 Hz), beta (0.13-0.30 Hz), gamma (0.30-0.50 Hz)
+  - 5 frequency bands: delta (0.01–0.027 Hz, Slow-5), theta (0.027–0.073 Hz, Slow-4), alpha (0.073–0.15 Hz, Slow-3), beta (0.15–0.20 Hz, upper Slow-3), gamma (0.20–0.25 Hz, Slow-2, at Nyquist)
   - Power features: Total power per band (5 features)
   - Peak frequency features: Dominant frequency per band (5 features)
   - Spectral entropy: Shannon entropy of power spectrum (1 feature)

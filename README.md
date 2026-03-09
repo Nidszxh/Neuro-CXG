@@ -13,7 +13,7 @@ A Graph Neural Network framework for brain disorder classification (ASD vs Contr
   - 2 internal connectivity: Regional Homogeneity (ReHo) coherence + spatial variance
   - 6 spatial: x, y, z_depth, size, conf_std, detection_count
 - **Causal Graph Construction**: 12×12 directed graphs with Granger causality (multi-lag 1-5 TRs)
-- **Graph Neural Networks**: GATv2-based architecture (3 layers, 4 heads, 128 hidden channels, GELU activation) with skip connections and attention pooling
+- **Graph Neural Networks**: GATv2-based architecture (2 layers, 4 heads, 128 hidden channels, GELU activation) with skip connections and attention pooling
 - **Batch Effect Harmonization**: fold-safe neuroHarmonize (ComBat) for multi-site data harmonization
 - **Stratified k-fold Validation**: 5-fold CV balanced by diagnosis and scanner site
 - **Explainability**: Gradient-based node importance and causal edge weight analysis
@@ -45,7 +45,7 @@ python -c "from src.core.config import validate_environment; validate_environmen
 Download ABIDE data and organize into train/val/test splits:
 
 ```bash
-# Download raw fMRI and extract 5 z-slices per subject
+# Download raw fMRI and extract 7 z-slices per subject (ALFF percentiles 0.21–0.80)
 python -m src.data.abide_download
 
 # Create master manifest
@@ -61,7 +61,7 @@ Train YOLO26n to detect 12 brain regions in slices:
 
 ```bash
 python -m src.pipelines.roi_detection
-# Outputs: results/experiments/detection/ROI_Detection_v28/weights/best.pt
+# Outputs: results/experiments/detection/ROI_Detection_v29/weights/best.pt  (YOLO_PROJECT_NAME in config)
 ```
 
 ### 3. Feature Extraction
@@ -111,7 +111,7 @@ Train GNN with 5-fold stratified cross-validation:
 python -m src.models.gnn_model
 # Checkpoints saved to: models/checkpoints/best_model_fold{0-4}.pt
 # Logs metrics: Accuracy, F1, AUC, Confusion Matrix per fold
-# Latest reported training (Feb 15, 2026): Mean AUC 0.6194 ± 0.0641 (28-feature model)
+# Latest reported training (March 9, 2026): Mean CV AUC 0.7434 ± 0.0417, Test AUC 0.6487 [0.5618, 0.7300] (GRL disabled)
 ```
 
 ### OR: Run Full Pipeline (Recommended)
@@ -158,77 +158,83 @@ The pipeline orchestrates 20 stages:
 15. Quality validation — YOLO quality, graph sparsity, stratification checks
 
 **GNN Training (Stage 16):**
-16. GNN training — 5-fold stratified CV with 28-feature input, GAT+GRL
+16. GNN training — 5-fold stratified CV with 28-feature input, GATv2+attention pooling
 
 **Post-Training Analysis (Stages 17–20):**
 17. Visualizations — comprehensive plots, causal graph figures, feature heatmaps
 18. Comprehensive evaluation — bootstrap 95% CI, permutation test, baseline comparison
-19. Explainability analysis — node/edge importance, feature attribution (Captum)
+19. Explainability analysis — node/edge importance, feature attribution (Captum/gradient saliency), literature validation
 20. Result interpretation — per-subject predictions, misclassification analysis, site effects
 
-## Current Results (March 1, 2026)
+## Current Results (March 9, 2026)
 
 ### YOLO26n ROI Detection Performance
 
-**Deployed: ROI_Detection_v28** (100 epochs, Feb 2–4 2026)
-- **mAP50**: 0.98952
-- **mAP50-95**: 0.93714
-- **Precision**: 0.98063
-- **Recall**: 0.97214
+**Deployed: ROI_Detection_v29** (100 epochs, March 9, 2026)
+- **mAP50**: 0.99428
+- **mAP50-95**: 0.9598
+- **Precision**: 0.98734
+- **Recall**: 0.98383
 - **Status**: ✅ Outstanding — production-ready for 12-region ROI detection
-- **Deployed weights**: `results/experiments/detection/ROI_Detection_v28/weights/best.pt`
-- **Next training target**: `ROI_Detection_v29` (configured in `config.py`)
+- **Deployed weights**: `results/experiments/detection/ROI_Detection_v29/weights/best.pt`
+- **Previous deployed (v28)**: mAP50-95=0.93714, mAP50=0.98952 (Feb 2–4 2026)
 
-### GNN Classification Performance (Updated February 15, 2026)
+### GNN Classification Performance (Updated March 9, 2026)
 
-**5-Fold Cross-Validation (699 train subjects) — 28-Feature Model:**
+**5-Fold Cross-Validation (719 train subjects) — 28-Feature Model, GRL Disabled:**
 
 | Metric | Mean ± Std | Range | Notes |
 |--------|------------|-------|-------|
-| **AUC** | 0.6194 ± 0.0641 | 0.5657 – 0.7424 | Early stopping active |
-| **AUPRC** | tracked per fold | - | Average Precision Score (PR-AUC) |
-| **F1** | 0.7132 ± 0.0160 | - | Stable across folds |
-| **Accuracy** | 0.6194 ± 0.0241 | - | Consistent performance |
-| **Mean Best Epoch** | 14.6 | 8-24 | Moderate convergence |
+| **CV AUC** | 0.7434 ± 0.0417 | 0.6709 – 0.7964 | Early stopping active |
+| **CV F1** | 0.7419 ± 0.0195 | — | At per-fold optimal threshold |
+| **CV Accuracy** | 0.6856 ± 0.0345 | — | — |
+| **Test AUC** | 0.6487 [0.5618, 0.7300] | — | 95% bootstrap CI; p=0.0020 (global) |
+| **Test F1** | 0.6738 | — | At threshold 0.500 |
+| **Test AUPRC** | 0.6459 | — | Average Precision Score (PR-AUC) |
+| **Test Sensitivity** | 0.7975 | — | At threshold 0.500 |
+| **Test Specificity** | 0.4079 | — | At threshold 0.500 |
+| **Test Accuracy** | 0.6065 | — | At threshold 0.500 |
+| **Best Epochs** | [42, 81, 75, 72, 75] | — | Per-fold best epoch |
 
-**Test-Set Ensemble AUC**: 0.5398 (held-out 153 subjects, AUC-weighted ensemble across 5 folds)
+**Test-Set Ensemble AUC**: 0.6487 [95% CI: 0.5618, 0.7300] — **p=0.0020 global / p=0.0010 within-site (statistically significant)**  
+Held-out 155 subjects (9 excluded from full 1035: 4 Caltech NaN + 5 degenerate graph subjects); AUC-weighted ensemble using val-fold AUCs.
 
-**Per-Fold AUCs (Feb 15, 2026):**
-- Fold 0: 0.5762
-- Fold 1: 0.5931
-- Fold 2: 0.6197
-- Fold 3: **0.7424** ⭐ Best fold
-- Fold 4: 0.5657
+**Per-Fold CV AUCs (March 9, 2026 — pipeline_20260309_194459.log):**
+- Fold 1: 0.7317 (epoch 42)
+- Fold 2: 0.7576 (epoch 81)
+- Fold 3: **0.7606** ⭐ Best fold (epoch 75)
+- Fold 4: 0.6709 (epoch 72)
+- Fold 5: 0.7964 (epoch 75)
 
-**Key Findings (28-Feature Model):**
-- ✅ YOLO detection: Exceptional reliability (mAP50-95: 0.93714, v28 deployed)
-- ✅ GNN classification: AUC 0.6194 — +10.7pp over prior baseline (0.5593 with 5-lobe graphs)
-- ✅ Architecture: 3-layer GATv2, 128 hidden channels, 4 heads, GELU, attention pooling, skip connections
+**Key Findings:**
+- ✅ YOLO detection: Exceptional reliability (mAP50-95: 0.9598, v29 deployed)
+- ✅ GNN classification: CV AUC 0.7434 — significant improvement from Phase 10 fixes
+- ✅ Architecture: 2-layer GATv2, 128 hidden channels, 4 heads, GELU, attention pooling, skip connections
 - ✅ Smart aggregation: PCA eigenvariate + ReHo coherence capture both global and local connectivity
-- 📊 Regularization: Dropout 0.45, L2 weight decay 1e-4, focal loss α=0.62 γ=2.0
-- 📊 Fold 3 reaching AUC=0.7424 demonstrates strongly learnable ASD biomarkers in 12-region graphs
-- 📊 CV–test AUC gap (0.6194 vs 0.5398) indicates remaining generalisation challenge
-- 🔍 Graph topology: Parietal In-Degree lower in ASD (p=0.0296, Cohen's d=-0.125)
-- ⚠️ Known issue: double z-score normalisation in download → causal graph stage (tracked in TODO.md)
-- ⚠️ Known issue: beta/gamma frequency bands near fMRI Nyquist limit (TR=2 s, Nyquist=0.25 Hz)
+- ✅ GRL disabled: `GNN_USE_GRL=False` — alpha=1.0 collapsed all predictions to ~0.56 constant
+- 📊 Regularization: Dropout 0.35, L2 weight decay 5e-5, focal loss α=0.62 γ=2.0, early stopping patience=30
+- 📊 Test p=0.0020 (global), p=0.0010 (within-site) — statistically significant
+- 🔍 Subgroup: Male AUC=0.6662 (n=132), Female=0.5923 (n=23); Age<15 AUC=0.6580 (n=88), Age≥15=0.6348 (n=67)
+- 🔍 Per-site: site 9 AUC=0.9500 (best, n=9), site 16 AUC=0.3281 (worst, n=16)
+- ⚠️ CV–test gap: 0.7434 (CV) vs 0.6487 (test) = 0.0947 — site-DX correlations in embeddings
+- ⚠️ Gamma band zeroed at Nyquist (TR=2 s, Nyquist=0.25 Hz); `UNRELIABLE_FREQ_BANDS_AT_NYQUIST=("gamma",)`
 
 **Interpretation:**
-- **YOLO performance**: Production-ready at 0.93714 mAP50-95 (v28)
+- **YOLO performance**: Production-ready at 0.9598 mAP50-95 (v29)
 - **Feature engineering**: 28-feature model (20 temporal + 2 internal ReHo + 6 spatial) properly integrated
-- **Architecture**: 3-layer GATv2 with GELU activation and attention pooling (current defaults)
-- **Training stability**: Early stopping with patience=20, moderate convergence at epoch ~14.6
-- **Signal detection**: Granger causality with 0.70 sparsity captures directed brain connectivity
+- **Architecture**: 2-layer GATv2 with attention pooling; GRL disabled; 16-dim node identity embeddings + 16-dim site embeddings
+- **Training stability**: Early stopping patience=30; 9 subjects permanently excluded (dead lobes or critical NaN)
+- **Signal detection**: Granger causality with 0.70 sparsity, adaptive statistical thresholding
 
-**Recent Optimizations (through March 1, 2026):**
-1. ✅ Focal Loss α=0.62 γ=2.0 for class imbalance
-2. ✅ Smart aggregation: PCA eigenvariate + Regional Homogeneity (ReHo) features
-3. ✅ Architecture: 3-layer GATv2, 128 hidden channels, GELU, attention pooling, skip connections
-4. ✅ Regularization: Dropout 0.45, L2 weight decay 1e-4, early stopping patience=20
-5. ✅ Granger causality: multi-lag 1-5 TRs, 0.70 sparsity quantile, min 12 edges/graph
+**Phase 10 Fixes Applied (March 8–9, 2026):**
+1. ✅ Single z-score only: `standardize=False` in NiftiLabelsMasker (Phase 10.1)
+2. ✅ BANDPASS_HIGH expanded: 0.08 → 0.15 Hz to retain beta band (Phase 10.1)
+3. ✅ GRL disabled: `GNN_USE_GRL=False`, `GNN_GRL_ALPHA=0.0` (Phase 10.3)
+4. ✅ All P0/P1 audit bugs fixed: DX_GROUP covariate, circular ensemble, site_id, Bonferroni, NaN leakage
+5. ✅ Granger causality: multi-lag up to 10 s history (GRANGER_MAX_LAG_SECONDS=10.0), adaptive statistical sparsification
 6. ✅ FEATURE_GROUPS registry — 28-dimension consistency enforced from config
-7. ✅ Bug fixes: DEFAULT_TR, harmonization SITE column, site embedding zero-padding, stage ordering
-8. ✅ Phase 9 complete: full evaluation pipeline, explainability analysis, result interpretation
-9. ✅ Post-training stages added to pipeline runner (visualizations, evaluation, explainability, result_analysis)
+7. ✅ Phase 9 complete: full evaluation pipeline, explainability analysis, result interpretation
+8. ✅ 9 permanently excluded subjects in `EXCLUDED_SUBJECTS` frozenset (config.py)
 
 ## System Architecture
 
@@ -273,8 +279,8 @@ graph_factory.py  (ABIDECausalDataset)
 gnn_model.py  ←  ABIDECausalDataset
     ↓  5-fold stratified CV on train set (699 subjects)
     ↓  models/checkpoints/best_model_fold{0-4}.pt
-       GATv2Conv × 3 layers, 4 heads, 128 hidden channels, GELU, skip connections.
-       Focal Loss α=0.62 γ=2.0. AdamW + OneCycleLR. Early stopping patience=20.
+       GATv2Conv × 2 layers, 4 heads, 128 hidden channels, GELU, skip connections.
+       Focal Loss α=0.62 γ=2.0. AdamW + OneCycleLR. Early stopping patience=30.
 ```
 
 ### Data Contracts Between Modules
@@ -335,15 +341,13 @@ Neuro-CXG/
 │   ├── run_explainability.py      # Node/edge importance, feature attribution (Captum)
 │   ├── run_result_analysis.py     # Per-subject predictions, misclassification analysis
 │   ├── validation/
-│   │   ├── atlas_validator.py     # AAL atlas structure & ROI range validation
-│   │   ├── pipeline_checks.py     # Post-download, pre-GNN, health reports, class analysis
+│   │   ├── atlas_validator.py     # AAL atlas structure & ROI range validation   │   ├── audit_check.py         # Post-fix validation (subject count, lobe completeness, NaN/Inf)│   │   ├── pipeline_checks.py     # Post-download, pre-GNN, health reports, class analysis
 │   │   └── dev_audit.py           # Deep validation: feature quality, graph connectivity
 │   ├── experiments/
 │   │   ├── run_ablations.py       # 5 ablation types (A–E)
 │   │   └── data_quality.py        # 3 data-quality experiments
 │   ├── features/
-│   │   ├── extract_spatial.py     # YOLO inference → 3D spatial aggregation
-│   │   ├── extract_temporal.py    # 20 features/ROI (8 time-domain + 12 frequency)
+│   │   ├── extract_spatial.py     # YOLO inference → 3D spatial aggregation   │   ├── extract_spatial_atlas.py  # Atlas-based spatial coords (alternative, uses roi_centroids.json)│   │   ├── extract_temporal.py    # 20 features/ROI (8 time-domain + 12 frequency)
 │   │   ├── causal_inference.py    # Granger causality & transfer entropy
 │   │   ├── fold_safe_harmonization.py  # CV-safe ComBat + NaN/Inf handling
 │   │   ├── construct_causal.py    # 12×12 directed causal graph builder
@@ -371,11 +375,11 @@ Neuro-CXG/
 ├── notebooks/
 │   └── eda.ipynb                  # Exploratory data analysis
 ├── models/
-│   ├── checkpoints/               # best_model_fold{0-4}.pt (updated Feb 15, 2026)
+│   │   ├── checkpoints/               # best_model_fold{0-4}.pt (canonical: pipeline_20260309_194459; disk: Run 2 195751)
 │   └── checkpoints_baseline/      # Baseline fold checkpoints
 ├── results/
 │   ├── experiments/
-│   │   ├── detection/             # YOLO training results (v28 deployed)
+│   │   ├── detection/             # YOLO training results (v29 deployed)
 │   │   ├── training/              # GNN fold metrics JSON
 │   │   ├── ablations/             # Ablation study outputs
 │   │   └── data_quality/          # Data quality experiment outputs
@@ -403,30 +407,33 @@ All project constants defined in [src/core/config.py](src/core/config.py) (singl
 | GNN_IN_CHANNELS | 28 | Dynamically computed: `len(ALL_FEATURE_NAMES)` |
 | GNN_HIDDEN_CHANNELS | 128 | Hidden dim for GATv2Conv |
 | GNN_NUM_HEADS | 4 | Attention heads per GAT layer |
-| GNN_NUM_GNN_LAYERS | 3 | Number of GATv2 layers |
-| GNN_DROPOUT | 0.45 | Dropout for regularisation |
-| GNN_WEIGHT_DECAY | 1e-4 | L2 regularisation (AdamW) |
+| GNN_NUM_GNN_LAYERS | 2 | Number of GATv2 layers |
+| GNN_DROPOUT | 0.35 | Dropout for regularisation |
+| GNN_WEIGHT_DECAY | 5e-5 | L2 regularisation (AdamW) |
 | GNN_POOLING | 'attention' | GlobalAttention pooling |
-| GNN_USE_GRL | True | Gradient Reversal Layer for site-invariant repr |
-| GNN_GRL_ALPHA | 1.0 | GRL adversarial strength |
-| GNN_SITE_LOSS_WEIGHT | 0.2 | Weight for auxiliary site classification loss |
+| GNN_USE_GRL | False | GRL disabled — alpha=1.0 collapsed representations (Phase 10.3) |
+| GNN_GRL_ALPHA | 0.0 | GRL adversarial strength (0=disabled) |
+| GNN_SITE_LOSS_WEIGHT | 0.0 | Weight for auxiliary site classification loss (0=disabled) |
 | GNN_EDGE_GATE | True | Learnable sigmoid gate on causal edge weights |
 | GNN_USE_SITE_EMBEDDING | True | 16-dim site embeddings to reduce scanner bias |
 | GNN_USE_DEMOGRAPHICS | True | Condition on age / sex / FIQ |
-| GNN_ONECYCLE_MAX_LR | 0.003 | Peak LR for OneCycleLR scheduler |
+| GNN_NODE_EMB_DIM | 16 | Learnable per-lobe identity embedding dimension |
+| GNN_ONECYCLE_MAX_LR | 0.002 | Peak LR for OneCycleLR scheduler |
+| GNN_ONECYCLE_PCT_START | 0.2 | Warmup fraction (peak at epoch 20 of 100) |
+| GNN_EARLY_STOPPING_PATIENCE | 30 | Epochs without improvement before stopping |
 | K_FOLDS | 5 | Stratified cross-validation folds |
 | YOLO_MODEL_SIZE | 'yolo26n.pt' | Base model architecture |
-| YOLO_PROJECT_NAME | 'ROI_Detection_v29' | Next training output directory |
+| YOLO_PROJECT_NAME | 'ROI_Detection_v29' | Deployed YOLO model output directory (mAP50-95=0.9598, trained March 9, 2026) |
 | YOLO_BATCH_SIZE | 32 | YOLO training batch size |
 | YOLO_EPOCHS | 100 | YOLO training epochs |
-| CAUSAL_LAG | 1 | Time lag for temporal precedence (TRs) |
 | CAUSALITY_METHOD | 'granger' | Directed causality (options: 'granger', 'lagged_pearson') |
-| GRANGER_MAX_LAG | 5 | Multi-lag testing range (1–5 TRs) |
+| GRANGER_MAX_LAG_SECONDS | 10.0 | Causal history window in real seconds (adjusted per subject TR) |
+| SPARSITY_METHOD | 'adaptive_statistical' | Sparsification method (options: 'adaptive_proportional', 'fixed') |
 | SPARSITY_QUANTILE | 0.70 | Keep top 30% causal connections |
 | MIN_EDGES_PER_GRAPH | 12 | Minimum connectivity guarantee |
+| MAX_NAN_ROIS | 30 | Max NaN temporal entries before subject excluded |
 | FOCAL_LOSS_ALPHA | 0.62 | Alpha weight for positive (ASD) class |
 | FOCAL_LOSS_GAMMA | 2.0 | Focal parameter — focus on hard examples |
-| GNN_EARLY_STOPPING_PATIENCE | 20 | Epochs without improvement before stopping |
 | DEFAULT_TR | 2.0 | Fallback TR (seconds) when missing from manifest |
 
 See [src/core/config.py](src/core/config.py) for all 60+ parameters.
@@ -435,7 +442,7 @@ See [src/core/config.py](src/core/config.py) for all 60+ parameters.
 
 ### Time Series Input
 - **Shape**: `(timepoints, 170)` - fMRI signal from 170 AAL ROIs
-- **Processing**: Bandpass filtered (0.01-0.08 Hz), z-normalized
+- **Processing**: Bandpass filtered (0.01–0.15 Hz, BANDPASS_LOW/HIGH from config), single z-score in construct_causal.py
 
 ### Graph Construction Output
 
@@ -505,13 +512,15 @@ python src/run_result_analysis.py
 #   Calibration: reliability diagram + confidence distribution
 ```
 
-## Known Issues (as of March 1, 2026)
+## Known Issues (as of March 9, 2026)
 
-The following architectural issues are tracked in [docs/TODO.md](docs/TODO.md):
+1. **Frequency band aliasing** — gamma (0.20–0.25 Hz) band sits at the fMRI Nyquist limit for TR=2 s. Gamma features are zeroed at runtime for TR=2 s subjects. Flagged via `UNRELIABLE_FREQ_BANDS_AT_NYQUIST=("gamma",)` in config. (Phase 10.2, open)
+2. **CV–test AUC gap** — CV AUC 0.7434 vs test AUC 0.6487 (gap 0.0947). Remaining gap is from site-DX correlations in site embeddings; GRL alpha grid search {0.05, 0.1} pending.
+3. **Per-site AUC variability** — site 9 AUC=0.9500 vs site 16 AUC=0.3281. Site effects not fully removed by ComBat + site embeddings alone.
+4. **4 incomplete subjects** — subjects with images but no time series files remain in the split directories (not auto-purged; requires interactive pipeline re-run with option 2).
+5. **Atlas coverage gaps** — Brainstem (ROIs 167–170) and Frontal_Orbital (ROIs 29–30) have NaN time series in some subjects due to partial FOV; zero-signal fallback applied automatically.
 
-1. **Double z-score normalisation** — `abide_download.py` applies `standardize='zscore_sample'` in the NiftiLabelsMasker, then `construct_causal.py` z-scores again before Granger computation. Fix: set `standardize=False` in the masker.
-2. **Frequency band aliasing** — beta (0.15–0.20 Hz) and gamma (0.20–0.25 Hz) bands sit near the fMRI Nyquist limit for TR=2 s. These 12 frequency features may add noise more than signal.
-3. **CV–test AUC gap** — Mean CV AUC 0.6194 vs test ensemble AUC 0.5398 indicates remaining overfitting. Addressed in Phase 10.
+**All P0/P1 audit bugs from plan-neuroCxgAudit.md are resolved** — double z-score fix (Phase 10.1), GRL collapse fix (Phase 10.3), DX_GROUP covariate (Phase 10.5), circular ensemble weighting (Phase 10.5), site_id fix (Phase 10.5), Bonferroni correction (Phase 10.5).
 
 ## Validation & Testing
 

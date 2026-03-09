@@ -1,54 +1,20 @@
-# Python / Virtual Environments
-__pycache__/
-*.py[cod]
+# --- Python & Environments ---
+**/__pycache__/
+**/*.py[cod]
 *$py.class
 *.egg-info/
-.env
 .venv/
 venv/
+env/
+.env
 build/
 dist/
-*.egg
 
-# Jupyter
+# --- Jupyter & Notebooks ---
 .ipynb_checkpoints/
 */.ipynb_checkpoints/*
 
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-
-# Logging
-logs/
-*.log
-
-# Data (ignore contents, keep structure)
-data/raw/**
-data/processed/**
-data/splits/**
-data/yolo/**
-data/final/**
-
-# Data metadata CSVs (large, generated; keep only tracked configs)
-data/metadata/*.csv
-data/metadata/*.json
-!data/metadata/atlas_metadata.json
-!data/metadata/roi_centroids.json
-# Exception: configs/ folder CSVs are config, not data
-!configs/
-
-# Atlases (ignore heavy binaries, keep metadata)
-data/atlases/**
-!data/atlases/README.md
-!data/atlases/**/*.json
-!data/atlases/**/*.txt
-!data/atlases/**/*.csv
-
-# Neuroimaging / Large Scientific Files
+# --- Data & Large Scientific Files (Global Rules) ---
 *.nii
 *.nii.gz
 *.npy
@@ -56,71 +22,76 @@ data/atlases/**
 *.h5
 *.hdf5
 *.dcm
+*.zip
+*.tar*
+*.7z
 
-# Models / Weights (ignore binaries, keep configs)
+# --- Project Data Directories ---
+# Ignore heavy data but keep the directory hierarchy via .gitkeep
+data/raw/**
+data/processed/**
+data/final/**
+data/images/
+data/labels/
+backup83/
+
+# Metadata Exceptions: Keep critical manifests and atlas info
+!data/metadata/atlas_metadata.json
+!data/metadata/roi_centroids.json
+!data/metadata/master_manifest.csv
+!data/metadata/node_attributes_*.csv
+
+# --- Models & Weights ---
 models/**
-!models/README.md
-!models/configs/**
-!models/**/*.yaml
-!models/**/*.yml
-!models/**/*.json
-
 *.pt
 *.pth
 *.ckpt
 *.onnx
 *.weights
+yolo26n.pt
 
-# Testing & Coverage
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
+# Keep model configs/READMEs
+!models/README.md
+!models/**/*.yaml
+!models/**/*.json
 
-# Results (keep outputs, but not large intermediate files)
-results/*
-!results/.gitkeep
-!results/figures/
-
-# Temporary files
-*.tmp
-*.temp
-.tmp/
-
-# System files
-Thumbs.db
-.AppleDouble
-.LSOverride# Training / Experiment Outputs
+# --- Results & Experiment Tracking ---
 runs/
 mlruns/
 .mlflow/
+# Keep plots and summaries, ignore heavy per-subject CSVs if needed
 results/**
-!results/README.md
+!results/**/*.png
+!results/**/*.jpg
+!results/**/*.json
+!results/**/README.md
+!results/.gitkeep
 
-# Logs
-*.log
-
-# Archives
-*.zip
-*.tar
-*.tar.gz
-*.7z
-
-# Editors / OS
+# --- OS / IDE Junk ---
 .DS_Store
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
+Thumbs.db
+.AppleDouble
 
-# Project-specific clutter
-clutter/
+# --- Logs & Performance ---
+logs/
+*.log
+
+# --- Scripts & Tools ---
+# Keeping the clean script, but ignoring generated tree logs
 tree.sh
 tree.md
-check_gpu.py
 
-# Tests & Docs (keep source, ignore junk)
-tests/__pycache__/
-tests/**/__pycache__/
-docs/_build/
-/scripts
+# --- Testing & Coverage ---
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# --- Misc ---
+docs/
+scripts/

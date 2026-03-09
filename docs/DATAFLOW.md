@@ -57,9 +57,9 @@ STAGE 3: OBJECT DETECTION
 │ (12-Region Brain Model)      │  - Uses labeled images
 │                              │  - 100 epochs, batch 32
 └───────────────────┌───────────┘  - yolo26n model
-                   │              - **Deployed v28**: mAP50-95=0.93714, mAP50=0.98952
-              ✓ best.pt weights  - Precision=0.98063, Recall=0.97214
-                   │              - **Next target**: ROI_Detection_v29 (configured, not yet trained)
+                   │              - **Deployed v29**: mAP50-95=0.9598, mAP50=0.99428 (March 9, 2026)
+              ✓ best.pt weights  - Precision=0.98734, Recall=0.98383; best epoch=99/100
+                   │              - (**v28** mAP50-95=0.93714 archived)
                    │
                    ▼
 
@@ -140,22 +140,24 @@ STAGE 8: GRAPH CONSTRUCTION
           ✓ graph_0.pt, graph_1.pt, ..., graph_N.pt
           ✓ Format: PyTorch Geometric Data objects
           ✓ Shape: (12 nodes, 28 features, top 30% edges)
-          ✓ Total graphs: 1035 subjects (702 train, 152 val, 152 test)
+          ✓ Total graphs: 1031 subjects with complete data (manifest: 724 train, 155 val, 156 test)
+          ✓ GNN datasets: 719 train, 152 val, 155 test (9 excluded: 4 Caltech NaN + 5 degenerate graphs)
                │
                ▼
 
 STAGE 9: GNN TRAINING
 ┌──────────────────────────────────┐
 │ Graph Neural Network Training    │  src/models/gnn_model.py
-│ 5-Fold Stratified Cross-Val      │  - ✨ GATv2Conv with 3 layers (current default)
+│ 5-Fold Stratified Cross-Val      │  - ✨ GATv2Conv with 2 layers (current default)
 │ ✨ 28 Input Features              │  - 4 attention heads per layer
-│                                  │  - 128 hidden channels
+│                                  │  - 128 hidden channels + 16-dim node ID embeddings
 │                                  │  - GELU activation (improved gradients)
 │                                  │  - Attention pooling (GlobalAttention)
 │                                  │  - Focal loss (α=0.62, γ=2.0)
-│                                  │  - Early stopping on AUC (patience=20)
-└──────────────┬───────────────────┘  - Dropout 0.45, L2 reg 1e-4, gradient clip 1.0
-               │                       - **Current**: AUC=0.6194±0.0641 (Feb 15, 2026)
+│                                  │  - Early stopping on AUC (patience=30)
+└──────────────┬───────────────────┘  - Dropout 0.35, L2 reg 5e-5, gradient clip 1.0
+               │                       - GRL: disabled (GNN_USE_GRL=False; alpha=1.0 collapsed repr)
+               │                       - **Canonical best**: CV AUC=0.7434±0.0417 (pipeline_20260309_194459.log)
           ✓ best_model_fold0.pt          ✅ Phase 3 Complete: Full pipeline fixes applied
           ✓ best_model_fold1.pt
           ✓ best_model_fold2.pt
@@ -169,12 +171,13 @@ STAGE 9: GNN TRAINING
             ├─ Stage 19: Explainability — Captum attribution, node/edge importance
             └─ Stage 20: Result analysis — per-subject predictions, site effects
 
-            📊 FINAL METRICS (March 1, 2026)
-            ├─ YOLO v28 mAP50-95: 0.93714 (deployed) ✅ | v29: configured, not trained
+            📊 FINAL METRICS (March 9, 2026 — pipeline_20260309_194459.log)
+            ├─ YOLO v29 mAP50-95: 0.9598 (deployed, March 9, 2026) ✅ | v28: 0.93714 (archived)
             ├─ Features: 28 dimensions (20 temporal + 2 internal + 6 spatial)
-            ├─ Causal: Granger causality (multi-lag 1–5 TRs, default)
-            ├─ GNN CV AUC: 0.6194 ± 0.0641 (best fold 0.7424)
-            ├─ GNN test ensemble AUC: 0.5398 (153 subjects)
+            ├─ Causal: Granger causality (multi-lag up to 10.0 s, adaptive statistical sparsification)
+            ├─ GNN CV AUC: **0.7434 ± 0.0417** (per-fold: [0.7317, 0.7576, 0.7606, 0.6709, 0.7964])
+            ├─ GNN test ensemble AUC: **0.6487 [0.5618, 0.7300]** (155 subjects; p=0.0020)
+            ├─ Test F1: 0.6738 | AUPRC: 0.6459 | Sensitivity: 0.7975 | Specificity: 0.4079
             ├─ Per-fold confusion matrices
             └─ Feature importance via Captum integrated gradients
 
@@ -226,7 +229,7 @@ KEY DECISION POINTS IN PIPELINE:
      ├─ CRITICAL: Requires all 12 lobes detected for EACH subject
    ├─ If any subject missing lobes → filtered out
    ├─ This defines final training set size
-   └─ Impact: ~1033/1035 subjects typically pass
+   └─ Impact: ~1031 subjects pass (9 permanently excluded)
 
 4. GNN Training
    ├─ Always offered to user (--auto runs it)
@@ -255,7 +258,7 @@ Download
        └─→ Post-Download Integrity ✓
 
 
-VALIDATION MODULE INTEGRATION STATUS (MARCH 1, 2026):
+VALIDATION MODULE INTEGRATION STATUS (MARCH 9, 2026):
 ════════════════════════════════════════════════════════════════════════════
 
 Module                              Invoked?  When?                        Status
@@ -315,7 +318,7 @@ src.run_pipeline (ORCHESTRATOR — 20 stages)
 ├── src.pipelines.generate_labels
 │   └─→ Outputs: YOLO labels
 ├── src.pipelines.roi_detection
-│   └─→ Outputs: best.pt weights (v28 deployed; v29 next target)
+│   └→ Outputs: best.pt weights (v29 deployed, March 9, 2026; v28 archived)
 ├── src.features.extract_spatial
 │   └─→ Outputs: node_features_3d.csv (6 spatial features × 12 regions)
 ├── src.features.extract_temporal
@@ -325,7 +328,7 @@ src.run_pipeline (ORCHESTRATOR — 20 stages)
 ├── src.features.construct_causal
 │   └─→ Outputs: causal_graphs/*.pt (graph dicts, assembled by graph_factory)
 ├── src.models.gnn_model  (Stage 16)
-│   └─→ Outputs: best_model_fold*.pt (AUC=0.6194±0.0641, Feb 15, 2026)
+│   └─→ Outputs: best_model_fold*.pt (CV AUC=0.7434±0.0417, Test AUC=0.6487, March 9, 2026 canonical)
 │       └── imports: src.features.graph_factory
 │       └── imports: src.models.causal_gnn
 │
