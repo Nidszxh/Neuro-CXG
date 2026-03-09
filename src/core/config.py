@@ -214,6 +214,10 @@ YOLO_TRAIN_CONFIG = {
 #                 # Use _LEGACY_CAUSAL_LAG = 1 inline in construct_causal.py instead.
 #                 # Retained as comment to prevent accidental re-introduction.
 SPARSITY_QUANTILE = 0.70 # Keep top 30% edges (High Selectivity - Phase 3)
+# Target graph density: keep only the top GRAPH_DENSITY_TARGET fraction of edges.
+# Literature recommends 10-20% for functional connectivity graphs.
+# The fixed sparsification method now quantiles over off-diagonal values only.
+GRAPH_DENSITY_TARGET = 0.30   # Keep top 20% of directional edges (~26/132 for 12-node graphs)
 
 # Phase 1 Enhancements (Feb 2026)
 CAUSALITY_METHOD = 'granger'  # Directed causality (options: 'granger', 'transfer_entropy', 'lagged_pearson')
@@ -225,13 +229,38 @@ GRANGER_SIGNIFICANCE_LEVEL = 0.05  # Statistical significance threshold
 SPARSITY_METHOD = 'adaptive_statistical'  # Options: 'adaptive_proportional', 'adaptive_statistical', 'fixed'
 MIN_EDGES_PER_GRAPH = 12  # Ensure minimum connectivity for 12-region graphs
 
+# --- DATA QUALITY FILTERS ---
+# Subjects confirmed to have near-complete NaN coverage (>50% empty ROIs).
+# These are permanently excluded and never reach the GNN dataset.
+# Identified by the post-download integrity check.
+EXCLUDED_SUBJECTS: frozenset = frozenset({
+    # --- Caltech: near-complete NaN coverage (masker extraction failed) ---
+    "Caltech_0051486",   # 170/170 NaN — all ROIs empty, completely unusable
+    "Caltech_0051491",   # 168/170 NaN — masker extraction effectively failed
+    "Caltech_0051478",   # 108/170 NaN — >63% coverage loss, beyond recovery
+    "Caltech_0051472",   # 148/170 NaN — >87% coverage loss, beyond recovery
+    # --- Degenerate causal graphs: dead lobe(s) with zero in+out degree ---
+    # An isolated node cannot exchange messages in the GNN and adds noise.
+    # Identified by subject_analysis.py (2026-03-09).
+    "SDSU_0050209",      # Dead lobe in graph — partial FOV at SDSU scanner (train, fold 2)
+    "SDSU_0050216",      # Dead lobe in graph — partial FOV at SDSU scanner (train, fold 0)
+    "UCLA_1_0051220",    # Dead lobe in graph — partial FOV at UCLA_1 scanner (train, fold 4)
+    "UCLA_1_0051277",    # Dead lobe in graph — partial FOV at UCLA_1 scanner (train, fold 3)
+    "UCLA_2_0051303",    # Dead lobe in graph — partial FOV at UCLA_2 scanner (val)
+})
+# Drop subjects where more than this many temporal feature entries are NaN.
+# Corresponds to ~1.25 completely-empty lobes out of 12 (25 / 240 feature cols).
+# Subjects with >25 NaN entries are typically brainstem / partial-FOV scans
+# where downstream PCA aggregation and Granger causality are unreliable.
+MAX_NAN_ROIS: int = 30
+
 # --- GNN MODEL PARAMETERS (Phase 3: Regularized for Small Graphs) ---
 # Reduced from 256 to 64 channels to prevent overfitting on 12-node graphs
 GNN_HIDDEN_CHANNELS = 128       # Increased capacity for 28-feature inputs
 GNN_NUM_HEADS = 4               # Multi-head attention is crucial
 GNN_NUM_CLASSES = 2      # 0: Control, 1: ASD
-GNN_DROPOUT = 0.45               # Reduced to prevent underfitting
-GNN_WEIGHT_DECAY = 1e-4         # L2 Regularization (NEW)
+GNN_DROPOUT = 0.35               # Lowered from 0.45 — prevents underfitting on small 12-node graphs
+GNN_WEIGHT_DECAY = 5e-5         # L2 Regularization — reduced from 1e-4 for better signal retention
 GNN_LEARNING_RATE = 0.001      # Stable learning rate
 GNN_BATCH_SIZE = 32
 GNN_EPOCHS = 100  # More epochs with early stopping
@@ -240,18 +269,20 @@ K_FOLDS = 5
 GNN_NUM_LAYERS = 2              # Reduced to 2 to prevent over-smoothing on small 12-node graphs
 GNN_SKIP_CONNECTIONS = True     # Enable residual connections
 GNN_USE_SITE_EMBEDDING = True   # Reduce site bias
+GNN_NODE_EMB_DIM = 16           # Learnable per-lobe identity embedding dimension (0 to disable)
 GNN_USE_DEMOGRAPHICS = True     # Add age/sex/IQ conditioning
-GNN_EARLY_STOPPING_PATIENCE = 20  # Unified early-stopping patience (was 25; mirrors former GNN_ONECYCLE_PATIENCE)
+GNN_EARLY_STOPPING_PATIENCE = 30  # Increased from 20 — allows model to recover after OneCycle LR peak
 # GNN_ONECYCLE_PATIENCE = 20    # DEPRECATED ALIAS — use GNN_EARLY_STOPPING_PATIENCE instead
 GNN_POOLING = "attention"        # Options: "attention", "mean_max_sum"
-GNN_USE_GRL = True              # Enable gradient reversal site classifier
-GNN_GRL_ALPHA = 1.0             # GRL strength (higher = stronger site invariance) — REVERTED: stronger GRL degraded performance
-GNN_GRL_ALPHA_MAX = 1.0         # Max annealed GRL alpha reached at end of training
-GNN_SITE_LOSS_WEIGHT = 0.2      # Weight for site classification loss — REVERTED: focus on feature quality instead
+GNN_USE_GRL = False             # Disabled — GRL at any alpha degrades folds 2/3 due to site-loss gradient conflict
+                                # Hypothesis disproved: site confound is a data/harmonisation issue, not fixable by adversarial training
+GNN_GRL_ALPHA = 0.0             # GRL strength — 0 when disabled
+GNN_GRL_ALPHA_MAX = 0.3         # Retained for reference (tested: 0.3 still collapsed 2 folds)
+GNN_SITE_LOSS_WEIGHT = 0.0      # Site loss weight — 0 when GRL is disabled
 GNN_EDGE_GATE = True            # Soft gate edge_attr before message passing
-GNN_ONECYCLE_MAX_LR = 0.003     # Peak LR for OneCycle schedule
+GNN_ONECYCLE_MAX_LR = 0.002     # Reduced from 0.003 — less aggressive LR spike (was 25x initial, now ~16x)
 # GNN_ONECYCLE_PATIENCE = 20    # DEPRECATED — consolidated into GNN_EARLY_STOPPING_PATIENCE above
-GNN_ONECYCLE_PCT_START = 0.1    # Warmup fraction (10 epochs for 100 total) — must satisfy: PCT_START * EPOCHS < PATIENCE
+GNN_ONECYCLE_PCT_START = 0.2    # Warmup fraction (20 epochs for 100 total) — gentler ramp, peak at epoch 20
 
 # --- HARDWARE ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
