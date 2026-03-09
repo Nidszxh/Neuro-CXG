@@ -40,6 +40,8 @@ from src.core.config import (
     FOCAL_LOSS_GAMMA,
     GNN_USE_SITE_EMBEDDING,
     GNN_USE_DEMOGRAPHICS,
+    GNN_NODE_EMB_DIM,
+    NUM_LOBES,
     CAUSAL_GRAPHS_DIR,
     DATA_METADATA,
     RESULTS_TRAINING_DIR,
@@ -274,9 +276,9 @@ def evaluate_ensemble(tracker: TrainingTracker, checkpoint_manager: CheckpointMa
                 use_grl=GNN_USE_GRL,
                 grl_alpha=GNN_GRL_ALPHA,
                 edge_gate=GNN_EDGE_GATE,
+                num_nodes=NUM_LOBES,
+                node_emb_dim=GNN_NODE_EMB_DIM,
             ).to(DEVICE)
-            
-            # Load checkpoint
             try:
                 checkpoint = checkpoint_manager.load(model, fold=fold)
                 threshold = checkpoint.get('threshold', 0.5)
@@ -478,6 +480,8 @@ def run_training():
             use_grl=GNN_USE_GRL,
             grl_alpha=GNN_GRL_ALPHA,
             edge_gate=GNN_EDGE_GATE,
+            num_nodes=NUM_LOBES,
+            node_emb_dim=GNN_NODE_EMB_DIM,
         ).to(DEVICE)
         
         # Loss function
@@ -629,6 +633,8 @@ def run_training():
                 use_grl=GNN_USE_GRL,
                 grl_alpha=GNN_GRL_ALPHA,
                 edge_gate=GNN_EDGE_GATE,
+                num_nodes=NUM_LOBES,
+                node_emb_dim=GNN_NODE_EMB_DIM,
             ).to(DEVICE)
             checkpoint_manager.load(best_model, fold=0, allow_partial=True)
             

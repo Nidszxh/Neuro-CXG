@@ -2,11 +2,11 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.nn import (
     GATv2Conv,
-    GlobalAttention,
     global_max_pool,
     global_mean_pool,
     global_add_pool,
 )
+from torch_geometric.nn.aggr import AttentionalAggregation
 from torch.nn import Linear, Sequential, GELU, Dropout, LayerNorm
 
 
@@ -31,6 +31,7 @@ class CausalBrainGNN(torch.nn.Module):
     - Residual connections and LayerNorm
     - Multi-scale pooling (mean + max + sum)
     - Optional site conditioning (16-dim embeddings)
+    - Optional per-lobe identity embeddings (16-dim by default)
     """
     def __init__(
         self, 
@@ -46,7 +47,9 @@ class CausalBrainGNN(torch.nn.Module):
         use_demographics=True,
         use_grl=False,
         grl_alpha=1.0,
-        edge_gate=True
+        edge_gate=True,
+        num_nodes=12,        # Number of graph nodes (lobes) — used for identity embedding
+        node_emb_dim=16,     # Learnable per-lobe identity embedding size (0 = disabled)
     ):
         super(CausalBrainGNN, self).__init__()
         torch.manual_seed(42)
@@ -57,6 +60,16 @@ class CausalBrainGNN(torch.nn.Module):
         self.use_grl = use_grl
         self.grl_alpha = grl_alpha
         self.edge_gate = edge_gate
+        self.num_nodes = num_nodes
+        self.node_emb_dim = node_emb_dim
+
+        # Learnable per-lobe identity embedding (analogous to positional embedding).
+        # Gives the GNN a stable anatomical identity for each of the 12 brain lobes.
+        if node_emb_dim > 0:
+            self.node_embedding = torch.nn.Embedding(num_nodes, node_emb_dim)
+            torch.nn.init.xavier_uniform_(self.node_embedding.weight.unsqueeze(0))
+        else:
+            node_emb_dim = 0  # ensure correct lin_in size
 
         # Site embedding for scanner bias reduction
         if use_site_embedding:
@@ -66,7 +79,7 @@ class CausalBrainGNN(torch.nn.Module):
             site_embed_dim = 0
 
         # 1. Input Projection with LayerNorm
-        self.lin_in = Linear(num_node_features + site_embed_dim, hidden_channels)
+        self.lin_in = Linear(num_node_features + site_embed_dim + node_emb_dim, hidden_channels)
         self.norm_in = LayerNorm(hidden_channels)
         
         # 2. GAT Layer 1
@@ -118,7 +131,7 @@ class CausalBrainGNN(torch.nn.Module):
         # 4. Pooling
         demo_dim = 3 if use_demographics else 0
         if pooling == "attention":
-            self.att_pool = GlobalAttention(
+            self.att_pool = AttentionalAggregation(
                 gate_nn=Sequential(
                     Linear(hidden_channels, hidden_channels // 2),
                     GELU(),
@@ -237,6 +250,14 @@ class CausalBrainGNN(torch.nn.Module):
                     device=x.device, dtype=x.dtype
                 )
             x = torch.cat([x, site_per_node], dim=1)
+
+        # 1b. Per-lobe identity embedding.
+        # Each graph has exactly self.num_nodes nodes in a fixed lobe order,
+        # so local lobe index = global node index modulo num_nodes.
+        if self.node_emb_dim > 0:
+            lobe_idx = torch.arange(x.shape[0], device=x.device) % self.num_nodes
+            node_emb = self.node_embedding(lobe_idx)  # (num_nodes_in_batch, node_emb_dim)
+            x = torch.cat([x, node_emb], dim=1)
 
         # 2. Input projection with activation
         h = self.norm_in(F.gelu(self.lin_in(x)))
