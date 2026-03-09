@@ -7,7 +7,7 @@ Last Updated: March 1, 2026
 
 Orchestrates the complete Neuro-CXG pipeline from data download to analysis:
 
-Core Pipeline (15 stages):
+Core Pipeline (16 stages):
   1. ABIDE Download - fMRI data + 7-slice ALFF export
   2. Train/Val/Test Split - 2D stratification (DX_GROUP + SITE_ID)
   3. Master Manifest - Subject-phenotype mapping
@@ -17,21 +17,22 @@ Core Pipeline (15 stages):
   7. Atlas-Based Annotation - Generate YOLO labels
   8. YOLO Training - 12-region ROI detection (YOLO26n)
   9. Spatial Features - 3D coordinate aggregation
- 10. Temporal Features - 20 features/ROI (8 time + 12 frequency)
- 11. Harmonization - Fold-safe neuroHarmonize (protects DX_GROUP)
- 12. Pre-GNN Integrity - Validate dataset completeness
- 13. Causal Graphs - Granger causality/lagged correlation (12×12)
- 14. Diagnostics - Comprehensive health report
- 15. Quality Validation - YOLO quality, graph sparsity checks
+     (Stage 10 "Filter to 1,000" is handled within spatial features extraction)
+ 11. Temporal Features - 20 features/ROI (8 time + 12 frequency)
+ 12. Harmonization - Fold-safe neuroHarmonize (protects DX_GROUP)
+ 13. Pre-GNN Integrity - Validate dataset completeness
+ 14. Causal Graphs - Granger causality/lagged correlation (12×12)
+ 15. Diagnostics - Comprehensive health report
+ 16. Quality Validation - YOLO quality, graph sparsity checks
 
 Main Training (Phase 3):
- 16. GNN Training - 5-fold CV with GAT+GRL
+ 17. GNN Training - 5-fold CV with GAT+GRL
 
 Post-Training Analysis (Phases 8 & 9):
- 17. Visualizations - Comprehensive plots and figures
- 18. Evaluation - Bootstrap CI, permutation test, subgroups
- 19. Explainability - Node/edge importance, feature attribution
- 20. Result Analysis - Per-subject predictions, misclassification
+ 18. Visualizations - Comprehensive plots and figures
+ 19. Evaluation - Bootstrap CI, permutation test, subgroups
+ 20. Explainability - Node/edge importance, feature attribution
+ 21. Result Analysis - Per-subject predictions, misclassification
 
 Usage:
   # Interactive mode (default)
@@ -56,6 +57,7 @@ For detailed documentation, see:
 """
 import argparse
 import logging
+import os
 import subprocess
 import sys
 import shutil
@@ -67,7 +69,10 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from src.core.config import (
     validate_environment,
     PROJECT_ROOT,
+    DATA_ROOT,
+    DATA_PROCESSED,
     DATA_METADATA,
+    MODEL_ROOT,
     FINAL_TRAIN,
     FINAL_VAL,
     FINAL_TEST,
@@ -76,6 +81,7 @@ from src.core.config import (
     NODE_ATTRIBUTES_TEMPORAL,
     NODE_ATTRIBUTES_HARMONIZED,
     CHECKPOINT_DIR,
+    RESULTS_DIR,
     YOLO_WEIGHTS_PATH
 )
 
@@ -87,9 +93,25 @@ logging.basicConfig(
 logger = logging.getLogger("pipeline")
 
 # Path constants for new stages (some imported from config)
-DOWNLOAD_LOG    = DATA_METADATA / "download_log.csv"
-MASTER_MANIFEST = DATA_METADATA / "master_manifest.csv"
-ATLAS_DIR       = PROJECT_ROOT  / "data" / "atlases"
+DOWNLOAD_LOG          = DATA_METADATA / "download_log.csv"
+MASTER_MANIFEST       = DATA_METADATA / "master_manifest.csv"
+ATLAS_DIR             = PROJECT_ROOT  / "data" / "atlases"
+# Baseline checkpoints shipped with the repo; new training saves to CHECKPOINT_DIR
+BASELINE_CHECKPOINT_DIR = MODEL_ROOT / "checkpoints_baseline"
+
+
+def _checkpoints_available() -> bool:
+    """Return True when fold checkpoint files exist in CHECKPOINT_DIR or BASELINE_CHECKPOINT_DIR.
+
+    Checks CHECKPOINT_DIR first (new training output), then falls back to the
+    packaged baseline models so that evaluation stages run out-of-the-box even
+    before a fresh training run completes.
+    """
+    for ckpt_dir in (CHECKPOINT_DIR, BASELINE_CHECKPOINT_DIR):
+        if ckpt_dir.exists() and any(ckpt_dir.glob("best_model_fold*.pt")):
+            return True
+    return False
+
 
 def prompt_user(message, default=True):
 
@@ -150,27 +172,39 @@ def run_module(module_path, args_list=None, description="", function_name=None):
     logger.info(f"Running: {log_msg}")
     logger.debug(f"Command: {' '.join(cmd)}")
     
-    result = subprocess.run(cmd, cwd=PROJECT_ROOT)
-    
-    if result.returncode != 0:
-        logger.error(f"Module {module_path} failed with exit code {result.returncode}")
+    try:
+        subprocess.run(cmd, cwd=PROJECT_ROOT, check=True)
+    except subprocess.CalledProcessError as exc:
+        logger.error(f"Module {module_path} failed with exit code {exc.returncode}")
         sys.exit(1)
     
     logger.info(f"Completed: {log_msg}")
 
 def check_download_status():
-    """Check if ABIDE data has been downloaded."""
+    """Check if ABIDE data has been downloaded.
+
+    Returns True when:
+    - A download_log.csv exists with successful/skipped entries, OR
+    - Split directories already contain time-series .npy files (data was
+      downloaded and split in a prior run that did not produce a log).
+    """
+    # Fast-path: if split data is present, download already happened.
+    train_ts = FINAL_TRAIN / "time_series"
+    if train_ts.exists() and any(train_ts.glob("*_ts.npy")):
+        logger.info("Download status: split data present — treating download as complete.")
+        return True
+
     if not DOWNLOAD_LOG.exists():
-        logger.warning("Download log not found. Data may not be downloaded.")
+        logger.warning("Download log not found and no split data detected. Data may not be downloaded.")
         return False
-    
-    # Count downloaded subjects
+
+    # Count downloaded subjects from log file
     import pandas as pd
     try:
         log_df = pd.read_csv(DOWNLOAD_LOG)
         total = len(log_df)
         # Success includes both 'success' and 'skipped' (already downloaded)
-        successful = len(log_df[log_df.get('status', '').str.lower().isin(['success', 'skipped'])])
+        successful = len(log_df[log_df['status'].str.lower().isin(['success', 'skipped'])])
         logger.info(f"Download status: {successful}/{total} subjects ready (downloaded/skipped)")
         return successful > 0
     except Exception as e:
@@ -178,22 +212,57 @@ def check_download_status():
         return False
 
 def check_split_status():
-    """Check if train/val/test splits exist."""
+    """Check if train/val/test splits are complete and non-empty."""
     splits_exist = all([
         FINAL_TRAIN.exists(),
         FINAL_VAL.exists(),
         FINAL_TEST.exists()
     ])
     
-    if splits_exist:
-        train_count = len(list((FINAL_TRAIN / "images").glob("*.png"))) if (FINAL_TRAIN / "images").exists() else 0
-        val_count = len(list((FINAL_VAL / "images").glob("*.png"))) if (FINAL_VAL / "images").exists() else 0
-        test_count = len(list((FINAL_TEST / "images").glob("*.png"))) if (FINAL_TEST / "images").exists() else 0
-        logger.info(f"Split status: Train={train_count}, Val={val_count}, Test={test_count}")
-        return True
+    if not splits_exist:
+        logger.warning("Train/val/test splits not found.")
+        return False
+
+    split_paths = {
+        "train": FINAL_TRAIN,
+        "val": FINAL_VAL,
+        "test": FINAL_TEST,
+    }
+
+    is_complete = True
+    for split_name, split_root in split_paths.items():
+        images_dir = split_root / "images"
+        ts_dir = split_root / "time_series"
+
+        image_count = len(list(images_dir.glob("*.png"))) if images_dir.exists() else 0
+        ts_count = len(list(ts_dir.glob("*_ts.npy"))) if ts_dir.exists() else 0
+
+        logger.info(
+            f"Split status [{split_name}]: images={image_count}, time_series={ts_count}"
+        )
+
+        if image_count == 0 or ts_count == 0:
+            is_complete = False
+
+    if not is_complete:
+        logger.warning(
+            "Split folders exist but are empty/incomplete. Stage 2 will run to rebuild splits."
+        )
+        return False
+
+    source_images_dir = DATA_ROOT / "images"
+    remaining_source_images = len(list(source_images_dir.glob("*.png"))) if source_images_dir.exists() else 0
+    remaining_source_ts = len(list(DATA_PROCESSED.glob("*_ts.npy"))) if DATA_PROCESSED.exists() else 0
+
+    if remaining_source_images > 0 or remaining_source_ts > 0:
+        logger.warning(
+            "Detected unsplit source data (images=%d, ts=%d). Stage 2 will run.",
+            remaining_source_images,
+            remaining_source_ts,
+        )
+        return False
     
-    logger.warning("Train/val/test splits not found.")
-    return False
+    return True
 
 def show_execution_plan(stages):
     """Display what will be executed."""
@@ -261,7 +330,7 @@ Examples:
     parser.add_argument("--skip-annotate", action="store_true",
                         help="Skip atlas-based annotation (use existing labels)")
     parser.add_argument("--skip-yolo", action="store_true",
-                        help="Skip YOLO training (use existing weights)")
+                        help="Skip YOLO training (use existing weights)")    
     parser.add_argument("--skip-gnn", action="store_true",
                         help="Skip GNN training")
     parser.add_argument("--skip-integrity", action="store_true",
@@ -302,6 +371,11 @@ Examples:
     
     # Override interactive mode if --auto is set
     interactive = args.interactive and not args.auto
+
+    # Signal to subprocesses (pipeline_checks, etc.) that they should skip any
+    # interactive prompts and apply safe defaults automatically.
+    if args.auto:
+        os.environ["NEURO_CXG_NONINTERACTIVE"] = "1"
     
     print("\n" + "="*70)
     print("NEURO-CXG PIPELINE RUNNER")
@@ -310,12 +384,16 @@ Examples:
     
     # STAGE 0: PRE-FLIGHT VALIDATION
     logger.info("\nStage 0: Pre-Flight Validation")
-    
+
     if not validate_environment():
         logger.error("Environment validation failed. Check config.py and data paths.")
         sys.exit(1)
-    
+
     logger.info("Environment validation passed")
+
+    # Ensure the training checkpoint directory exists so gnn_model.py can save there.
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    logger.debug(f"Checkpoint directory ready: {CHECKPOINT_DIR}")
     
     # DETERMINE STAGE EXECUTION BASED ON FLAGS
     
@@ -334,14 +412,20 @@ Examples:
         },
         "split": {
             "name": "Train/Val/Test Split (2D Stratified)",
-            "should_run": not args.skip_split and not data_split,
+            # Also run when --force-reset is used: wipes intermediate state so cv_fold
+            # must be regenerated by split.py to guarantee clean fold assignments.
+            "should_run": not args.skip_split and (not data_split or args.force_reset),
             "reason": "2D stratification by DX_GROUP + SITE_ID (Stage 2)",
             "module": "src.data.split",
             "function": None
         },
         "manifest": {
             "name": "Generate Master Manifest",
-            "should_run": not args.skip_manifest and (not MASTER_MANIFEST.exists() or args.force_reset),
+            "should_run": not args.skip_manifest and (
+                not MASTER_MANIFEST.exists() or
+                args.force_reset or
+                (not args.skip_split and not data_split)
+            ),
             "reason": "Maps subjects to phenotypes (Stage 3)",
             "module": "src.utils.manifestor",
             "function": None
@@ -369,9 +453,13 @@ Examples:
         },
         "annotate": {
             "name": "Atlas-Based Label Annotation",
-            # Run if labels are missing OR if split is about to happen (data_split
-            # is evaluated before split runs, so we must also check if split will run).
-            "should_run": not args.skip_annotate and (data_split or not args.skip_split),
+            # Run only when labels are genuinely absent from the train split directory.
+            # Checking FINAL_TRAIN/labels prevents redundant re-annotation on every run.
+            "should_run": not args.skip_annotate and (
+                args.force_reset or
+                not (FINAL_TRAIN / "labels").exists() or
+                not any((FINAL_TRAIN / "labels").glob("*.txt"))
+            ),
             "reason": "Generate YOLO training labels from AAL3 atlas (Stage 7)",
             "module": "src.pipelines.generate_labels",
             "function": None
@@ -393,7 +481,7 @@ Examples:
         "temporal_features": {
             "name": "Temporal Feature Extraction",
             "should_run": not NODE_ATTRIBUTES_TEMPORAL.exists() or args.force_reset or args.regenerate_features,
-            "reason": "20 features per ROI: 8 time-domain + 12 frequency (Stage 10)",
+            "reason": "20 features per ROI: 8 time-domain + 12 frequency (Stage 11)",
             "module": "src.features.extract_temporal",
             "function": None,
             "args": ["--add-frequency"]  # Pass arguments to module
@@ -401,37 +489,40 @@ Examples:
         "harmonization": {
             "name": "Feature Harmonization",
             "should_run": not NODE_ATTRIBUTES_HARMONIZED.exists() or args.force_reset or args.regenerate_features,
-            "reason": "Fold-safe neuroHarmonize, protects DX_GROUP (Stage 11)",
+            "reason": "Fold-safe neuroHarmonize, protects DX_GROUP (Stage 12)",
             "module": "src.features.fold_safe_harmonization",
             "function": None
         },
         "pre_gnn_integrity": {
             "name": "Pre-GNN Integrity Check",
             "should_run": not args.skip_integrity,
-            "reason": "Validate dataset completeness per split (Stage 12)",
+            "reason": "Validate dataset completeness per split (Stage 13)",
             "module": "src.validation.pipeline_checks",
             "function": "check_distribution"
+        },
+        "causal_graphs": {
+            "name": "Causal Graph Construction (12×12)",
+            "should_run": (not CAUSAL_GRAPHS_DIR.exists() or 
+                           len(list(CAUSAL_GRAPHS_DIR.glob("*_graph.pt"))) == 0 or 
+                           args.force_reset or 
+                           args.regenerate_features),
+            "reason": "Granger causality/lagged correlation (Stage 14)",
+            "module": "src.features.construct_causal",
+            "function": None
         },
         "diagnostics": {
             "name": "Pipeline Diagnostics",
             "should_run": not args.skip_diagnostics,
-            "reason": "Comprehensive health report after graphs built (Stage 13)",
+            "reason": "Comprehensive health report after graphs built (Stage 15)",
             "module": "src.validation.pipeline_checks",
             "function": "generate_health_report"
         },
         "quality_validation": {
             "name": "Quality Validation (YOLO & Graph Sparsity)",
             "should_run": not args.skip_comprehensive_validation,
-            "reason": "YOLO quality, graph sparsity, stratification (Stage 14)",
+            "reason": "YOLO quality, graph sparsity, stratification (Stage 16)",
             "module": "src.validation.pipeline_checks",
             "function": "run_quality_validation"
-        },
-        "causal_graphs": {
-            "name": "Causal Graph Construction (12×12)",
-            "should_run": (not any(CAUSAL_GRAPHS_DIR.iterdir()) if CAUSAL_GRAPHS_DIR.exists() else True) or args.force_reset or args.regenerate_features,
-            "reason": "Granger causality/lagged correlation graphs (Stage 15)",
-            "module": "src.features.construct_causal",
-            "function": None
         },
         "gnn_training": {
             "name": "GNN Training (5-Fold CV)",
@@ -449,27 +540,21 @@ Examples:
         },
         "evaluation": {
             "name": "Comprehensive Evaluation",
-            "should_run": not args.skip_evaluation and (
-                any(CHECKPOINT_DIR.glob("best_model_fold*.pt")) if CHECKPOINT_DIR.exists() else False
-            ),
+            "should_run": not args.skip_evaluation and _checkpoints_available(),
             "reason": "Ensemble evaluation, bootstrap CI, permutation test, subgroups (Phase 9.2)",
             "module": "src.run_evaluation",
             "function": None
         },
         "explainability": {
             "name": "Explainability Analysis",
-            "should_run": not args.skip_explainability and (
-                any(CHECKPOINT_DIR.glob("best_model_fold*.pt")) if CHECKPOINT_DIR.exists() else False
-            ),
+            "should_run": not args.skip_explainability and _checkpoints_available(),
             "reason": "Node/edge importance, feature attribution, literature validation (Phase 8)",
             "module": "src.run_explainability",
             "function": None
         },
         "result_analysis": {
             "name": "Result Interpretation & Analysis",
-            "should_run": not args.skip_result_analysis and (
-                any(CHECKPOINT_DIR.glob("best_model_fold*.pt")) if CHECKPOINT_DIR.exists() else False
-            ),
+            "should_run": not args.skip_result_analysis and _checkpoints_available(),
             "reason": "Per-subject predictions, misclassification analysis, site effects (Phase 9.3)",
             "module": "src.run_result_analysis",
             "function": None
@@ -509,14 +594,14 @@ Examples:
     
     # STAGE EXECUTION
     # Execute stages in order
-    # Core Pipeline (15 stages as per copilot-instructions.md):
+    # Core Pipeline (16 stages as per copilot-instructions.md):
     #   1-2:   download, split
     #   3-4:   manifest, atlas_validation
     #   5-6:   pipeline_validation, post_download_integrity
     #   7-9:   annotate, yolo, spatial_features
-    #  10-12:  temporal_features, harmonization, pre_gnn_integrity
-    #  13-15:  causal_graphs, diagnostics, quality_validation
-    #     16:  gnn_training
+    #  10-12:  temporal_features, harmonization
+    #  13-16:  pre_gnn_integrity, causal_graphs, diagnostics, quality_validation
+    #     17:  gnn_training
     # Post-Training Analysis (Phases 8 & 9):
     #  17-20:  visualizations, evaluation, explainability, result_analysis
     
@@ -572,16 +657,15 @@ Examples:
         run_module(stage["module"], args_list=args_list, description=stage["name"], function_name=function_name)
     
     # COMPLETION
-    
+
     logger.info("\n" + "="*70)
     logger.info("NEURO-CXG PIPELINE EXECUTION COMPLETE")
     logger.info("="*70)
     logger.info(f"📁 Checkpoints: {CHECKPOINT_DIR}")
     logger.info(f"📁 Causal graphs: {CAUSAL_GRAPHS_DIR}")
     logger.info(f"📁 Features: {DATA_METADATA}")
-    
+
     # Check if analysis outputs exist
-    from src.core.config import RESULTS_DIR
     if (RESULTS_DIR / "visualizations").exists():
         logger.info(f"📁 Visualizations: {RESULTS_DIR / 'visualizations'}")
     if (RESULTS_DIR / "evaluation").exists():

@@ -24,6 +24,7 @@ from src.core.config import (
     DATA_METADATA,
     DATA_PROCESSED,
     DATA_ROOT,
+    EXCLUDED_SUBJECTS,
     GNN_IN_CHANNELS,
     K_FOLDS,
     LOBE_MAPPING,
@@ -35,6 +36,8 @@ from src.core.config import (
     NUM_LOBES,
     NUM_SPATIAL_FEATURES,
     NUM_TEMPORAL_FEATURES,
+    PHENO_PATH,
+    SITE_TR_MAP,
     SPARSITY_QUANTILE,
 )
 
@@ -88,13 +91,6 @@ def _redownload_npy(corrupted_npy_paths: list, incomplete_subs: list) -> None:
                 logger.info(f"  Removed stale: {p.name}")
 
     # Build (subject_id, tr) task list from phenotype CSV
-    SITE_TR_MAP = {
-        'CALTECH': 2.0, 'CMU': 2.0, 'KKI': 2.5, 'LEUVEN_1': 1.656,
-        'LEUVEN_2': 1.656, 'MAX_MUN': 3.0, 'NYU': 2.0, 'OHSU': 2.5,
-        'OLIN': 1.5, 'PITT': 1.5, 'SBL': 2.5, 'SDSU': 2.0,
-        'STANFORD': 2.0, 'TRINITY': 2.0, 'UCLA_1': 3.0, 'UCLA_2': 3.0,
-        'UM_1': 2.0, 'UM_2': 2.0, 'USM': 2.0, 'YALE': 2.0,
-    }
     tr_lookup: dict = {}
     if PHENO_PATH.exists():
         pheno_df = pd.read_csv(PHENO_PATH)
@@ -141,12 +137,21 @@ def check_dataset_integrity() -> None:
     logger.info("Starting post-download integrity check...")
 
     # 1. Check PNG Integrity
-    png_files = list(PNG_DIR.glob("*.png"))
+    # After split.py runs it moves all PNGs into data/final/{split}/images/,
+    # leaving the source-pool dir (PNG_DIR) empty.  Prefer the split dirs.
+    _split_img_dirs = [DATA_FINAL / sp / "images" for sp in ("train", "val", "test")]
+    _split_pngs = [p for d in _split_img_dirs if d.exists() for p in d.glob("*.png")]
+    png_files = _split_pngs if _split_pngs else list(PNG_DIR.glob("*.png"))
     corrupted_pngs = []
     subject_counts = Counter()
 
     if not png_files:
-        logger.info("No images found to check.")
+        logger.warning(
+            "No PNG images found in split dirs (%s) or source pool (%s) — "
+            "integrity check skipped.  Run split stage first.",
+            ", ".join(str(d) for d in _split_img_dirs),
+            PNG_DIR,
+        )
     else:
         logger.info(f"Scanning {len(png_files)} images for integrity...")
         for path in png_files:
@@ -160,7 +165,10 @@ def check_dataset_integrity() -> None:
                 corrupted_pngs.append(path)
 
     # 2. Check NPY Integrity
-    npy_files = list(TS_DIR.glob("*.npy"))
+    # Time-series files live in data/final/{split}/time_series/ after split.
+    _split_ts_dirs = [DATA_FINAL / sp / "time_series" for sp in ("train", "val", "test")]
+    _split_npys = [p for d in _split_ts_dirs if d.exists() for p in d.glob("*.npy")]
+    npy_files = _split_npys if _split_npys else list(TS_DIR.glob("*.npy"))
     corrupted_npys = []
     ts_subjects = set()
 
@@ -235,6 +243,40 @@ def check_dataset_integrity() -> None:
             "OPTIONS: [1] Delete Corrupted | [2] Purge Incomplete Subjects | "
             "[3] Exit | [4] Re-download NPY only (keep PNGs)"
         )
+
+        # In non-interactive mode (pipeline --auto flag, or CI/scripted runs)
+        # automatically delete corrupted/invalid files and skip the interactive
+        # menu entirely.  The flag is propagated via the NEURO_CXG_NONINTERACTIVE
+        # environment variable set by run_pipeline.py.
+        _is_auto = (
+            os.environ.get("NEURO_CXG_NONINTERACTIVE", "").strip() == "1"
+            or not sys.stdout.isatty()
+        )
+        if _is_auto:
+            if corrupted_npys:
+                logger.info(
+                    "Non-interactive mode: auto-deleting %d corrupted NPY file(s).",
+                    len(corrupted_npys),
+                )
+                for path in corrupted_npys:
+                    os.remove(path)
+                    logger.info("Auto-deleted: %s", path.name)
+            if corrupted_pngs:
+                logger.info(
+                    "Non-interactive mode: auto-deleting %d corrupted PNG file(s).",
+                    len(corrupted_pngs),
+                )
+                for path in corrupted_pngs:
+                    os.remove(path)
+                    logger.info("Auto-deleted: %s", path.name)
+            if incomplete_subs:
+                logger.info(
+                    "Non-interactive mode: %d incomplete subject(s) detected but NOT "
+                    "auto-purged (re-run interactively to choose option 2 if desired).",
+                    len(incomplete_subs),
+                )
+            return
+
         choice = input("Select (1/2/3/4): ")
         if choice == "1":
             for path in corrupted_pngs + corrupted_npys:
@@ -242,15 +284,29 @@ def check_dataset_integrity() -> None:
                 logger.info(f"Deleted: {path}")
 
         elif choice == "2":
+            # After split.py runs, subject files live in the split dirs, not in the
+            # source-pool dirs (PNG_DIR / TS_DIR).  Search all split dirs for a
+            # complete purge of the requested subjects.
+            _split_img_dirs_d2 = [DATA_FINAL / sp / "images" for sp in ("train", "val", "test")]
+            _split_ts_dirs_d2  = [DATA_FINAL / sp / "time_series" for sp in ("train", "val", "test")]
+            deleted = 0
             for sub in incomplete_subs:
-                # Remove PNGs
-                for path in PNG_DIR.glob(f"{sub}_z*.png"):
-                    os.remove(path)
-                # Remove all NPY variants for this subject
-                for pattern in (f"{sub}_ts.npy", f"{sub}_roi_labels.npy", f"{sub}_qc.json"):
-                    for path in TS_DIR.glob(pattern):
+                for img_d in _split_img_dirs_d2:
+                    for path in img_d.glob(f"{sub}_z*.png"):
                         os.remove(path)
-            logger.info("Purge complete.")
+                        deleted += 1
+                for ts_d in _split_ts_dirs_d2:
+                    for pattern in (f"{sub}_ts.npy", f"{sub}_roi_labels.npy", f"{sub}_qc.json"):
+                        for path in ts_d.glob(pattern):
+                            os.remove(path)
+                            deleted += 1
+            if deleted:
+                logger.info("Purge complete: %d file(s) removed.", deleted)
+            else:
+                logger.warning(
+                    "Purge ran but found 0 files to delete.  "
+                    "Subjects may already be absent from split directories."
+                )
 
         elif choice == "4":
             _redownload_npy(corrupted_npys, incomplete_subs)
@@ -573,7 +629,12 @@ def generate_health_report(
     # Data completeness
     logger.info("-" * 40)
     logger.info("DATA COMPLETENESS")
-    metadata_ids = set(df["FILE_ID"].unique())
+    # Filter out malformed rows (empty/null FILE_ID values from the phenotype CSV).
+    _invalid = {"", "no_filename", "nan", "none"}
+    metadata_ids = {
+        fid for fid in df["FILE_ID"].unique()
+        if pd.notna(fid) and str(fid).strip().lower() not in _invalid
+    }
     missing_metadata = completed_subs - metadata_ids
 
     if missing_metadata:
@@ -1000,12 +1061,18 @@ class PipelineValidator:
             )
         )
 
-        sample_size = min(10, len(ts_files))
+        # Exclude known-bad subjects so they don't pollute the sample check.
+        excluded_upper = {s.upper() for s in EXCLUDED_SUBJECTS}
+        valid_ts_files = [
+            f for f in ts_files
+            if f.stem.replace("_ts", "").upper() not in excluded_upper
+        ] or ts_files  # fall back to full list if all were excluded
+        sample_size = min(10, len(valid_ts_files))
         corrupted = 0
         wrong_shape = 0
         total_nan_ratio = 0.0
 
-        for ts_file in np.random.choice(ts_files, sample_size, replace=False):
+        for ts_file in np.random.choice(valid_ts_files, sample_size, replace=False):
             try:
                 data = np.load(ts_file)
                 if data.ndim != 2:
@@ -1057,7 +1124,8 @@ class PipelineValidator:
                     stage="Features",
                     passed=False,
                     message="Temporal features not found",
-                    severity="critical",
+                    # Not critical: file will be generated in a subsequent pipeline stage.
+                    severity="warning",
                     fix_suggestion="Run: python -m src.features.extract_temporal",
                 )
             )
@@ -1125,7 +1193,8 @@ class PipelineValidator:
                     stage="Features",
                     passed=False,
                     message="Spatial features not found",
-                    severity="critical",
+                    # Not critical: file will be generated in a subsequent pipeline stage.
+                    severity="warning",
                     fix_suggestion="Run: python -m src.features.extract_spatial",
                 )
             )
@@ -1232,7 +1301,8 @@ class PipelineValidator:
                     stage="Graphs",
                     passed=False,
                     message="No graph files found",
-                    severity="critical",
+                    # Not critical: graphs are built in a subsequent pipeline stage.
+                    severity="warning",
                     fix_suggestion="Run: python -m src.features.construct_causal",
                 )
             )
