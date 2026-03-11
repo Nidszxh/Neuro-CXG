@@ -82,7 +82,7 @@ class FeatureAttributionAnalyzer:
     def compute_attributions(
         self,
         n_steps: int = 50,
-        target_class: Optional[int] = None,
+        target_class: int = 1,
         debug: bool = False,
         use_integrated_gradients: bool = False,
     ) -> np.ndarray:
@@ -94,7 +94,8 @@ class FeatureAttributionAnalyzer:
 
         Args:
             n_steps: Number of steps for Integrated Gradients (only used if use_integrated_gradients=True)
-            target_class: Class to compute attributions for (None = predicted class)
+            target_class: Class to compute attributions for (default=1, ASD class, consistent
+                with GradCAMGraphExplainer). Pass 0 for Control-class attributions.
             debug: If True, print full exceptions
             use_integrated_gradients: If True, use slower but more accurate IG method
 
@@ -131,17 +132,15 @@ class FeatureAttributionAnalyzer:
                     edge_index,
                     edge_attr,
                     batch_tensor,
-                    site_id=None,
+                    site_id=data.site_id if hasattr(data, "site_id") else None,
                     age=data.age if hasattr(data, "age") else None,
                     sex=data.sex if hasattr(data, "sex") else None,
                     fiq=data.fiq if hasattr(data, "fiq") else None,
                 )
-                pred_class = out.argmax(dim=1)
+            # Capture predicted class here — `out` gets overwritten in the gradient path
+            pred_class = out.argmax(dim=1)  # (batch_size,) per-graph predicted class
 
-            if target_class is not None:
-                target = target_class
-            else:
-                target = pred_class
+            target = target_class
 
             try:
                 if use_integrated_gradients and CAPTUM_AVAILABLE:
@@ -160,7 +159,7 @@ class FeatureAttributionAnalyzer:
                         edge_index,
                         edge_attr,
                         batch_tensor,
-                        site_id=None,
+                        site_id=data.site_id if hasattr(data, "site_id") else None,
                         age=data.age if hasattr(data, "age") else None,
                         sex=data.sex if hasattr(data, "sex") else None,
                         fiq=data.fiq if hasattr(data, "fiq") else None,

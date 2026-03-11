@@ -407,7 +407,7 @@ All project constants defined in [src/core/config.py](src/core/config.py) (singl
 | GNN_IN_CHANNELS | 28 | Dynamically computed: `len(ALL_FEATURE_NAMES)` |
 | GNN_HIDDEN_CHANNELS | 128 | Hidden dim for GATv2Conv |
 | GNN_NUM_HEADS | 4 | Attention heads per GAT layer |
-| GNN_NUM_GNN_LAYERS | 2 | Number of GATv2 layers |
+| GNN_NUM_LAYERS | 2 | Number of GATv2 layers |
 | GNN_DROPOUT | 0.35 | Dropout for regularisation |
 | GNN_WEIGHT_DECAY | 5e-5 | L2 regularisation (AdamW) |
 | GNN_POOLING | 'attention' | GlobalAttention pooling |

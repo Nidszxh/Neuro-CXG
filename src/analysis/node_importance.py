@@ -342,6 +342,13 @@ class NodeImportanceAnalyzer:
                 g_scores = node_scores[mask]               # (num_lobes,)
                 if len(g_scores) != NUM_LOBES:
                     continue
+                # Zero out attributions for atlas-gap / zero-signal nodes so that
+                # uninformative zero-padded lobes don't distort importance rankings.
+                if hasattr(batch, 'zero_lobe_mask'):
+                    zlm = batch.zero_lobe_mask[mask].cpu().numpy().astype(bool)
+                    if zlm.any():
+                        g_scores = g_scores.copy()
+                        g_scores[zlm] = 0.0
                 if label == 1:
                     asd_scores.append(g_scores)
                 else:
