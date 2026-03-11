@@ -12,7 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     LOBE_MAPPING, NUM_LOBES, LOBE_NAMES, SPARSITY_QUANTILE,
     DATA_FINAL, MASTER_MANIFEST, CAUSAL_GRAPHS_DIR, DEVICE,
-    CAUSALITY_METHOD, GRANGER_MAX_LAG, GRANGER_MAX_LAG_SECONDS, SPARSITY_METHOD, MIN_EDGES_PER_GRAPH
+    CAUSALITY_METHOD, GRANGER_MAX_LAG, GRANGER_MAX_LAG_SECONDS, SPARSITY_METHOD,
+    MIN_EDGES_PER_GRAPH, GRAPH_DENSITY_TARGET,
 )
 
 # Legacy lag value for compute_lagged_causality() — kept local to prevent re-introduction in config.
@@ -75,7 +76,8 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
     num_rois = ts_raw.shape[1]
     lobe_signals = []
     lobe_internal_features = []
-    
+    zero_lobes: list = []  # True when a lobe used the zero-signal fallback
+
     for lobe_id in range(NUM_LOBES):
         # Get ROIs belonging to this lobe (already 0-based indices)
         indices = [i for i in LOBE_MAPPING[lobe_id] if i < num_rois]
@@ -89,8 +91,9 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
                 _zero_lobe_warned.add(lobe_id)
             lobe_signals.append(torch.zeros(ts_raw.shape[0], device=ts_raw.device))
             lobe_internal_features.append(torch.tensor([0.0, 0.0], device=ts_raw.device))
+            zero_lobes.append(True)
             continue
-        
+
         # Extract raw ROIs for this lobe: Shape (Timepoints, Num_ROIs_in_Lobe)
         roi_data = ts_raw[:, indices]
 
@@ -108,6 +111,7 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
                 _zero_lobe_warned.add(lobe_id)
             lobe_signals.append(torch.zeros(ts_raw.shape[0], device=ts_raw.device))
             lobe_internal_features.append(torch.tensor([0.0, 0.0], device=ts_raw.device))
+            zero_lobes.append(True)
             continue
         if valid_roi_mask.sum().item() < len(indices):
             n_dropped = len(indices) - valid_roi_mask.sum().item()
@@ -178,12 +182,14 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
             spatial_variance = torch.tensor(0.0, device=ts_raw.device)
         
         lobe_internal_features.append(torch.stack([coherence, spatial_variance]))
-    
+        zero_lobes.append(False)
+
     # Stack results
     ts_lobes = torch.stack(lobe_signals, dim=1)           # (Timepoints, 12)
     features_internal = torch.stack(lobe_internal_features, dim=0)  # (12, 2)
-    
-    return ts_lobes, features_internal
+    zero_lobe_mask = torch.tensor(zero_lobes, dtype=torch.bool)      # (12,)
+
+    return ts_lobes, features_internal, zero_lobe_mask
 
 
 def compute_lagged_causality(ts_lobe: torch.Tensor) -> torch.Tensor:
@@ -379,15 +385,15 @@ def adaptive_sparsification(
         adj_matrix = torch.where(
             (abs_matrix >= threshold_value) & offdiag_mask,
             causal_matrix,
-            torch.tensor(0.0, device=DEVICE)
+            torch.tensor(0.0, device=causal_matrix.device)
         )
     
     elif method == 'adaptive_statistical':
-        # Keep edges above statistical significance threshold
-        # For Granger causality: -log10(p) > -log10(0.05) ≈ 1.3
+        # Keep edges above statistical significance threshold.
+        # For Granger causality: retain where -log10(p) > 1.3 (i.e. p < 0.05).
         # For other methods: use median + 1 std as threshold
         if CAUSALITY_METHOD == 'granger':
-            threshold_value = 1.3  # p < 0.05
+            threshold_value = 1.3  # -log10(0.05) significance threshold
         else:
             non_zero = abs_matrix[abs_matrix > 0]
             if len(non_zero) > 0:
@@ -398,7 +404,7 @@ def adaptive_sparsification(
         adj_matrix = torch.where(
             (abs_matrix >= threshold_value) & offdiag_mask,
             causal_matrix,
-            torch.tensor(0.0, device=DEVICE)
+            torch.tensor(0.0, device=causal_matrix.device)
         )
         
         # Ensure minimum edges
@@ -411,7 +417,7 @@ def adaptive_sparsification(
             adj_matrix = torch.where(
                 (abs_matrix >= threshold_value) & offdiag_mask,
                 causal_matrix,
-                torch.tensor(0.0, device=DEVICE)
+                torch.tensor(0.0, device=causal_matrix.device)
             )
     
     elif method == 'fixed':
@@ -423,7 +429,7 @@ def adaptive_sparsification(
         adj_matrix = torch.where(
             (abs_matrix >= thresh) & offdiag_mask,
             causal_matrix,
-            torch.tensor(0.0, device=DEVICE)
+            torch.tensor(0.0, device=causal_matrix.device)
         )
 
         # Ensure minimum edges
@@ -435,7 +441,7 @@ def adaptive_sparsification(
             adj_matrix = torch.where(
                 (abs_matrix >= threshold_value) & offdiag_mask,
                 causal_matrix,
-                torch.tensor(0.0, device=DEVICE)
+                torch.tensor(0.0, device=causal_matrix.device)
             )
     
     else:
@@ -445,7 +451,7 @@ def adaptive_sparsification(
         adj_matrix = torch.where(
             (abs_matrix >= thresh) & offdiag_mask,
             causal_matrix,
-            torch.tensor(0.0, device=DEVICE)
+            torch.tensor(0.0, device=causal_matrix.device)
         )
     adj_matrix.fill_diagonal_(0.0)
     return adj_matrix, fallback_triggered
@@ -495,7 +501,7 @@ def construct_graph(subject_id: str, split: str, tr: float = 2.0) -> Tuple[bool,
             return False, False
         
         # 1. Smart Aggregation (PCA + Regional Homogeneity)
-        ts_lobes, internal_features = aggregate_to_lobes(ts_data)
+        ts_lobes, internal_features, zero_lobe_mask = aggregate_to_lobes(ts_data)
         
         # 2. Compute 12x12 Causal Matrix (Phase 1: Granger causality with cleaned signals)
         # Calculate max_lag in timepoints based on subject-specific TR
@@ -552,6 +558,7 @@ def construct_graph(subject_id: str, split: str, tr: float = 2.0) -> Tuple[bool,
         graph_package = {
             'adj': adj_matrix.cpu(),
             'internal_features': internal_features.cpu(),  # (12, 2) ReHo features
+            'zero_lobe_mask': zero_lobe_mask.cpu(),        # (12,) bool — True = atlas gap / zero-signal
             'subject_id': subject_id,
             'lobe_order': [LOBE_NAMES[i] for i in range(NUM_LOBES)],
             'stats': post_sparse_stats  # Useful for debugging

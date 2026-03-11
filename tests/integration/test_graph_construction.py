@@ -51,8 +51,12 @@ def synthetic_ts_tensor():
 
 @pytest.fixture(scope="module")
 def aggregated(synthetic_ts_tensor):
-    """Run aggregate_to_lobes() once and return (lobe_signals, internal_features)."""
-    return aggregate_to_lobes(synthetic_ts_tensor)
+    """Run aggregate_to_lobes() once and return (lobe_signals, internal_features).
+    aggregate_to_lobes returns (ts_lobes, features_internal, zero_lobe_mask);
+    the mask is an implementation detail not needed by these shape/type tests.
+    """
+    result = aggregate_to_lobes(synthetic_ts_tensor)
+    return result[0], result[1]   # lobe_signals, internal_features
 
 
 @pytest.fixture(scope="module")
@@ -64,8 +68,11 @@ def causal_matrix(aggregated):
 
 @pytest.fixture(scope="module")
 def sparsified_matrix(causal_matrix):
-    """Apply adaptive_sparsification with the 'fixed' method for determinism."""
-    return adaptive_sparsification(causal_matrix, method='fixed')
+    """Apply adaptive_sparsification with the 'fixed' method for determinism.
+    Returns the adjacency tensor only (the function returns (adj, fallback_triggered)).
+    """
+    adj, _ = adaptive_sparsification(causal_matrix, method='fixed')
+    return adj
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -145,12 +152,12 @@ class TestComputeCausalityMatrix:
 class TestAdaptiveSparsification:
 
     def test_output_shape(self, causal_matrix):
-        sparse = adaptive_sparsification(causal_matrix, method='fixed')
+        sparse, _ = adaptive_sparsification(causal_matrix, method='fixed')
         assert sparse.shape == (NUM_LOBES, NUM_LOBES)
 
     def test_sparsified_is_subset_of_original(self, causal_matrix):
         """Every non-zero edge in the sparsified matrix must also be non-zero in the original."""
-        sparse = adaptive_sparsification(causal_matrix, method='fixed')
+        sparse, _ = adaptive_sparsification(causal_matrix, method='fixed')
         original_zero_mask = causal_matrix == 0
         assert not (sparse[original_zero_mask] != 0).any(), (
             "Sparsification introduced edges that didn't exist in the original matrix"
@@ -159,14 +166,14 @@ class TestAdaptiveSparsification:
     def test_minimum_edges_satisfied(self, causal_matrix):
         """The sparsified matrix should contain at least MIN_EDGES_PER_GRAPH edges."""
         from src.core.config import MIN_EDGES_PER_GRAPH
-        sparse = adaptive_sparsification(causal_matrix, method='fixed')
+        sparse, _ = adaptive_sparsification(causal_matrix, method='fixed')
         n_edges = (sparse != 0).sum().item()
         assert n_edges >= MIN_EDGES_PER_GRAPH, (
             f"Sparsified graph has {n_edges} edges, below minimum {MIN_EDGES_PER_GRAPH}"
         )
 
     def test_no_nan_inf(self, causal_matrix):
-        sparse = adaptive_sparsification(causal_matrix, method='fixed')
+        sparse, _ = adaptive_sparsification(causal_matrix, method='fixed')
         assert torch.isfinite(sparse).all()
 
 

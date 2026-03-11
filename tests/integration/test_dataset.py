@@ -43,11 +43,11 @@ N_EDGES_MIN = 12     # must match construct_causal MIN_EDGES_PER_GRAPH
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _make_manifest(subject_id: str, split: str) -> pd.DataFrame:
+def _make_manifest(subject_id: str, split: str, dx_group: int = DX_GROUP) -> pd.DataFrame:
     return pd.DataFrame([{
         'subject_id': subject_id,
         'split': split,
-        'DX_GROUP': DX_GROUP,
+        'DX_GROUP': dx_group,
         'SITE_ID': SITE_ID,
         'AGE_AT_SCAN': 12.5,
         'SEX': 1,
@@ -160,6 +160,10 @@ def dataset(mock_data_dir):
         "src.features.graph_factory.MASTER_MANIFEST":    meta_dir / "master_manifest.csv",
         "src.features.graph_factory.NODE_ATTRIBUTES_HARMONIZED": meta_dir / "node_attributes_harmonized.csv",
         "src.features.graph_factory.NODE_FEATURES_3D":   meta_dir / "node_features_3d.csv",
+        # Point the harmonized path at a non-existent file so graph_factory falls
+        # back to NODE_FEATURES_3D (the patched mock) rather than using the real
+        # node_features_3d_harmonized.csv that may exist on disk.
+        "src.features.graph_factory.NODE_FEATURES_3D_HARMONIZED": meta_dir / "node_features_3d_harmonized.csv",
         "src.features.graph_factory.CAUSAL_GRAPHS_DIR":  graphs_dir,
     }
 
@@ -280,3 +284,59 @@ class TestABIDECausalDataset:
             assert val.dtype == torch.float32, (
                 f"{attr} dtype expected float32, got {val.dtype}"
             )
+
+
+# ── Control label-encoding fixture + test ─────────────────────────────────────
+
+@pytest.fixture(scope="module")
+def mock_data_dir_control(tmp_path_factory):
+    """Same as mock_data_dir but DX_GROUP=1 (ABIDE Control)."""
+    root = tmp_path_factory.mktemp("mock_abide_ctrl")
+    meta_dir   = root / "metadata"
+    graphs_dir = root / "causal_graphs"
+    meta_dir.mkdir()
+    graphs_dir.mkdir()
+
+    np.random.seed(13)
+    subject_id = "TEST_CTRL_0000001"
+    _make_manifest(subject_id, "train", dx_group=1).to_csv(
+        meta_dir / "master_manifest.csv", index=False
+    )
+    _make_temporal_features(subject_id).to_csv(
+        meta_dir / "node_attributes_harmonized.csv", index=False
+    )
+    _make_spatial_features(subject_id).to_csv(
+        meta_dir / "node_features_3d.csv", index=False
+    )
+    adj      = _make_sparse_adj(NUM_LOBES, min_edges=N_EDGES_MIN)
+    internal = torch.rand(NUM_LOBES, 2)
+    torch.save(
+        {"adj": adj, "internal_features": internal,
+         "subject_id": subject_id, "lobe_order": list(range(NUM_LOBES))},
+        graphs_dir / f"{subject_id}_graph.pt",
+    )
+    return root, meta_dir, graphs_dir
+
+
+@pytest.fixture(scope="module")
+def dataset_control(mock_data_dir_control):
+    """ABIDECausalDataset built from Control (DX_GROUP=1) mock data."""
+    _, meta_dir, graphs_dir = mock_data_dir_control
+    with patch.multiple("src.features.graph_factory",
+                        MASTER_MANIFEST=meta_dir / "master_manifest.csv",
+                        NODE_ATTRIBUTES_HARMONIZED=meta_dir / "node_attributes_harmonized.csv",
+                        NODE_FEATURES_3D=meta_dir / "node_features_3d.csv",
+                        NODE_FEATURES_3D_HARMONIZED=meta_dir / "node_features_3d_harmonized.csv",
+                        CAUSAL_GRAPHS_DIR=graphs_dir):
+        from src.features.graph_factory import ABIDECausalDataset
+        ds = ABIDECausalDataset(split="train")
+    return ds
+
+
+def test_label_encoding_control(dataset_control):
+    """DX_GROUP=1 (ABIDE Control) must map to y=0 (GNN Control class)."""
+    sample = dataset_control.get(0)
+    assert sample is not None, "dataset_control.get(0) returned None"
+    assert sample.y.item() == 0, (
+        f"DX_GROUP=1 (Control) should encode as y=0, got y={sample.y.item()}"
+    )

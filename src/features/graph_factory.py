@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     NUM_LOBES, LOBE_NAMES,
     MASTER_MANIFEST, NODE_ATTRIBUTES_HARMONIZED, 
-    NODE_FEATURES_3D, CAUSAL_GRAPHS_DIR,
+    NODE_FEATURES_3D, NODE_FEATURES_3D_HARMONIZED, CAUSAL_GRAPHS_DIR,
     NUM_TEMPORAL_FEATURES, NUM_SPATIAL_FEATURES, GNN_IN_CHANNELS,
     EXCLUDED_SUBJECTS, MAX_NAN_ROIS,
 )
@@ -67,8 +67,16 @@ class ABIDECausalDataset(Dataset):
         # 2. Harmonized temporal features (aggregated to 12 regions)
         self.node_attr = pd.read_csv(NODE_ATTRIBUTES_HARMONIZED).set_index('subject_id')
         
-        # 3. Spatial coordinates and geometric features (6 per lobe)
-        self.coords = pd.read_csv(NODE_FEATURES_3D).set_index('subject_id')
+        # 3. Spatial coordinates and geometric features (6 per lobe).
+        # Prefer the ComBat-harmonized version (conf_std / detection_count corrected for
+        # site effects) when available; fall back to raw YOLO output otherwise.
+        _spatial_path = (
+            NODE_FEATURES_3D_HARMONIZED
+            if NODE_FEATURES_3D_HARMONIZED.exists()
+            else NODE_FEATURES_3D
+        )
+        logger.info("  Spatial features: %s", _spatial_path.name)
+        self.coords = pd.read_csv(_spatial_path).set_index('subject_id')
         
         # 4. Adjacency matrices directory
         self.adj_dir = CAUSAL_GRAPHS_DIR
@@ -215,6 +223,13 @@ class ABIDECausalDataset(Dataset):
                         torch.tensor(0.0, dtype=torch.float32),
                         internal_features
                     )
+
+            # Load zero-signal lobe mask (True = atlas gap / zero-signal fallback).
+            # Graphs built before this field was introduced get an all-False default.
+            zero_lobe_mask = graph_dict.get(
+                'zero_lobe_mask',
+                torch.zeros(NUM_LOBES, dtype=torch.bool)
+            ).bool()
             
             # 3. Load 12-Region Spatial Features (6 per region)
             spatial_features = self._get_subject_spatial(sub_id)
@@ -285,7 +300,8 @@ class ABIDECausalDataset(Dataset):
                 site_id=torch.tensor([site_idx], dtype=torch.long),
                 age=torch.tensor([age_norm], dtype=torch.float32),
                 sex=torch.tensor([sex_norm], dtype=torch.float32),
-                fiq=torch.tensor([fiq_norm], dtype=torch.float32)
+                fiq=torch.tensor([fiq_norm], dtype=torch.float32),
+                zero_lobe_mask=zero_lobe_mask,
             )
 
             # Apply augmentation to training data
@@ -337,14 +353,15 @@ class ABIDECausalDataset(Dataset):
         """
         Extracts spatial features for 12 regions and reshapes to (12, 6).
         
-        FIXED: Now extracts all 6 spatial features per region:
+        Extracts 4 anatomical spatial features per region (conf_std and
+        detection_count are intentionally excluded — they are YOLO scanner-quality
+        metrics that encode site identity, not brain structure, confirmed by
+        RF AUC=1.000 in run 3):
         1. x (centroid x-coordinate)
         2. y (centroid y-coordinate)
         3. z_depth (centroid z-coordinate)
         4. size (bounding box area)
-        5. conf_std (detection confidence consistency)
-        6. detection_count (number of slices with detection)
-        
+
         Returns None if subject not found or features are invalid.
         """
         try:
@@ -354,16 +371,15 @@ class ABIDECausalDataset(Dataset):
                 lobe_name = LOBE_NAMES[lobe_id]
                 
                 try:
-                    # Extract all 6 spatial features
+                    # Extract 4 anatomical spatial features (conf_std and
+                    # detection_count excluded — encode site/scanner, not anatomy)
                     x = self.coords.loc[sub_id, f"{lobe_name}_x"]
                     y = self.coords.loc[sub_id, f"{lobe_name}_y"]
                     z = self.coords.loc[sub_id, f"{lobe_name}_z_depth"]
                     size = self.coords.loc[sub_id, f"{lobe_name}_size"]
-                    conf_std = self.coords.loc[sub_id, f"{lobe_name}_conf_std"]
-                    detection_count = self.coords.loc[sub_id, f"{lobe_name}_detection_count"]
-                    
+
                     # Validate all features are finite
-                    features = [x, y, z, size, conf_std, detection_count]
+                    features = [x, y, z, size]
                     if not all(np.isfinite(features)):
                         logger.warning(
                             f"Subject {sub_id}: Invalid spatial features for {lobe_name}"

@@ -31,6 +31,8 @@ from src.core.config import (
     MASTER_MANIFEST,
     NODE_ATTRIBUTES_HARMONIZED,
     NODE_ATTRIBUTES_TEMPORAL,
+    NODE_FEATURES_3D,
+    NODE_FEATURES_3D_HARMONIZED,
     NUM_LOBES,
     NUM_TEMPORAL_FEATURES,
 )
@@ -520,6 +522,142 @@ def harmonize_cv_safe_fold(
     return harmonized_folds
 
 
+# ── 6. Spatial feature harmonization (conf_std / detection_count) ────────────
+
+# These two features encode scanner quality rather than anatomy:
+#   conf_std         — std-dev of YOLO detection confidence across 7 fMRI slices
+#   detection_count  — number of slices where the region was detected
+# Kruskal-Wallis test (March 2026) confirms 14/24 of these columns have
+# highly significant site effects (p<0.001), making them scanner proxies.
+# x, y, z_depth, and size are kept unchanged because they represent physical brain anatomy.
+_SPATIAL_SITE_COLS = (
+    [f"{name}_conf_std" for name in LOBE_NAMES.values()]
+    + [f"{name}_detection_count" for name in LOBE_NAMES.values()]
+)
+
+
+def harmonize_spatial_features(
+    spatial_df: pd.DataFrame,
+    manifest_df: pd.DataFrame,
+    output_path: Path = NODE_FEATURES_3D_HARMONIZED,
+) -> pd.DataFrame:
+    """Fold-safe ComBat harmonization of conf_std + detection_count spatial features.
+
+    Fits on the train split subjects only and applies to val + test, then writes
+    a combined CSV to *output_path*. The x / y / z_depth / size columns are
+    copied through without any modification.
+
+    Args:
+        spatial_df:  Full node_features_3d.csv DataFrame (index NOT set).
+        manifest_df: Master manifest with 'subject_id', 'split', 'SITE_ID',
+                     'AGE_AT_SCAN', 'SEX', 'DX_GROUP' columns.
+        output_path: Where to write the harmonized CSV.
+
+    Returns:
+        The harmonized DataFrame (all subjects, same columns as *spatial_df*).
+    """
+    logger.info("=" * 60)
+    logger.info("SPATIAL FEATURE HARMONIZATION (conf_std / detection_count)")
+    logger.info("=" * 60)
+
+    spatial_df = spatial_df.copy()
+
+    # Identify which site-proxy columns are actually present in this CSV.
+    site_cols = [c for c in _SPATIAL_SITE_COLS if c in spatial_df.columns]
+    if not site_cols:
+        logger.warning("No conf_std / detection_count columns found — skipping spatial harmonization")
+        return spatial_df
+
+    logger.info("  Harmonizing %d site-proxy columns: %s …", len(site_cols), site_cols[:4])
+
+    # Merge with manifest to get SITE_ID / DX_GROUP / split.
+    # Drop any manifest-derived columns already present in spatial_df to avoid _x/_y collisions.
+    _MANIFEST_COLS = ["SITE_ID", "split", "DX_GROUP", "AGE_AT_SCAN", "SEX", "FIQ",
+                      "HANDEDNESS_CATEGORY", "TR", "cv_fold"]
+    spatial_no_site = spatial_df.drop(
+        columns=[c for c in _MANIFEST_COLS if c in spatial_df.columns]
+    )
+    merged = spatial_no_site.merge(
+        manifest_df[["subject_id", "split", "SITE_ID", "AGE_AT_SCAN", "SEX", "DX_GROUP"]],
+        on="subject_id",
+        how="inner",
+    )
+    if merged.empty:
+        logger.error("Spatial + manifest merge produced zero rows — skipping harmonization")
+        return spatial_df
+
+    train_mask = merged["split"] == "train"
+    train_df = merged[train_mask].copy()
+    other_df  = merged[~train_mask].copy()
+
+    # Build neuroHarmonize covariate matrices: SITE, AGE_AT_SCAN, SEX, DX_GROUP.
+    def _build_cov(df: pd.DataFrame) -> pd.DataFrame:
+        cov = df[["SITE_ID", "AGE_AT_SCAN", "SEX", "DX_GROUP"]].copy()
+        cov = cov.rename(columns={"SITE_ID": "SITE"})
+        cov["SITE"] = cov["SITE"].astype(str)
+        cov["AGE_AT_SCAN"] = pd.to_numeric(cov["AGE_AT_SCAN"], errors="coerce").fillna(
+            cov["AGE_AT_SCAN"].median()
+        )
+        cov["SEX"] = pd.to_numeric(cov["SEX"], errors="coerce").fillna(1).astype(int)
+        cov["DX_GROUP"] = pd.to_numeric(cov["DX_GROUP"], errors="coerce").fillna(1).astype(int)
+        return cov
+
+    train_cov = _build_cov(train_df)
+    other_cov = _build_cov(other_df)
+
+    train_feats = train_df[site_cols].fillna(0.0)
+    other_feats = other_df[site_cols].fillna(0.0) if not other_df.empty else None
+
+    # Drop constant columns (ComBat fails on zero-variance features).
+    var = train_feats.var()
+    constant = var[var == 0].index.tolist()
+    active_cols = [c for c in site_cols if c not in constant]
+    if constant:
+        logger.info("  Dropping %d constant spatial columns before ComBat", len(constant))
+
+    if not active_cols:
+        logger.warning("All spatial site-proxy columns are constant — skipping harmonization")
+        return spatial_df
+
+    try:
+        model, train_harm = harmonizationLearn(train_feats[active_cols].values, train_cov)
+        train_df = train_df.copy()
+        train_df[active_cols] = train_harm
+
+        if other_feats is not None and not other_df.empty:
+            other_harm = harmonizationApply(other_feats[active_cols].values, other_cov, model)
+            other_df = other_df.copy()
+            other_df[active_cols] = other_harm
+
+        logger.info("  ComBat harmonization successful for %d subjects", len(merged))
+    except Exception as exc:
+        logger.error("  Spatial harmonization failed (%s) — writing raw features unchanged", exc)
+        return spatial_df
+
+    # Reassemble: harmonized train + other rows, then re-merge with original
+    # non-site-proxy columns (x, y, z_depth, size, spatial_complete, etc.).
+    harm_parts = [train_df[["subject_id"] + active_cols]]
+    if not other_df.empty:
+        harm_parts.append(other_df[["subject_id"] + active_cols])
+    harm_site_cols = pd.concat(harm_parts, ignore_index=True)
+
+    result = spatial_df.drop(columns=active_cols).merge(harm_site_cols, on="subject_id", how="left")
+    # Subjects not in manifest keep original values.
+    for col in active_cols:
+        mask = result[col].isna()
+        if mask.any():
+            result.loc[mask, col] = spatial_df.loc[spatial_df["subject_id"].isin(result.loc[mask, "subject_id"]), col].values
+
+    # Restore original column order.
+    result = result[[c for c in spatial_df.columns if c in result.columns]]
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    result.to_csv(output_path, index=False)
+    logger.info("  Saved harmonized spatial features → %s", output_path)
+
+    return result
+
+
 def main():
     """Main execution function."""
     if not NODE_ATTRIBUTES_TEMPORAL.exists():
@@ -548,6 +686,13 @@ def main():
         sys.exit(1)
     
     _check_harmonization_quality(features, harmonized_folds)
+
+    # Stage 12b — harmonize spatial site-proxy features (conf_std / detection_count)
+    if NODE_FEATURES_3D.exists():
+        spatial_df = pd.read_csv(NODE_FEATURES_3D)
+        harmonize_spatial_features(spatial_df, manifest, output_path=NODE_FEATURES_3D_HARMONIZED)
+    else:
+        logger.warning("Spatial features not found (%s) — skipping spatial harmonization", NODE_FEATURES_3D)
 
 
 if __name__ == "__main__":
