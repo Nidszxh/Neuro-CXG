@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-from torch_geometric.loader import DataLoader
 
 # Setup logging early for import-time warnings
 logging.basicConfig(
@@ -41,6 +40,7 @@ from src.core.config import (
 )
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
+from src.models.training_utils import make_loader
 
 # Import analysis modules
 try:
@@ -272,7 +272,7 @@ def generate_simple_feature_importance(output_dir: Path):
 
     try:
         test_dataset = ABIDECausalDataset(split="test")
-        test_loader = DataLoader([d for d in test_dataset if d is not None], batch_size=32)
+        test_loader = make_loader([d for d in test_dataset if d is not None], batch_size=32)
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = CausalBrainGNN(
@@ -396,7 +396,7 @@ def run_visualization_pipeline(output_dir: Path):
             model.eval()
 
             test_dataset = ABIDECausalDataset(split="test")
-            test_loader = DataLoader([d for d in test_dataset if d is not None], batch_size=32)
+            test_loader = make_loader([d for d in test_dataset if d is not None], batch_size=32)
 
             feature_names = create_feature_names()
 

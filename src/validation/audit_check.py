@@ -1,12 +1,8 @@
-"""
-Post-Fix Validation Script for Neuro-CXG Pipeline
-===================================================
-Validates that all critical fixes have been applied correctly:
-- Exactly 1,000 subjects in all feature files
-- 0 subjects with fewer than 12 detected lobes
-- No NaN/Inf in harmonized features
-- Correct feature dimensions
-- Valid causal graphs
+"""Post-fix validation script for Neuro-CXG pipeline.
+
+This audit is configuration-driven and computes expected dimensions from
+`src.core.config` to stay consistent with runtime feature registry changes
+(for example, excluding Nyquist-unsafe frequency bands).
 
 Usage:
     python src/validation/audit_check.py
@@ -24,11 +20,14 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     CAUSAL_GRAPHS_DIR,
+    GNN_IN_CHANNELS,
     MASTER_MANIFEST,
     NODE_ATTRIBUTES_HARMONIZED,
     NODE_ATTRIBUTES_TEMPORAL,
     NODE_FEATURES_3D,
     NUM_LOBES,
+    NUM_TEMPORAL_FEATURES,
+    SPATIAL_MIN_REQUIRED_REGIONS,
 )
 from src.features.graph_factory import ABIDECausalDataset
 
@@ -166,7 +165,11 @@ class AuditCheck:
             self.check("Master manifest exists", False, "File not found")
 
     def _check_yolo_completeness(self):
-        """Verify all subjects have all 12 lobes detected."""
+        """Assess YOLO regional coverage quality.
+
+        Strict 12/12 completeness is treated as informational here because
+        downstream filtering removes invalid subjects before training.
+        """
         if not NODE_FEATURES_3D.exists():
             self.check("Spatial features available", False, "File not found")
             return
@@ -184,13 +187,22 @@ class AuditCheck:
             )
             return
 
-        # Check no zeros in detection counts (all regions detected for all subjects)
+        # Strict 12/12 completeness (informational warning)
         subjects_with_missing = (df[count_cols] == 0).any(axis=1).sum()
 
-        self.check(
+        self.check_warn(
             "All subjects have all 12 regions detected",
             subjects_with_missing == 0,
             f"{subjects_with_missing} subjects have at least one missing region" if subjects_with_missing > 0 else ""
+        )
+
+        # Config-aligned minimum required regions.
+        regions_present = (df[count_cols] > 0).sum(axis=1)
+        below_min_required = int((regions_present < SPATIAL_MIN_REQUIRED_REGIONS).sum())
+        self.check(
+            f"Subjects meet min detected regions (>= {SPATIAL_MIN_REQUIRED_REGIONS})",
+            below_min_required == 0,
+            f"{below_min_required} subjects below minimum required region count"
         )
 
     def _check_harmonized_integrity(self):
@@ -222,10 +234,10 @@ class AuditCheck:
 
     def _check_feature_dimensions(self):
         """Validate feature matrix dimensions."""
-        # Temporal: (N, 3401) = N × (170 ROIs × 20 features + subject_id)
+        # Temporal: (N, 170 * NUM_TEMPORAL_FEATURES + 1)
         if NODE_ATTRIBUTES_TEMPORAL.exists():
             temporal_df = pd.read_csv(NODE_ATTRIBUTES_TEMPORAL)
-            expected_temporal_cols = 170 * 20 + 1  # +1 for subject_id
+            expected_temporal_cols = 170 * NUM_TEMPORAL_FEATURES + 1  # +1 for subject_id
             actual_temporal_cols = len(temporal_df.columns)
             self.check(
                 f"Temporal features shape: ({len(temporal_df)}, {actual_temporal_cols})",
@@ -233,10 +245,10 @@ class AuditCheck:
                 f"Expected {expected_temporal_cols} columns, got {actual_temporal_cols}"
             )
 
-        # Harmonized: (N, 241) = N × (12 regions × 20 features + subject_id)
+        # Harmonized: (N, NUM_LOBES * NUM_TEMPORAL_FEATURES + 1)
         if NODE_ATTRIBUTES_HARMONIZED.exists():
             harmonized_df = pd.read_csv(NODE_ATTRIBUTES_HARMONIZED)
-            expected_harmonized_cols = 12 * 20 + 1  # +1 for subject_id
+            expected_harmonized_cols = NUM_LOBES * NUM_TEMPORAL_FEATURES + 1  # +1 for subject_id
             actual_harmonized_cols = len(harmonized_df.columns)
             self.check(
                 f"Harmonized features shape: ({len(harmonized_df)}, {actual_harmonized_cols})",
@@ -348,10 +360,11 @@ class AuditCheck:
                 if graph is None:
                     continue
                 checked += 1
-                if graph.x.shape != (12, 28):
+                expected_x_shape = (NUM_LOBES, GNN_IN_CHANNELS)
+                if graph.x.shape != expected_x_shape:
                     all_ok = False
                     self.check(
-                        f"Graph {idx}: x.shape == (12, 28)",
+                        f"Graph {idx}: x.shape == {expected_x_shape}",
                         False,
                         f"Got {graph.x.shape}"
                     )

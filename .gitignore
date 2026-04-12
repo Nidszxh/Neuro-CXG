@@ -80,6 +80,7 @@ Thumbs.db
 # --- Logs & Performance ---
 logs/
 *.log
+*.pkl
 
 # --- Scripts & Tools ---
 # Keeping the clean script, but ignoring generated tree logs
