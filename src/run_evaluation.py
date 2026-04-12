@@ -62,6 +62,7 @@ from sklearn.metrics import (
     precision_recall_curve,
 )
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
@@ -92,6 +93,7 @@ from src.core.config import (
 )
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
+from src.models.training_utils import make_loader
 
 logging.basicConfig(
     level=logging.INFO,
@@ -145,7 +147,7 @@ def _load_model(fold_id: int) -> CausalBrainGNN:
 
 
 def _build_loader(graphs: List, batch_size: int = GNN_BATCH_SIZE) -> DataLoader:
-    return DataLoader(graphs, batch_size=batch_size, shuffle=False)
+    return make_loader(graphs, batch_size=batch_size, shuffle=False)
 
 
 @torch.no_grad()
@@ -208,6 +210,67 @@ def _youden_threshold(probs: np.ndarray, labels: np.ndarray) -> float:
     j = tpr - fpr
     best = int(np.argmax(j))
     return float(thresholds[best]) if len(thresholds) > 0 else 0.5
+
+
+def _site_ids_from_graphs(graphs: List) -> np.ndarray:
+    """Extract integer site_id vector aligned to the provided graph order."""
+    return np.array([
+        int(g.site_id.item())
+        if hasattr(g, "site_id") and g.site_id is not None and g.site_id.numel() > 0
+        else -1
+        for g in graphs
+    ])
+
+
+def _fit_per_site_calibrators(
+    probs: np.ndarray,
+    labels: np.ndarray,
+    site_ids: np.ndarray,
+    min_samples: int = 10,
+) -> Dict[int, LogisticRegression]:
+    """Fit one-dimensional Platt calibrators per site using held-out val data."""
+    calibrators: Dict[int, LogisticRegression] = {}
+    for site in np.unique(site_ids):
+        if site < 0:
+            continue
+        mask = site_ids == site
+        if mask.sum() < min_samples:
+            continue
+        if np.unique(labels[mask]).size < 2:
+            continue
+
+        lr = LogisticRegression(C=1.0, solver="lbfgs")
+        lr.fit(probs[mask].reshape(-1, 1), labels[mask])
+        calibrators[int(site)] = lr
+    return calibrators
+
+
+def _apply_per_site_calibration(
+    probs: np.ndarray,
+    site_ids: np.ndarray,
+    calibrators: Dict[int, LogisticRegression],
+) -> np.ndarray:
+    """Apply per-site logistic calibration when a calibrator exists for that site."""
+    calibrated = probs.copy()
+    for site, calibrator in calibrators.items():
+        mask = site_ids == site
+        if not np.any(mask):
+            continue
+        calibrated[mask] = calibrator.predict_proba(probs[mask].reshape(-1, 1))[:, 1]
+    return calibrated
+
+
+def _load_last_fold_val_graphs() -> List:
+    """Use the last fold validation partition from train split as calibration set."""
+    train_dataset = ABIDECausalDataset(split="train")
+    train_dataset.augment_graphs = False
+    if "cv_fold" not in train_dataset.manifest.columns:
+        logger.warning("Manifest has no cv_fold column; skipping per-site calibration")
+        return []
+
+    fold_id = K_FOLDS - 1
+    val_indices = np.where(train_dataset.manifest["cv_fold"].values == fold_id)[0]
+    return [train_dataset[i] for i in val_indices if train_dataset[i] is not None]
 
 
 def _bootstrap_ci(
@@ -278,14 +341,30 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
     logger.info("=" * 60)
 
     loader = _build_loader(test_graphs)
-    fold_probs, fold_aucs, fold_thresholds = [], [], []
+    calibration_graphs = _load_last_fold_val_graphs()
+    calibration_loader = _build_loader(calibration_graphs) if calibration_graphs else None
 
+    fold_ids = []
+    fold_probs = []
+    fold_cal_probs = []
+    fold_aucs = []
+    fold_thresholds = []
+    labels = None
+    cal_labels = None
+    loaded_models = {}
+    cached_test_preds: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
+
+    active_dir = get_active_checkpoint_dir()
     for fold_id in range(K_FOLDS):
         try:
             model = _load_model(fold_id)
-            probs, labels = _predict_probs(model, loader)
-            # Use checkpoint val-AUC for weighting to avoid circular test-set evaluation
-            active_dir = get_active_checkpoint_dir()
+            loaded_models[fold_id] = model
+
+            probs, fold_labels = _predict_probs(model, loader)
+            cached_test_preds[fold_id] = (probs, fold_labels)
+            if labels is None:
+                labels = fold_labels
+
             ckpt = torch.load(
                 active_dir / f"best_model_fold{fold_id}.pt",
                 map_location="cpu",
@@ -299,24 +378,67 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
                     fold_id,
                 )
             fold_threshold = float(ckpt.get("threshold", 0.5))
+
+            fold_ids.append(fold_id)
             fold_probs.append(probs)
             fold_aucs.append(fold_auc)
             fold_thresholds.append(fold_threshold)
-            logger.info("  Fold %d  val-AUC=%.4f  threshold=%.4f  (n=%d)", fold_id, fold_auc, fold_threshold, len(labels))
-            del model
+
+            if calibration_loader is not None:
+                c_probs, c_labels = _predict_probs(model, calibration_loader)
+                fold_cal_probs.append(c_probs)
+                if cal_labels is None:
+                    cal_labels = c_labels
+
+            logger.info(
+                "  Fold %d  val-AUC=%.4f  threshold=%.4f  (n=%d)",
+                fold_id,
+                fold_auc,
+                fold_threshold,
+                len(fold_labels),
+            )
         except FileNotFoundError as e:
             logger.warning("  Skipped: %s", e)
 
-    if not fold_probs:
+    if not fold_probs or labels is None:
         raise RuntimeError("No fold checkpoints found — run training first.")
 
     # AUC-weighted average
-    weights   = np.array(fold_aucs) / sum(fold_aucs)
-    ens_probs = np.average(np.stack(fold_probs, axis=0), axis=0, weights=weights)
-    # Use mean of val-fold thresholds — avoids looking at test labels to pick threshold
+    weight_arr = np.array(fold_aucs, dtype=float)
+    if weight_arr.sum() <= 0:
+        weight_arr = np.ones_like(weight_arr)
+    weights = weight_arr / weight_arr.sum()
+    ens_probs_raw = np.average(np.stack(fold_probs, axis=0), axis=0, weights=weights)
+
+    # Use mean of val-fold thresholds by default.
     threshold = float(np.mean(fold_thresholds))
-    metrics   = _full_metrics(ens_probs, labels, threshold=threshold)
-    ci        = _bootstrap_ci(ens_probs, labels, threshold=threshold)
+    ens_probs = ens_probs_raw
+
+    # Per-site calibration from held-out val fold (never touches test labels).
+    calibration_applied = False
+    calibrators: Dict[int, LogisticRegression] = {}
+    if calibration_graphs and fold_cal_probs and cal_labels is not None:
+        cal_site_ids = _site_ids_from_graphs(calibration_graphs)
+        ens_cal_probs_raw = np.average(np.stack(fold_cal_probs, axis=0), axis=0, weights=weights)
+        calibrators = _fit_per_site_calibrators(ens_cal_probs_raw, cal_labels, cal_site_ids)
+
+        if calibrators:
+            ens_cal_probs = _apply_per_site_calibration(ens_cal_probs_raw, cal_site_ids, calibrators)
+            threshold = _optimal_threshold(ens_cal_probs, cal_labels)
+            test_site_ids = _site_ids_from_graphs(test_graphs)
+            ens_probs = _apply_per_site_calibration(ens_probs_raw, test_site_ids, calibrators)
+            calibration_applied = True
+            logger.info(
+                "  Per-site Platt calibration applied for %d sites (threshold=%.4f)",
+                len(calibrators),
+                threshold,
+            )
+        else:
+            logger.info("  Per-site calibration skipped: insufficient per-site calibration data")
+
+    metrics = _full_metrics(ens_probs, labels, threshold=threshold)
+    metrics["threshold"] = threshold
+    ci = _bootstrap_ci(ens_probs, labels, threshold=threshold)
 
     # Also compute Youden's J threshold (maximises sensitivity + specificity)
     # to give a more balanced operating point than the F1-trained threshold.
@@ -328,18 +450,13 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
         youden_metrics["f1"],
     )
 
-    # Per-fold results table
+    # Per-fold results table using cached predictions
     per_fold = []
-    loader2  = _build_loader(test_graphs)
-    for fold_id in range(K_FOLDS):
-        try:
-            model = _load_model(fold_id)
-            p, l  = _predict_probs(model, loader2)
-            m     = _full_metrics(p, l)
-            per_fold.append({"fold": fold_id, **m})
-            del model
-        except FileNotFoundError:
-            pass
+    for idx, fold_id in enumerate(fold_ids):
+        p, l = cached_test_preds[fold_id]
+        m = _full_metrics(p, l, threshold=fold_thresholds[idx])
+        per_fold.append({"fold": fold_id, **m})
+        del loaded_models[fold_id]
 
     _print_metrics_table(metrics, ci, per_fold)
 
@@ -347,6 +464,10 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
         "ensemble_metrics":  metrics,
         "ensemble_ci_95":    ci,
         "ensemble_threshold": threshold,
+        "per_site_calibration": {
+            "applied": calibration_applied,
+            "num_sites": len(calibrators),
+        },
         "youden_threshold":   youden_thr,
         "youden_metrics":     youden_metrics,
         "fold_aucs":         fold_aucs,

@@ -86,6 +86,7 @@ from src.core.config import (
 )
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
+from src.models.training_utils import make_loader
 
 logging.basicConfig(
     level=logging.INFO,
@@ -135,7 +136,7 @@ def _build_test_loader(batch_size: int = 16) -> DataLoader:
     """Build a DataLoader for the held-out test split."""
     dataset = ABIDECausalDataset(split="test")
     graphs  = [g for g in dataset if g is not None]
-    loader  = DataLoader(graphs, batch_size=batch_size, shuffle=False)
+    loader  = make_loader(graphs, batch_size=batch_size, shuffle=False)
     logger.info("Test loader: %d graphs, batch_size=%d", len(graphs), batch_size)
     return loader
 

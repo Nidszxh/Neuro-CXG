@@ -48,7 +48,6 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn.metrics import roc_auc_score, f1_score, accuracy_score, confusion_matrix
-from torch_geometric.loader import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.core.config import (
@@ -75,6 +74,7 @@ from src.core.config import (
 )
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
+from src.models.training_utils import make_loader
 
 logging.basicConfig(
     level=logging.INFO,
@@ -132,7 +132,7 @@ def _collect_per_subject(
             model = _load_model(fold_id)
         except FileNotFoundError:
             continue
-        loader = DataLoader(graphs, batch_size=1, shuffle=False)
+        loader = make_loader(graphs, batch_size=1, shuffle=False)
         probs  = []
         for batch in loader:
             if batch is None:
@@ -140,7 +140,7 @@ def _collect_per_subject(
             batch = batch.to(DEVICE)
             out   = model(
                 batch.x, batch.edge_index, batch.edge_attr, batch.batch,
-                site_id=None,
+                site_id=getattr(batch, "site_id", None),
                 age=batch.age if hasattr(batch, "age") else None,
                 sex=batch.sex if hasattr(batch, "sex") else None,
                 fiq=batch.fiq if hasattr(batch, "fiq") else None,

@@ -52,6 +52,7 @@ MASTER_MANIFEST = DATA_METADATA  / "master_manifest.csv"
 DEFAULT_TR = 2.0
 NYQUIST_EPS = 1e-6
 UNRELIABLE_FREQ_BANDS_AT_NYQUIST = ("gamma",)
+EXCLUDE_NYQUIST_BANDS = True
 
 # fMRI frequency bands (single source of truth — import in extract_temporal.py)
 # Note: fMRI bands differ from EEG; these are slow hemodynamic oscillations.
@@ -62,6 +63,13 @@ FREQ_BANDS = {
     "alpha": (0.073, 0.15),    # Slow-3 (well below Nyquist)
     "beta":  (0.15,  0.20),    # Upper Slow-3 (safe, ~3x below Nyquist @ 0.25 Hz)
     "gamma": (0.20,  0.25),    # Slow-2/Gamma (AT Nyquist limit — aliasing risk)
+}
+
+# Runtime-effective frequency bands used by feature extraction and feature registry.
+ACTIVE_FREQ_BANDS = {
+    name: bounds
+    for name, bounds in FREQ_BANDS.items()
+    if not (EXCLUDE_NYQUIST_BANDS and name in UNRELIABLE_FREQ_BANDS_AT_NYQUIST)
 }
 
 # Bandpass filter bounds used by NiftiLabelsMasker in abide_download.py.
@@ -137,25 +145,26 @@ LOBE_NAMES = {
     11: 'Brainstem'
 }
 NUM_LOBES = 12  # Updated from 5 to 12 regions
-NUM_FREQUENCY_FEATURES = 12  # 5 bands x 2 features + 2 global
-NUM_TEMPORAL_FEATURES = 20  # 8 basic + 12 frequency
-NUM_SPATIAL_FEATURES = 6   # x, y, z_depth, size per lobe
-                           # metrics that correlate with site, not brain structure —
-                           # RF AUC=1.000 (run 3) confirmed they leak site identity.
 SPATIAL_MIN_REQUIRED_REGIONS = 9  # relaxed gate; final golden filter enforces complete 12-region subjects
 
 # --- FEATURE REGISTRY (The Golden Standard) ---
 # Explicit feature definitions. GNN_IN_CHANNELS is calculated dynamically from this.
+_BASE_TEMPORAL_FEATURES = ["mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr"]
+_RUNTIME_FREQ_FEATURES = [
+    f"{band}_{suffix}"
+    for band in ACTIVE_FREQ_BANDS
+    for suffix in ("power", "peak")
+]
 FEATURE_GROUPS = {
-    'temporal': ["mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr"],
-    'frequency': [
-        "delta_power", "delta_peak", "theta_power", "theta_peak",
-        "alpha_power", "alpha_peak", "beta_power", "beta_peak",
-        "gamma_power", "gamma_peak", "spectral_entropy", "phase_std"
-    ],
+    'temporal': _BASE_TEMPORAL_FEATURES,
+    'frequency': _RUNTIME_FREQ_FEATURES + ["spectral_entropy", "phase_std"],
     'internal': ["coherence", "spatial_variance"],  # NEW: PCA/ReHo features from Phase 2
     'spatial': ["x", "y", "z_depth", "size"]  # conf_std/detection_count excluded (site leakage)
 }
+
+NUM_FREQUENCY_FEATURES = len(FEATURE_GROUPS['frequency'])
+NUM_TEMPORAL_FEATURES = len(FEATURE_GROUPS['temporal']) + NUM_FREQUENCY_FEATURES
+NUM_SPATIAL_FEATURES = len(FEATURE_GROUPS['spatial'])
 
 # ALL_FEATURE_NAMES: Concatenation order used everywhere (temporal + frequency + internal + spatial)
 ALL_FEATURE_NAMES = (
@@ -286,11 +295,14 @@ GNN_USE_GRL = False             # Disabled — GRL at any alpha degrades folds 2
                                 # Hypothesis disproved: site confound is a data/harmonisation issue, not fixable by adversarial training
 GNN_GRL_ALPHA = 0.0             # GRL strength — 0 when disabled
 GNN_GRL_ALPHA_MAX = 0.3         # Retained for reference (tested: 0.3 still collapsed 2 folds)
+GRL_ALPHA_CANDIDATES = [0.05, 0.10, 0.20]  # Grid-search range for low-strength GRL
+GNN_AUTO_GRL_GRID_SEARCH = False  # Keep False for canonical training; enable only for explicit experiments
 GNN_SITE_LOSS_WEIGHT = 0.0      # Site loss weight — 0 when GRL is disabled
 GNN_EDGE_GATE = True            # Soft gate edge_attr before message passing
 GNN_ONECYCLE_MAX_LR = 0.002     # Reduced from 0.003 — less aggressive LR spike (was 25x initial, now ~16x)
 # GNN_ONECYCLE_PATIENCE = 20    # DEPRECATED — consolidated into GNN_EARLY_STOPPING_PATIENCE above
 GNN_ONECYCLE_PCT_START = 0.2    # Warmup fraction (20 epochs for 100 total) — gentler ramp, peak at epoch 20
+GNN_ONECYCLE_WARMUP_FRACTION = 0.15  # Explicit warmup fraction used by gnn_model training wrapper
 
 # --- HARDWARE ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

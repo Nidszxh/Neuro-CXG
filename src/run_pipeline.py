@@ -30,9 +30,21 @@ Main Training (Phase 3):
 
 Post-Training Analysis (Phases 8 & 9):
  18. Visualizations - Comprehensive plots and figures
- 19. Evaluation - Bootstrap CI, permutation test, subgroups
- 20. Explainability - Node/edge importance, feature attribution
- 21. Result Analysis - Per-subject predictions, misclassification
+ 19. Causal Graph Visualization - Render representative directed graphs
+ 20. Evaluation - Bootstrap CI, permutation test, subgroups
+ 21. Explainability - Node/edge importance, feature attribution
+ 22. Result Analysis - Per-subject predictions, misclassification
+ 23. Subject Analysis - Per-subject artifact integrity diagnostics
+
+Diagnostics Snapshot:
+ 24. Dead-Lobe Diagnosis - Quick lobe-signal sanity check on one subject
+
+Optional Extended Stages:
+ 25. Post-Fix Audit Check - Strict artifact validation
+ 26. Dev Audit - Static consistency checks
+ 27. Feature Diagnostics - Feature/group and graph edge diagnostics
+ 28. Data Quality Experiments - Site generalization and bottleneck analysis
+ 29. Ablation Studies - Controlled model ablations (A-E)
 
 Usage:
   # Interactive mode (default)
@@ -62,6 +74,7 @@ import subprocess
 import sys
 import shutil
 from pathlib import Path
+from typing import List, Set
 
 # Setup Pathing
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -71,6 +84,7 @@ from src.core.config import (
     PROJECT_ROOT,
     DATA_ROOT,
     DATA_PROCESSED,
+    DATA_TIME_SERIES,
     DATA_METADATA,
     MODEL_ROOT,
     FINAL_TRAIN,
@@ -99,6 +113,16 @@ ATLAS_DIR             = PROJECT_ROOT  / "data" / "atlases"
 # Baseline checkpoints shipped with the repo; new training saves to CHECKPOINT_DIR
 BASELINE_CHECKPOINT_DIR = MODEL_ROOT / "checkpoints_baseline"
 
+# Runnable modules that intentionally remain standalone debug/self-test tools and
+# are not part of the default orchestration chain.
+EXEMPT_ENTRYPOINT_MODULES: Set[str] = {
+    "src.run_pipeline",
+    "src.core.config",
+    "src.features.graph_factory",
+    "src.features.causal_inference",
+    "src.analysis.feature_attribution",
+}
+
 
 def _checkpoints_available() -> bool:
     """Return True when fold checkpoint files exist in CHECKPOINT_DIR or BASELINE_CHECKPOINT_DIR.
@@ -111,6 +135,89 @@ def _checkpoints_available() -> bool:
         if ckpt_dir.exists() and any(ckpt_dir.glob("best_model_fold*.pt")):
             return True
     return False
+
+
+def _graph_files_available() -> bool:
+    """Return True when at least one causal graph file exists."""
+    return CAUSAL_GRAPHS_DIR.exists() and any(CAUSAL_GRAPHS_DIR.glob("*_graph.pt"))
+
+
+def _timeseries_available() -> bool:
+    """Return True when split time-series files are available."""
+    for split_dir in (FINAL_TRAIN, FINAL_VAL, FINAL_TEST):
+        ts_dir = split_dir / "time_series"
+        if ts_dir.exists() and any(ts_dir.glob("*_ts.npy")):
+            return True
+    return False
+
+
+def _source_timeseries_dir() -> Path | None:
+    """Return the best source time-series directory before split.
+
+    Supports canonical and legacy layouts:
+    - data/processed/time_series (preferred)
+    - data/timeseries (legacy)
+    - data/processed (legacy flat fallback)
+    """
+    candidates = [
+        DATA_TIME_SERIES,
+        DATA_ROOT / "timeseries",
+        DATA_PROCESSED,
+    ]
+
+    best_dir = None
+    best_count = 0
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        count = len(list(candidate.glob("*_ts.npy")))
+        if count > best_count:
+            best_dir = candidate
+            best_count = count
+    return best_dir
+
+
+def _file_has_rows(path: Path, pattern: str) -> bool:
+    """Return True when path exists and has at least one matching file."""
+    return path.exists() and any(path.glob(pattern))
+
+
+def _discover_runnable_src_modules() -> List[str]:
+    """Return src modules that expose a __main__ entrypoint."""
+    modules: List[str] = []
+    src_root = PROJECT_ROOT / "src"
+    for py_file in sorted(src_root.rglob("*.py")):
+        if "__pycache__" in str(py_file):
+            continue
+        try:
+            content = py_file.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        if "__main__" not in content:
+            continue
+        rel = py_file.relative_to(PROJECT_ROOT).with_suffix("")
+        modules.append(".".join(rel.parts))
+    return modules
+
+
+def _check_stage_coverage(staged_modules: Set[str], strict: bool = False) -> None:
+    """Log uncovered runnable modules; fail in strict mode."""
+    discovered = _discover_runnable_src_modules()
+    uncovered = sorted(
+        m for m in discovered
+        if m not in staged_modules and m not in EXEMPT_ENTRYPOINT_MODULES
+    )
+    if not uncovered:
+        logger.info("✓ Stage coverage check: all runnable src modules are orchestrated")
+        return
+
+    logger.warning("Found %d runnable src module(s) not mapped to pipeline stages:", len(uncovered))
+    for mod in uncovered:
+        logger.warning("  - %s", mod)
+
+    if strict:
+        logger.error("Strict stage coverage failed. Add stages or exempt modules before continuing.")
+        sys.exit(1)
 
 
 def prompt_user(message, default=True):
@@ -194,6 +301,20 @@ def check_download_status():
         logger.info("Download status: split data present — treating download as complete.")
         return True
 
+    # Second fast-path: pre-split source pools exist (legacy/canonical layouts).
+    source_images = DATA_ROOT / "images"
+    source_ts_dir = _source_timeseries_dir()
+    if (
+        source_ts_dir is not None
+        and source_images.exists()
+        and any(source_images.glob("*.png"))
+    ):
+        logger.info(
+            "Download status: source pools present (images + time series in %s) — treating download as complete.",
+            source_ts_dir,
+        )
+        return True
+
     if not DOWNLOAD_LOG.exists():
         logger.warning("Download log not found and no split data detected. Data may not be downloaded.")
         return False
@@ -252,13 +373,15 @@ def check_split_status():
 
     source_images_dir = DATA_ROOT / "images"
     remaining_source_images = len(list(source_images_dir.glob("*.png"))) if source_images_dir.exists() else 0
-    remaining_source_ts = len(list(DATA_PROCESSED.glob("*_ts.npy"))) if DATA_PROCESSED.exists() else 0
+    source_ts_dir = _source_timeseries_dir()
+    remaining_source_ts = len(list(source_ts_dir.glob("*_ts.npy"))) if source_ts_dir else 0
 
     if remaining_source_images > 0 or remaining_source_ts > 0:
         logger.warning(
-            "Detected unsplit source data (images=%d, ts=%d). Stage 2 will run.",
+            "Detected unsplit source data (images=%d, ts=%d from %s). Stage 2 will run.",
             remaining_source_images,
             remaining_source_ts,
+            source_ts_dir if source_ts_dir else "none",
         )
         return False
     
@@ -331,6 +454,8 @@ Examples:
                         help="Skip atlas-based annotation (use existing labels)")
     parser.add_argument("--skip-yolo", action="store_true",
                         help="Skip YOLO training (use existing weights)")    
+    parser.add_argument("--use-atlas-spatial", action="store_true",
+                        help="Use atlas centroid spatial features instead of YOLO-derived spatial features")
     parser.add_argument("--skip-gnn", action="store_true",
                         help="Skip GNN training")
     parser.add_argument("--skip-integrity", action="store_true",
@@ -343,12 +468,30 @@ Examples:
     # Post-training analysis flags
     parser.add_argument("--skip-visualizations", action="store_true",
                         help="Skip generating visualizations after training")
+    parser.add_argument("--skip-graph-visualization", action="store_true",
+                        help="Skip causal graph visualization stage")
     parser.add_argument("--skip-evaluation", action="store_true",
                         help="Skip comprehensive evaluation (bootstrap CI, permutation test, subgroups)")
     parser.add_argument("--skip-explainability", action="store_true",
                         help="Skip explainability analysis (node/edge importance, feature attribution)")
     parser.add_argument("--skip-result-analysis", action="store_true",
                         help="Skip result analysis (per-subject predictions, misclassification analysis)")
+    parser.add_argument("--skip-subject-analysis", action="store_true",
+                        help="Skip per-subject artifact integrity analysis")
+    parser.add_argument("--skip-dead-lobe-diagnosis", action="store_true",
+                        help="Skip dead-lobe diagnostic snapshot")
+    parser.add_argument("--skip-audit-check", action="store_true",
+                        help="Skip strict post-fix audit check stage")
+    parser.add_argument("--skip-dev-audit", action="store_true",
+                        help="Skip developer static audit stage")
+    parser.add_argument("--skip-feature-diagnostics", action="store_true",
+                        help="Skip deep feature diagnostics stage")
+    parser.add_argument("--skip-data-quality", action="store_true",
+                        help="Skip data quality experiment stage")
+    parser.add_argument("--skip-ablations", action="store_true",
+                        help="Skip ablation study stage")
+    parser.add_argument("--full-src", action="store_true",
+                        help="Run all optional extended stages (audit + diagnostics + experiments)")
     parser.add_argument("--visualizations-only", action="store_true",
                         help="Only run visualizations (skip all other stages)")
     parser.add_argument("--analysis-only", action="store_true",
@@ -368,6 +511,13 @@ Examples:
                         help="Wipe all intermediate CSVs and Graphs")
     
     args = parser.parse_args()
+
+    if args.full_src:
+        args.skip_audit_check = False
+        args.skip_dev_audit = False
+        args.skip_feature_diagnostics = False
+        args.skip_data_quality = False
+        args.skip_ablations = False
     
     # Override interactive mode if --auto is set
     interactive = args.interactive and not args.auto
@@ -400,12 +550,42 @@ Examples:
     yolo_weights = YOLO_WEIGHTS_PATH
     data_downloaded = check_download_status() if not args.skip_download else True
     data_split = check_split_status() if not args.skip_split else True
+    existing_labels = _file_has_rows(FINAL_TRAIN / "labels", "*.txt")
+    existing_spatial = NODE_FEATURES_3D.exists()
+    existing_temporal = NODE_ATTRIBUTES_TEMPORAL.exists()
+    existing_harmonized = NODE_ATTRIBUTES_HARMONIZED.exists()
+    existing_graphs = _graph_files_available()
+    existing_timeseries = _timeseries_available()
+    existing_checkpoints = _checkpoints_available()
+
+    # Compute readiness and planned outputs once so downstream stages can run in the
+    # same invocation even when their artifacts are produced earlier in this run.
+    download_will_run = not args.skip_download and not data_downloaded
+    split_will_run = not args.skip_split and (not data_split or args.force_reset)
+    labels_will_run = not args.skip_annotate and (args.force_reset or not existing_labels)
+    yolo_will_run = (not yolo_weights.exists() or args.force_reset) and not args.skip_yolo and not args.use_atlas_spatial
+    spatial_will_run = not existing_spatial or args.force_reset or args.regenerate_features
+    temporal_will_run = not existing_temporal or args.force_reset or args.regenerate_features
+    harmonization_will_run = not existing_harmonized or args.force_reset or args.regenerate_features
+    graphs_will_run = not existing_graphs or args.force_reset or args.regenerate_features
+    gnn_training_will_run = not args.skip_gnn and not args.visualizations_only and not args.analysis_only
+
+    download_ready_or_planned = data_downloaded or download_will_run
+    split_ready_or_planned = data_split or split_will_run
+    labels_ready_or_planned = existing_labels or labels_will_run
+    yolo_ready_or_planned = yolo_weights.exists() or yolo_will_run or args.use_atlas_spatial
+    spatial_ready_or_planned = existing_spatial or spatial_will_run
+    temporal_ready_or_planned = existing_temporal or temporal_will_run
+    timeseries_ready_or_planned = existing_timeseries or split_will_run
+    graphs_ready_or_planned = existing_graphs or graphs_will_run
+    harmonized_ready_or_planned = existing_harmonized or harmonization_will_run
+    checkpoints_ready_or_planned = existing_checkpoints or gnn_training_will_run
     
     # Build stages dictionary for better maintainability
     stages = {
         "download": {
             "name": "ABIDE Download",
-            "should_run": not args.skip_download and not data_downloaded,
+            "should_run": download_will_run,
             "reason": "Download ABIDE fMRI data + 7-slice ALFF export (Stage 1)",
             "module": "src.data.abide_download",
             "function": None
@@ -414,7 +594,7 @@ Examples:
             "name": "Train/Val/Test Split (2D Stratified)",
             # Also run when --force-reset is used: wipes intermediate state so cv_fold
             # must be regenerated by split.py to guarantee clean fold assignments.
-            "should_run": not args.skip_split and (not data_split or args.force_reset),
+            "should_run": split_will_run,
             "reason": "2D stratification by DX_GROUP + SITE_ID (Stage 2)",
             "module": "src.data.split",
             "function": None
@@ -446,7 +626,7 @@ Examples:
         },
         "post_download_integrity": {
             "name": "Post-Download Integrity Check",
-            "should_run": not args.skip_integrity and data_downloaded,
+            "should_run": not args.skip_integrity and download_ready_or_planned,
             "reason": "Validate PNG/NPY files after download (Stage 6)",
             "module": "src.validation.pipeline_checks",
             "function": "check_dataset_integrity"
@@ -455,32 +635,32 @@ Examples:
             "name": "Atlas-Based Label Annotation",
             # Run only when labels are genuinely absent from the train split directory.
             # Checking FINAL_TRAIN/labels prevents redundant re-annotation on every run.
-            "should_run": not args.skip_annotate and (
-                args.force_reset or
-                not (FINAL_TRAIN / "labels").exists() or
-                not any((FINAL_TRAIN / "labels").glob("*.txt"))
-            ),
+            "should_run": labels_will_run and split_ready_or_planned,
             "reason": "Generate YOLO training labels from AAL3 atlas (Stage 7)",
             "module": "src.pipelines.generate_labels",
             "function": None
         },
         "yolo": {
             "name": "YOLO Training (ROI Detection)",
-            "should_run": (not yolo_weights.exists() or args.force_reset) and not args.skip_yolo,
+            "should_run": yolo_will_run and labels_ready_or_planned,
             "reason": "Train YOLO26n for 12-region detection (Stage 8)" if not yolo_weights.exists() else "Force retrain",
             "module": "src.pipelines.roi_detection",
             "function": None
         },
         "spatial_features": {
             "name": "Spatial Feature Extraction (12-region)",
-            "should_run": not NODE_FEATURES_3D.exists() or args.force_reset or args.regenerate_features,
-            "reason": "YOLO inference → 3D spatial coords aggregation (Stage 9)",
-            "module": "src.features.extract_spatial",
+            "should_run": spatial_will_run and split_ready_or_planned and yolo_ready_or_planned,
+            "reason": (
+                "Atlas centroids → 3D spatial coords aggregation (Stage 9)"
+                if args.use_atlas_spatial else
+                "YOLO inference → 3D spatial coords aggregation (Stage 9)"
+            ),
+            "module": "src.features.extract_spatial_atlas" if args.use_atlas_spatial else "src.features.extract_spatial",
             "function": None
         },
         "temporal_features": {
             "name": "Temporal Feature Extraction",
-            "should_run": not NODE_ATTRIBUTES_TEMPORAL.exists() or args.force_reset or args.regenerate_features,
+            "should_run": temporal_will_run and split_ready_or_planned,
             "reason": "20 features per ROI: 8 time-domain + 12 frequency (Stage 11)",
             "module": "src.features.extract_temporal",
             "function": None,
@@ -488,75 +668,142 @@ Examples:
         },
         "harmonization": {
             "name": "Feature Harmonization",
-            "should_run": not NODE_ATTRIBUTES_HARMONIZED.exists() or args.force_reset or args.regenerate_features,
+            "should_run": harmonization_will_run and spatial_ready_or_planned and temporal_ready_or_planned,
             "reason": "Fold-safe neuroHarmonize, protects DX_GROUP (Stage 12)",
             "module": "src.features.fold_safe_harmonization",
             "function": None
         },
         "pre_gnn_integrity": {
             "name": "Pre-GNN Integrity Check",
-            "should_run": not args.skip_integrity,
+            "should_run": not args.skip_integrity and harmonized_ready_or_planned,
             "reason": "Validate dataset completeness per split (Stage 13)",
             "module": "src.validation.pipeline_checks",
             "function": "check_distribution"
         },
         "causal_graphs": {
             "name": "Causal Graph Construction (12×12)",
-            "should_run": (not CAUSAL_GRAPHS_DIR.exists() or 
-                           len(list(CAUSAL_GRAPHS_DIR.glob("*_graph.pt"))) == 0 or 
-                           args.force_reset or 
-                           args.regenerate_features),
+            "should_run": graphs_will_run and harmonized_ready_or_planned,
             "reason": "Granger causality/lagged correlation (Stage 14)",
             "module": "src.features.construct_causal",
             "function": None
         },
+        "dead_lobe_diagnosis": {
+            "name": "Dead-Lobe Diagnosis (Snapshot)",
+            "should_run": not args.skip_dead_lobe_diagnosis and timeseries_ready_or_planned,
+            "reason": "Quick sanity check for lobe aggregation and causality readiness",
+            "module": "src.analysis.diagnose_dead_lobes",
+            "function": None,
+            "args": ["--split", "train"]
+        },
         "diagnostics": {
             "name": "Pipeline Diagnostics",
-            "should_run": not args.skip_diagnostics,
+            "should_run": not args.skip_diagnostics and graphs_ready_or_planned,
             "reason": "Comprehensive health report after graphs built (Stage 15)",
             "module": "src.validation.pipeline_checks",
             "function": "generate_health_report"
         },
         "quality_validation": {
             "name": "Quality Validation (YOLO & Graph Sparsity)",
-            "should_run": not args.skip_comprehensive_validation,
+            "should_run": not args.skip_comprehensive_validation and graphs_ready_or_planned,
             "reason": "YOLO quality, graph sparsity, stratification (Stage 16)",
             "module": "src.validation.pipeline_checks",
             "function": "run_quality_validation"
         },
         "gnn_training": {
             "name": "GNN Training (5-Fold CV)",
-            "should_run": not args.skip_gnn and not args.visualizations_only and not args.analysis_only,
+            "should_run": gnn_training_will_run and graphs_ready_or_planned and harmonized_ready_or_planned,
             "reason": "Main training phase (Phase 3)",
             "module": "src.models.gnn_model",
             "function": None
         },
         "visualizations": {
             "name": "Generate Visualizations",
-            "should_run": not args.skip_visualizations,  # Run by default unless skipped
+            "should_run": not args.skip_visualizations and checkpoints_ready_or_planned,
             "reason": "Generate comprehensive visualizations (Phase 9 Reporting)",
             "module": "src.analysis.visualizations",
             "function": None
         },
+        "graph_visualization": {
+            "name": "Causal Graph Visualization",
+            "should_run": not args.skip_graph_visualization and graphs_ready_or_planned,
+            "reason": "Render directed ASD-vs-Control causal graph comparison",
+            "module": "src.analysis.visualize_causal_graph",
+            "function": None,
+            "args": ["--auto-pair"]
+        },
         "evaluation": {
             "name": "Comprehensive Evaluation",
-            "should_run": not args.skip_evaluation and _checkpoints_available(),
+            "should_run": not args.skip_evaluation and checkpoints_ready_or_planned,
             "reason": "Ensemble evaluation, bootstrap CI, permutation test, subgroups (Phase 9.2)",
             "module": "src.run_evaluation",
             "function": None
         },
         "explainability": {
             "name": "Explainability Analysis",
-            "should_run": not args.skip_explainability and _checkpoints_available(),
+            "should_run": not args.skip_explainability and checkpoints_ready_or_planned,
             "reason": "Node/edge importance, feature attribution, literature validation (Phase 8)",
             "module": "src.run_explainability",
             "function": None
         },
         "result_analysis": {
             "name": "Result Interpretation & Analysis",
-            "should_run": not args.skip_result_analysis and _checkpoints_available(),
+            "should_run": not args.skip_result_analysis and checkpoints_ready_or_planned,
             "reason": "Per-subject predictions, misclassification analysis, site effects (Phase 9.3)",
             "module": "src.run_result_analysis",
+            "function": None
+        },
+        "subject_analysis": {
+            "name": "Subject-Level Analysis",
+            "should_run": (
+                not args.skip_subject_analysis
+                and graphs_ready_or_planned
+                and harmonized_ready_or_planned
+            ),
+            "reason": "Per-subject artifact diagnostics and summary report",
+            "module": "src.analysis.subject_analysis",
+            "function": None
+        },
+        "audit_check": {
+            "name": "Post-Fix Audit Check",
+            "should_run": (
+                not args.skip_audit_check
+                and graphs_ready_or_planned
+                and harmonized_ready_or_planned
+            ),
+            "reason": "Strict post-fix artifact validation",
+            "module": "src.validation.audit_check",
+            "function": None
+        },
+        "dev_audit": {
+            "name": "Developer Code Audit",
+            "should_run": not args.skip_dev_audit,
+            "reason": "Static code audit for consistency and legacy drift",
+            "module": "src.validation.dev_audit",
+            "function": None
+        },
+        "feature_diagnostics": {
+            "name": "Feature Diagnostics",
+            "should_run": not args.skip_feature_diagnostics and graphs_ready_or_planned,
+            "reason": "Deep feature-group and graph edge diagnostics",
+            "module": "src.validation.diagnose_features",
+            "function": None
+        },
+        "data_quality_experiments": {
+            "name": "Data Quality Experiments",
+            "should_run": (
+                not args.skip_data_quality
+                and graphs_ready_or_planned
+                and harmonized_ready_or_planned
+            ),
+            "reason": "Cross-site, bottleneck, and atlas-baseline audits",
+            "module": "src.experiments.data_quality",
+            "function": None
+        },
+        "ablation_studies": {
+            "name": "Ablation Studies",
+            "should_run": not args.skip_ablations and checkpoints_ready_or_planned,
+            "reason": "Controlled ablations (A-E) for signal-source attribution",
+            "module": "src.experiments.run_ablations",
             "function": None
         }
     }
@@ -564,10 +811,28 @@ Examples:
     # Special handling for analysis-only mode
     if args.analysis_only:
         logger.info("📊 Analysis-only mode: Running post-training analysis stages only")
-        analysis_stages = {"visualizations", "evaluation", "explainability", "result_analysis"}
+        analysis_stages = {
+            "visualizations",
+            "graph_visualization",
+            "evaluation",
+            "explainability",
+            "result_analysis",
+            "subject_analysis",
+            "audit_check",
+            "feature_diagnostics",
+            "data_quality_experiments",
+            "ablation_studies",
+        }
         for key in stages.keys():
             if key not in analysis_stages:
                 stages[key]["should_run"] = False
+
+    # Validate that all runnable src entrypoints are either staged or explicitly exempt.
+    # `spatial_features` can route to either YOLO-based or atlas-based extractor,
+    # so mark both modules as covered for strict stage-audit mode.
+    staged_modules = {stage_info["module"] for stage_info in stages.values()}
+    staged_modules.update({"src.features.extract_spatial", "src.features.extract_spatial_atlas"})
+    _check_stage_coverage(staged_modules, strict=args.full_src)
     
     # Special handling for visualizations-only mode
     if args.visualizations_only:
@@ -603,20 +868,29 @@ Examples:
     #  13-16:  pre_gnn_integrity, causal_graphs, diagnostics, quality_validation
     #     17:  gnn_training
     # Post-Training Analysis (Phases 8 & 9):
-    #  17-20:  visualizations, evaluation, explainability, result_analysis
+    #  18-23:  visualizations, graph_visualization, evaluation,
+    #          explainability, result_analysis, subject_analysis
     
     for stage_key in ["download", "split", "manifest", "atlas_validation",
                       "pipeline_validation", "post_download_integrity", "annotate",
                       "yolo", "spatial_features", "temporal_features", "harmonization",
                       "pre_gnn_integrity",      # validate features BEFORE building graphs
                       "causal_graphs",           # build graphs
+                      "dead_lobe_diagnosis",     # quick lobe signal sanity check
                       "diagnostics",             # health report (includes graph status)
                       "quality_validation",      # graph quality checks (needs graphs to exist)
                       "gnn_training",            # main training (Phase 3)
                       "visualizations",          # Phase 9 reporting
+                      "graph_visualization",     # representative directed graph rendering
                       "evaluation",              # Phase 9.2 comprehensive evaluation
                       "explainability",          # Phase 8 explainability analysis
-                      "result_analysis"]:        # Phase 9.3 result interpretation
+                      "result_analysis",         # Phase 9.3 result interpretation
+                      "subject_analysis",        # per-subject artifact diagnostics
+                      "audit_check",             # strict pipeline validation
+                      "dev_audit",               # static source audit
+                      "feature_diagnostics",     # deep feature diagnostics
+                      "data_quality_experiments",# cross-site/bottleneck experiments
+                      "ablation_studies"]:       # ablation suite
         
         if stage_key not in stages:
             continue
@@ -637,12 +911,28 @@ Examples:
             msg = f"🚀 Start {stage['name']}? (Main training phase, ~20-30 min)"
         elif stage_key == "visualizations":
             msg = f"🎨 Generate {stage['name']}? (Creates plots and analysis)"
+        elif stage_key == "graph_visualization":
+            msg = f"🧠 Render {stage['name']}? (ASD-vs-Control directed graph plot)"
         elif stage_key == "evaluation":
             msg = f"📊 Run {stage['name']}? (Bootstrap CI, permutation test, subgroups)"
         elif stage_key == "explainability":
             msg = f"🔬 Run {stage['name']}? (Node/edge importance, feature attribution)"
         elif stage_key == "result_analysis":
             msg = f"📈 Run {stage['name']}? (Per-subject predictions, misclassification)"
+        elif stage_key == "subject_analysis":
+            msg = f"🧾 Run {stage['name']}? (Generates per-subject diagnostics CSV/TXT)"
+        elif stage_key == "audit_check":
+            msg = f"✅ Run {stage['name']}? (Strict artifact validation with pass/fail exit)"
+        elif stage_key == "dev_audit":
+            msg = f"🛠️  Run {stage['name']}? (Static consistency audit over src/)"
+        elif stage_key == "feature_diagnostics":
+            msg = f"🧬 Run {stage['name']}? (Detailed feature and graph diagnostics)"
+        elif stage_key == "data_quality_experiments":
+            msg = f"📉 Run {stage['name']}? (Cross-site and bottleneck experiments)"
+        elif stage_key == "ablation_studies":
+            msg = f"🧪 Run {stage['name']}? (Can be long: trains multiple ablation models)"
+        elif stage_key == "dead_lobe_diagnosis":
+            msg = f"🩺 Run {stage['name']}? (Quick single-subject dead-lobe sanity check)"
         else:
             msg = f"Run {stage['name']}?"
         
@@ -674,11 +964,25 @@ Examples:
         logger.info(f"📁 Explainability: {RESULTS_DIR / 'explainability'}")
     if (RESULTS_DIR / "analysis").exists():
         logger.info(f"📁 Result analysis: {RESULTS_DIR / 'analysis'}")
+    if (RESULTS_DIR / "subject_analysis").exists():
+        logger.info(f"📁 Subject analysis: {RESULTS_DIR / 'subject_analysis'}")
+    if (RESULTS_DIR / "experiments" / "ablations").exists():
+        logger.info(f"📁 Ablation studies: {RESULTS_DIR / 'experiments' / 'ablations'}")
+    if (RESULTS_DIR / "experiments" / "data_quality").exists():
+        logger.info(f"📁 Data quality experiments: {RESULTS_DIR / 'experiments' / 'data_quality'}")
     
     logger.info("="*70)
     logger.info("\n✨ Post-Training Analysis Commands:")
     logger.info("   python src/run_pipeline.py --visualizations-only")
     logger.info("   python src/run_pipeline.py --analysis-only")
+    logger.info("   python -m src.analysis.visualize_causal_graph --auto-pair")
+    logger.info("   python -m src.analysis.subject_analysis")
+    logger.info("   python -m src.analysis.diagnose_dead_lobes --split train")
+    logger.info("   python -m src.validation.audit_check")
+    logger.info("   python -m src.validation.dev_audit --all")
+    logger.info("   python -m src.validation.diagnose_features")
+    logger.info("   python -m src.experiments.data_quality")
+    logger.info("   python -m src.experiments.run_ablations")
     logger.info("   python src/run_evaluation.py")
     logger.info("   python src/run_explainability.py")
     logger.info("   python src/run_result_analysis.py")

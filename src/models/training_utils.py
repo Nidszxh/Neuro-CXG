@@ -11,6 +11,8 @@ These utilities reduce code duplication and improve maintainability
 while keeping PyTorch raw (no pytorch-lightning dependency).
 """
 
+import hashlib
+import time
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -26,9 +28,29 @@ from sklearn.metrics import (
     precision_recall_curve,
     average_precision_score,
 )
+from torch_geometric.loader import DataLoader
 from src.core.config import GNN_ONECYCLE_PCT_START, GNN_GRL_ALPHA_MAX
 
 logger = logging.getLogger(__name__)
+
+
+def make_loader(
+    dataset,
+    batch_size: int,
+    shuffle: bool = False,
+    num_workers: int = 4,
+) -> DataLoader:
+    """Create a tuned torch_geometric DataLoader for small-graph workloads."""
+    kwargs = {
+        "batch_size": batch_size,
+        "shuffle": shuffle,
+        "num_workers": num_workers,
+        "pin_memory": torch.cuda.is_available(),
+        "persistent_workers": num_workers > 0,
+    }
+    if num_workers > 0:
+        kwargs["prefetch_factor"] = 2
+    return DataLoader(dataset, **kwargs)
 
 
 class EarlyStopping:
@@ -262,6 +284,7 @@ class CheckpointManager:
         self.monitor = monitor
         self.mode = mode
         self.best_score = float('-inf') if mode == 'max' else float('inf')
+        self.run_id = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
     
     def should_save(self, score: float) -> bool:
         """Check if current score is better than best."""
@@ -296,6 +319,8 @@ class CheckpointManager:
             checkpoint = {
                 'model_state': model.state_dict(),
                 'epoch': epoch,
+                'run_id': self.run_id,
+                'timestamp': time.strftime("%Y%m%d_%H%M%S"),
                 **metrics
             }
             if optimizer is not None:
@@ -324,6 +349,21 @@ class CheckpointManager:
             raise FileNotFoundError(f"Checkpoint not found: {filepath}")
         
         checkpoint = torch.load(filepath, weights_only=False)
+
+        saved_auc = checkpoint.get('auc')
+        if saved_auc is None:
+            logger.warning(
+                "Checkpoint %s has no 'auc' metric. Consider retraining to store full metadata.",
+                filename,
+            )
+        elif saved_auc < 0.60:
+            logger.warning(
+                "Loaded checkpoint %s has low AUC=%.4f (<0.60). This may be a collapsed fold; "
+                "canonical run target is ~0.74 CV AUC.",
+                filename,
+                saved_auc,
+            )
+
         if allow_partial:
             model_state = model.state_dict()
             checkpoint_state = checkpoint['model_state']
@@ -540,7 +580,13 @@ def train_fold_with_onecycle(
     weight_decay: float = 0.0,
     gradient_accumulation_steps: int = 2,
     pct_start: float = GNN_ONECYCLE_PCT_START,
+    grl_alpha_max: float = GNN_GRL_ALPHA_MAX,
 ) -> tuple:
+    assert pct_start < (patience / max(epochs, 1)), (
+        f"Warmup ({pct_start * epochs:.0f} epochs) >= patience ({patience}): "
+        "adjust GNN_ONECYCLE_PCT_START / GNN_ONECYCLE_WARMUP_FRACTION"
+    )
+
     model.to(device)
 
     optimizer = torch.optim.AdamW(
@@ -570,9 +616,9 @@ def train_fold_with_onecycle(
 
     for epoch in range(1, epochs + 1):
         # Anneal GRL alpha following Ganin et al. 2016 schedule
-        if hasattr(model, 'set_grl_alpha'):
+        if use_grl and hasattr(model, 'set_grl_alpha'):
             progress = (epoch - 1) / max(epochs - 1, 1)
-            model.set_grl_alpha(progress, alpha_max=GNN_GRL_ALPHA_MAX)
+            model.set_grl_alpha(progress, alpha_max=grl_alpha_max)
 
         loss = train_one_epoch_with_accumulation(
             model,

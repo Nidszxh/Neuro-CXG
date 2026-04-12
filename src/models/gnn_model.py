@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import random
-from torch_geometric.loader import DataLoader
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import (
     roc_auc_score, f1_score, confusion_matrix,
@@ -32,9 +31,12 @@ from src.core.config import (
     GNN_POOLING,
     GNN_USE_GRL,
     GNN_GRL_ALPHA,
+    GNN_AUTO_GRL_GRID_SEARCH,
+    GRL_ALPHA_CANDIDATES,
     GNN_SITE_LOSS_WEIGHT,
     GNN_EDGE_GATE,
     GNN_ONECYCLE_MAX_LR,
+    GNN_ONECYCLE_WARMUP_FRACTION,
     GNN_EARLY_STOPPING_PATIENCE,
     FOCAL_LOSS_ALPHA,
     FOCAL_LOSS_GAMMA,
@@ -49,6 +51,7 @@ from src.core.config import (
 from src.models.training_utils import (
     TrainingTracker, 
     CheckpointManager,
+    make_loader,
     train_fold_with_onecycle
 )
 
@@ -229,7 +232,12 @@ def evaluate(model, loader, threshold=0.5):
     }
 
 
-def evaluate_ensemble(tracker: TrainingTracker, checkpoint_manager: CheckpointManager):
+def evaluate_ensemble(
+    tracker: TrainingTracker,
+    checkpoint_manager: CheckpointManager,
+    use_grl: bool,
+    grl_alpha: float,
+):
     """
     Evaluate ensemble of all fold models on test set.
     
@@ -253,7 +261,7 @@ def evaluate_ensemble(tracker: TrainingTracker, checkpoint_manager: CheckpointMa
             logger.warning("Test set is empty, skipping ensemble evaluation")
             return
         
-        test_loader = DataLoader(test_data, batch_size=GNN_BATCH_SIZE)
+        test_loader = make_loader(test_data, batch_size=GNN_BATCH_SIZE)
         
         # Collect predictions from all folds
         test_fold_probs = []
@@ -273,8 +281,8 @@ def evaluate_ensemble(tracker: TrainingTracker, checkpoint_manager: CheckpointMa
                 num_sites=20,
                 use_site_embedding=GNN_USE_SITE_EMBEDDING,
                 use_demographics=GNN_USE_DEMOGRAPHICS,
-                use_grl=GNN_USE_GRL,
-                grl_alpha=GNN_GRL_ALPHA,
+                use_grl=use_grl,
+                grl_alpha=grl_alpha,
                 edge_gate=GNN_EDGE_GATE,
                 num_nodes=NUM_LOBES,
                 node_emb_dim=GNN_NODE_EMB_DIM,
@@ -363,7 +371,63 @@ def _set_global_seed(seed: int = 42) -> None:
     logger.info("Global seed set to %d (cuDNN deterministic mode enabled)", seed)
 
 
-def run_training():
+def _compute_site_auc_values(
+    probs: np.ndarray,
+    labels: np.ndarray,
+    site_ids: np.ndarray,
+    min_samples: int = 10,
+) -> list:
+    """Compute per-site AUC values for sites with enough examples and both classes."""
+    site_auc_values = []
+    for site in np.unique(site_ids):
+        if site < 0:
+            continue
+        mask = site_ids == site
+        if mask.sum() < min_samples:
+            continue
+        if np.unique(labels[mask]).size < 2:
+            continue
+        site_auc_values.append(float(roc_auc_score(labels[mask], probs[mask])))
+    return site_auc_values
+
+
+def _maybe_compile_model(model: nn.Module) -> nn.Module:
+    """Disable torch.compile for now due to CUDA graph tensor reuse issues.
+    
+    See: https://github.com/pytorch/pytorch/issues/86302
+    Error: "accessing tensor output of CUDAGraphs that has been overwritten by a subsequent run"
+    
+    When torch.compile is used with CUDA graphs in gradient accumulation loops, tensors 
+    created in one forward pass can be overwritten in subsequent passes, causing the 
+    CUDA graph replay to fail. This is a known interaction issue in PyTorch 2.x.
+    
+    Workaround options:
+    1. Disable torch.compile (current approach) - safest, no overhead
+    2. Add torch.compiler.cudagraph_mark_step_begin() before each epoch
+    3. Clone tensors to prevent reuse
+    
+    Re-enable once PyTorch fixes the CUDA graph lifecycle management or 
+    we refactor gradient accumulation to avoid tensor reuse.
+    """
+    # Disabled due to CUDA graph tensor reuse issues
+    # if torch.cuda.is_available() and hasattr(torch, "compile"):
+    #     try:
+    #         compiled_model = torch.compile(model, mode="reduce-overhead")
+    #         logger.info("torch.compile enabled (reduce-overhead mode)")
+    #         return compiled_model
+    #     except Exception as exc:
+    #         logger.warning("torch.compile failed, using eager mode: %s", exc)
+    return model
+
+
+def _run_training_once(
+    *,
+    use_grl: bool,
+    grl_alpha: float,
+    checkpoint_dir: Path,
+    run_name: str,
+    run_post_analysis: bool,
+) -> dict:
     """
     Main training loop with k-fold cross-validation.
     
@@ -395,29 +459,37 @@ def run_training():
     
     if not labels:
         logger.error("No valid training data found!")
-        return
+        return {
+            "run_name": run_name,
+            "grl_alpha": grl_alpha,
+            "mean_auc": 0.0,
+            "site_auc_variance": float("inf"),
+            "site_auc_count": 0,
+        }
     
     # Compute class weights (informational)
     class_weights = compute_class_weights(labels)
     
     # Initialize tracking
     tracker = TrainingTracker(k_folds=K_FOLDS)
-    checkpoint_manager = CheckpointManager(CHECKPOINT_DIR, monitor='auc', mode='max')
+    checkpoint_manager = CheckpointManager(checkpoint_dir, monitor='auc', mode='max')
     
     # Initialize training monitor for analysis
-    analysis_dir = RESULTS_TRAINING_DIR
+    analysis_dir = RESULTS_TRAINING_DIR if run_post_analysis else (RESULTS_TRAINING_DIR / run_name)
+    analysis_dir.mkdir(parents=True, exist_ok=True)
     monitor = TrainingMonitor(analysis_dir, num_folds=K_FOLDS)
     
     # Print configuration
     logger.info(f"\n{'='*70}")
-    logger.info("GNN TRAINING - 5-FOLD CROSS-VALIDATION")
+    logger.info("GNN TRAINING - 5-FOLD CROSS-VALIDATION (%s)", run_name)
     logger.info(f"{'='*70}")
     logger.info(f"Total subjects: {len(labels)}")
     logger.info(f"OneCycle max LR: {GNN_ONECYCLE_MAX_LR}")
     logger.info(f"Hidden channels: {GNN_HIDDEN_CHANNELS}")
-    logger.info(f"Input features: {GNN_IN_CHANNELS} (20 temporal + 6 spatial)")
+    logger.info(f"Input features: {GNN_IN_CHANNELS} (registry count={len(ALL_FEATURE_NAMES)})")
     logger.info(f"Site conditioning: {GNN_USE_SITE_EMBEDDING}")
     logger.info(f"Demographics: {GNN_USE_DEMOGRAPHICS}")
+    logger.info(f"GRL enabled: {use_grl} (alpha_max={grl_alpha:.2f})")
     logger.info(f"Early stopping patience: {GNN_EARLY_STOPPING_PATIENCE}")
     logger.info(f"Focal Loss: α={FOCAL_LOSS_ALPHA}, γ={FOCAL_LOSS_GAMMA}")
     logger.info(f"{'='*70}\n")
@@ -444,6 +516,8 @@ def run_training():
         cv_splits.append((t_idx, v_idx))
         logger.debug(f"Fold {f}: train={len(t_idx)}, val={len(v_idx)}")
             
+    site_auc_values = []
+
     for fold, (train_idx, val_idx) in enumerate(cv_splits):
         logger.info(f"\n{'='*70}")
         logger.info(f"FOLD {fold+1}/{K_FOLDS}")
@@ -458,12 +532,16 @@ def run_training():
         
         train_labels = [d.y.item() for d in train_data]
         val_labels = [d.y.item() for d in val_data]
+        val_site_ids = np.array([
+            int(d.site_id.view(-1)[0].item()) if hasattr(d, 'site_id') and d.site_id is not None else -1
+            for d in val_data
+        ])
         
         logger.info(f"Train: Control={train_labels.count(0)}, ASD={train_labels.count(1)}")
         logger.info(f"Val: Control={val_labels.count(0)}, ASD={val_labels.count(1)}")
         
-        train_loader = DataLoader(train_data, batch_size=GNN_BATCH_SIZE, shuffle=True)
-        val_loader = DataLoader(val_data, batch_size=GNN_BATCH_SIZE)
+        train_loader = make_loader(train_data, batch_size=GNN_BATCH_SIZE, shuffle=True)
+        val_loader = make_loader(val_data, batch_size=GNN_BATCH_SIZE)
         
         # Initialize model
         model = CausalBrainGNN(
@@ -477,12 +555,13 @@ def run_training():
             num_sites=20,
             use_site_embedding=GNN_USE_SITE_EMBEDDING,
             use_demographics=GNN_USE_DEMOGRAPHICS,
-            use_grl=GNN_USE_GRL,
-            grl_alpha=GNN_GRL_ALPHA,
+            use_grl=use_grl,
+            grl_alpha=grl_alpha,
             edge_gate=GNN_EDGE_GATE,
             num_nodes=NUM_LOBES,
             node_emb_dim=GNN_NODE_EMB_DIM,
         ).to(DEVICE)
+        model = _maybe_compile_model(model)
         
         # Loss function
         n_control = max((np.array(train_labels) == 0).sum(), 1)
@@ -500,10 +579,12 @@ def run_training():
             epochs=GNN_EPOCHS,
             max_lr=GNN_ONECYCLE_MAX_LR,
             patience=GNN_EARLY_STOPPING_PATIENCE,
-            use_grl=GNN_USE_GRL,
-            grl_weight=GNN_SITE_LOSS_WEIGHT,
+            use_grl=use_grl,
+            grl_weight=GNN_SITE_LOSS_WEIGHT if use_grl else 0.0,
             fold=fold,
             weight_decay=GNN_WEIGHT_DECAY,
+            pct_start=GNN_ONECYCLE_WARMUP_FRACTION,
+            grl_alpha_max=grl_alpha,
         )
 
         for entry in history:
@@ -546,6 +627,13 @@ def run_training():
         # Final evaluation with best checkpoint
         final_threshold = best_metrics['threshold']
         final_metrics = evaluate(model, val_loader, threshold=final_threshold)
+        site_auc_values.extend(
+            _compute_site_auc_values(
+                final_metrics['probs'],
+                final_metrics['labels'],
+                val_site_ids,
+            )
+        )
         best_epoch = best_metrics['best_epoch']
         
         fold_train_time = time.time() - fold_start_time
@@ -574,33 +662,44 @@ def run_training():
         )
         
         # Generate training visualizations for this fold
-        logger.info("\nGenerating fold visualizations...")
-        plot_path = monitor.plot_training_curves(fold)
-        logger.info(f"  Training curves saved to: {plot_path}")
-        
-        history_path = monitor.save_history(fold)
-        logger.info(f"  Training history saved to: {history_path}")
+        if run_post_analysis:
+            logger.info("\nGenerating fold visualizations...")
+            plot_path = monitor.plot_training_curves(fold)
+            logger.info(f"  Training curves saved to: {plot_path}")
+
+            history_path = monitor.save_history(fold)
+            logger.info(f"  Training history saved to: {history_path}")
     
     # Log cross-validation summary
     tracker.log_summary()
+    summary = tracker.get_summary()
+    site_auc_variance = float(np.var(site_auc_values)) if site_auc_values else float('inf')
+    logger.info(
+        "Per-site validation AUC variance (%s): %.6f from %d site-level AUC values",
+        run_name,
+        site_auc_variance,
+        len(site_auc_values),
+    )
     
     # Ensemble evaluation on test set (combine all folds)
-    evaluate_ensemble(tracker, checkpoint_manager)
+    if run_post_analysis:
+        evaluate_ensemble(tracker, checkpoint_manager, use_grl=use_grl, grl_alpha=grl_alpha)
     
     # POST-TRAINING ANALYSIS
-    logger.info(f"\n{'='*70}")
-    logger.info("POST-TRAINING ANALYSIS")
-    logger.info(f"{'='*70}\n")
+    if run_post_analysis:
+        logger.info(f"\n{'='*70}")
+        logger.info("POST-TRAINING ANALYSIS")
+        logger.info(f"{'='*70}\n")
     
     # 1. Feature Attribution Analysis (if Captum available)
-    if FEATURE_ANALYSIS_AVAILABLE:
+    if run_post_analysis and FEATURE_ANALYSIS_AVAILABLE:
         try:
             logger.info("Running feature attribution analysis...")
             from src.features.graph_factory import ABIDECausalDataset
             
             # Load test set
             test_dataset = ABIDECausalDataset(split='test')
-            test_loader = DataLoader(
+            test_loader = make_loader(
                 [d for d in test_dataset if d is not None],
                 batch_size=GNN_BATCH_SIZE
             )
@@ -630,8 +729,8 @@ def run_training():
                 num_sites=20,
                 use_site_embedding=GNN_USE_SITE_EMBEDDING,
                 use_demographics=GNN_USE_DEMOGRAPHICS,
-                use_grl=GNN_USE_GRL,
-                grl_alpha=GNN_GRL_ALPHA,
+                use_grl=use_grl,
+                grl_alpha=grl_alpha,
                 edge_gate=GNN_EDGE_GATE,
                 num_nodes=NUM_LOBES,
                 node_emb_dim=GNN_NODE_EMB_DIM,
@@ -657,33 +756,109 @@ def run_training():
             logger.warning(f"Feature attribution analysis failed: {e}")
     
     # 2. Causal Graph Analysis
-    try:
-        logger.info("\nRunning causal graph analysis...")
-        import pandas as pd
-        
-        # Load manifest
-        manifest_path = DATA_METADATA / 'master_manifest.csv'
-        manifest = pd.read_csv(manifest_path)
-        
-        # Compute graph properties
-        graph_analyzer = CausalGraphAnalyzer(CAUSAL_GRAPHS_DIR, manifest)
-        graph_metrics = graph_analyzer.compute_graph_properties()
-        
-        # Compare ASD vs Control
-        graph_output = analysis_dir / 'graphs'
-        graph_output.mkdir(parents=True, exist_ok=True)
-        graph_analyzer.compare_asd_vs_control(
-            graph_metrics,
-            str(graph_output)
-        )
-        logger.info(f"  Graph analysis plots saved to: {graph_output}")
-        
-    except Exception as e:
-        logger.warning(f"Causal graph analysis failed: {e}")
+    if run_post_analysis:
+        try:
+            logger.info("\nRunning causal graph analysis...")
+            import pandas as pd
+
+            # Load manifest
+            manifest_path = DATA_METADATA / 'master_manifest.csv'
+            manifest = pd.read_csv(manifest_path)
+
+            # Compute graph properties
+            graph_analyzer = CausalGraphAnalyzer(CAUSAL_GRAPHS_DIR, manifest)
+            graph_metrics = graph_analyzer.compute_graph_properties()
+
+            # Compare ASD vs Control
+            graph_output = analysis_dir / 'graphs'
+            graph_output.mkdir(parents=True, exist_ok=True)
+            graph_analyzer.compare_asd_vs_control(
+                graph_metrics,
+                str(graph_output)
+            )
+            logger.info(f"  Graph analysis plots saved to: {graph_output}")
+
+        except Exception as e:
+            logger.warning(f"Causal graph analysis failed: {e}")
     
-    logger.info(f"\n{'='*70}")
-    logger.info("TRAINING AND ANALYSIS COMPLETE")
-    logger.info(f"{'='*70}\n")
+    if run_post_analysis:
+        logger.info(f"\n{'='*70}")
+        logger.info("TRAINING AND ANALYSIS COMPLETE")
+        logger.info(f"{'='*70}\n")
+
+    return {
+        "run_name": run_name,
+        "grl_alpha": grl_alpha,
+        "mean_auc": float(summary.get('mean_auc', 0.0)),
+        "site_auc_variance": site_auc_variance,
+        "site_auc_count": len(site_auc_values),
+    }
+
+
+def run_training():
+    """Entry point for model training with optional GRL alpha grid search."""
+    if GNN_AUTO_GRL_GRID_SEARCH and GRL_ALPHA_CANDIDATES:
+        logger.info("Starting GRL alpha grid search: %s", GRL_ALPHA_CANDIDATES)
+        candidate_results = []
+
+        for alpha in GRL_ALPHA_CANDIDATES:
+            run_name = f"grl_alpha_{alpha:.2f}"
+            candidate_dir = CHECKPOINT_DIR / run_name
+            result = _run_training_once(
+                use_grl=True,
+                grl_alpha=float(alpha),
+                checkpoint_dir=candidate_dir,
+                run_name=run_name,
+                run_post_analysis=False,
+            )
+            candidate_results.append(result)
+            logger.info(
+                "Candidate α=%.2f -> mean AUC=%.4f, site-AUC variance=%.6f",
+                alpha,
+                result["mean_auc"],
+                result["site_auc_variance"],
+            )
+
+        if not candidate_results:
+            logger.warning("GRL grid search produced no valid results; falling back to config defaults")
+            return _run_training_once(
+                use_grl=GNN_USE_GRL,
+                grl_alpha=GNN_GRL_ALPHA,
+                checkpoint_dir=CHECKPOINT_DIR,
+                run_name="default",
+                run_post_analysis=True,
+            )
+
+        best_mean_auc = max(r["mean_auc"] for r in candidate_results)
+        viable = [r for r in candidate_results if r["mean_auc"] >= best_mean_auc - 0.01]
+        selected = min(viable, key=lambda r: r["site_auc_variance"]) if viable else max(
+            candidate_results,
+            key=lambda r: r["mean_auc"],
+        )
+        selected_alpha = float(selected["grl_alpha"])
+
+        logger.info(
+            "Selected GRL alpha %.2f (mean AUC=%.4f, site-AUC variance=%.6f)",
+            selected_alpha,
+            selected["mean_auc"],
+            selected["site_auc_variance"],
+        )
+
+        return _run_training_once(
+            use_grl=True,
+            grl_alpha=selected_alpha,
+            checkpoint_dir=CHECKPOINT_DIR,
+            run_name=f"grl_selected_{selected_alpha:.2f}",
+            run_post_analysis=True,
+        )
+
+    return _run_training_once(
+        use_grl=GNN_USE_GRL,
+        grl_alpha=GNN_GRL_ALPHA,
+        checkpoint_dir=CHECKPOINT_DIR,
+        run_name="default",
+        run_post_analysis=True,
+    )
 
 
 # CLI
