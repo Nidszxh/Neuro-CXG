@@ -106,9 +106,19 @@ def get_s3_client():
 
 
 def process_subject(sub_id, tr_val):
-    # 1. Skip if files already exist (Idempotency)
+    # 1. Skip only when the subject is fully complete (TS + ROI labels + all slices).
+    # This allows re-runs to fill missing artifacts without reprocessing everything.
     final_ts_path = TS_OUTPUT / f"{sub_id}_ts.npy"
-    if final_ts_path.exists():
+    final_roi_labels_path = TS_OUTPUT / f"{sub_id}_roi_labels.npy"
+    existing_png_count = len(list(PNG_OUTPUT.glob(f"{sub_id}_z*.png")))
+    expected_png_count = len(ALFF_SLICE_PERCENTILES)
+
+    subject_complete = (
+        final_ts_path.exists()
+        and final_roi_labels_path.exists()
+        and existing_png_count >= expected_png_count
+    )
+    if subject_complete:
         return sub_id, "Skipped", None
 
     s3 = get_s3_client()

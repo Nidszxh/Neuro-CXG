@@ -26,6 +26,7 @@ from neuroHarmonize import harmonizationApply, harmonizationLearn
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
+    FEATURE_GROUPS,
     LOBE_MAPPING,
     LOBE_NAMES,
     MASTER_MANIFEST,
@@ -45,15 +46,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── constants ─────────────────────────────────────────────────────────────────
-FEATURE_TYPES = [
-    "mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr",
-    "delta_power", "delta_peak",
-    "theta_power", "theta_peak",
-    "alpha_power", "alpha_peak",
-    "beta_power",  "beta_peak",
-    "gamma_power", "gamma_peak",
-    "spectral_entropy", "phase_std",
-]
+FEATURE_TYPES = FEATURE_GROUPS["temporal"] + FEATURE_GROUPS["frequency"]
 
 NAN_REMOVAL_THRESHOLD = 0.5   # drop subjects with >50 % NaN
 OUTLIER_STD_THRESHOLD = 5     # cap outliers beyond ±5 σ

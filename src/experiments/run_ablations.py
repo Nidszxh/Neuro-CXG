@@ -38,7 +38,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score, f1_score
-from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_mean_pool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -67,7 +66,7 @@ from src.core.config import (
     RESULTS_ABLATIONS_DIR,
 )
 from src.models.gnn_model import FocalLoss
-from src.models.training_utils import train_fold_with_onecycle
+from src.models.training_utils import make_loader, train_fold_with_onecycle
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -278,8 +277,8 @@ def run_kfold(
             logger.warning(f"  Fold {fold}: insufficient data, skipping")
             continue
 
-        train_loader = DataLoader(train_data, batch_size=GNN_BATCH_SIZE, shuffle=True)
-        val_loader   = DataLoader(val_data,   batch_size=GNN_BATCH_SIZE)
+        train_loader = make_loader(train_data, batch_size=GNN_BATCH_SIZE, shuffle=True)
+        val_loader   = make_loader(val_data,   batch_size=GNN_BATCH_SIZE)
 
         model = model_factory().to(DEVICE)
 

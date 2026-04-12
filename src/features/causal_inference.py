@@ -15,6 +15,7 @@ References:
 import numpy as np
 import logging
 from typing import Tuple, Dict
+from joblib import Parallel, delayed
 from statsmodels.tsa.stattools import grangercausalitytests
 from scipy.stats import f as f_dist
 import torch
@@ -26,7 +27,8 @@ logger = logging.getLogger(__name__)
 def compute_granger_causality(
     ts_matrix: np.ndarray,
     max_lag: int = 5,
-    significance_level: float = 0.05
+    significance_level: float = 0.05,
+    n_jobs: int = -1,
 ) -> np.ndarray:
     """
     Compute multivariate Granger causality matrix.
@@ -37,6 +39,7 @@ def compute_granger_causality(
         ts_matrix: Time series matrix (shape: [timepoints, n_regions])
         max_lag: Maximum lag to test (default: 5 TRs)
         significance_level: Statistical significance threshold
+        n_jobs: Number of parallel workers for pairwise region tests (-1 = all cores)
     
     Returns:
         Causality matrix (shape: [n_regions, n_regions])
@@ -61,50 +64,42 @@ def compute_granger_causality(
     
     # Initialize causality matrix
     gc_matrix = np.zeros((n_regions, n_regions))
-    
-    # Compute pairwise Granger causality
-    for i in range(n_regions):
-        for j in range(n_regions):
-            if i == j:
-                continue  # Skip self-causation
-            
-            try:
-                # Prepare data: [target, source]
-                # Test if region i Granger-causes region j
-                data = np.column_stack([ts_matrix[:, j], ts_matrix[:, i]])
-                
-                # Run Granger causality test for lags 1 to max_lag
-                results = grangercausalitytests(
-                    data,
-                    maxlag=max_lag,
-                    verbose=False
-                )
-                
-                # Extract p-values from F-test at each lag
-                p_values = []
-                for lag in range(1, max_lag + 1):
-                    # Use SSR F-test (most common)
-                    p_value = results[lag][0]['ssr_ftest'][1]
-                    p_values.append(p_value)
-                
-                # Use minimum p-value across lags (strongest evidence)
-                min_p_value = min(p_values)
 
-                # Bonferroni correction for multiple lag tests
-                n_tests = len(p_values)  # = max_lag
-                corrected_p = min(min_p_value * n_tests, 1.0)
+    def _test_pair(i: int, j: int) -> Tuple[int, int, float]:
+        if i == j:
+            return i, j, 0.0
 
-                # Convert to -log10(p) for interpretability
-                # Higher values = stronger causality
-                if corrected_p > 0:
-                    gc_matrix[i, j] = -np.log10(corrected_p + 1e-10)
-                else:
-                    gc_matrix[i, j] = 10.0  # Cap at very high value
-                
-            except Exception as e:
-                logger.debug(f"Granger test failed for {i}→{j}: {e}")
-                gc_matrix[i, j] = 0.0
-    
+        try:
+            # Prepare data: [target, source]
+            # Test if region i Granger-causes region j
+            data = np.column_stack([ts_matrix[:, j], ts_matrix[:, i]])
+
+            results = grangercausalitytests(data, maxlag=max_lag, verbose=False)
+            p_values = [results[lag][0]['ssr_ftest'][1] for lag in range(1, max_lag + 1)]
+
+            # Use minimum p-value across lags (strongest evidence)
+            min_p_value = min(p_values)
+
+            # Bonferroni correction for multiple lag tests
+            n_tests = len(p_values)
+            corrected_p = min(min_p_value * n_tests, 1.0)
+
+            if corrected_p <= significance_level:
+                score = -np.log10(corrected_p + 1e-10)
+                return i, j, float(min(score, 10.0))
+            return i, j, 0.0
+        except Exception as e:
+            logger.debug(f"Granger test failed for {i}→{j}: {e}")
+            return i, j, 0.0
+
+    pairs = [(i, j) for i in range(n_regions) for j in range(n_regions) if i != j]
+    results = Parallel(n_jobs=n_jobs, prefer="threads")(
+        delayed(_test_pair)(i, j) for i, j in pairs
+    )
+
+    for i, j, score in results:
+        gc_matrix[i, j] = score
+
     return gc_matrix
 
 

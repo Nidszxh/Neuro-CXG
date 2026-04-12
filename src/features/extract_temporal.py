@@ -13,11 +13,12 @@ from tqdm import tqdm
 # Setup paths and config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
+    ACTIVE_FREQ_BANDS,
     DATA_FINAL,
+    FEATURE_GROUPS,
     MASTER_MANIFEST,
     NODE_ATTRIBUTES_TEMPORAL,
     DEFAULT_TR,
-    FREQ_BANDS,
     NYQUIST_EPS,
     UNRELIABLE_FREQ_BANDS_AT_NYQUIST,
 )
@@ -58,8 +59,8 @@ def extract_band_power(
     Args:
         ts: Time series (1D array, shape: [timepoints])
         fs: Sampling frequency in Hz (default: 0.5 Hz for TR=2s)
-        bands: Dictionary of frequency bands {name: (low, high)}
-               Default: delta, theta, alpha, beta, gamma
+         bands: Dictionary of frequency bands {name: (low, high)}
+             Default: ACTIVE_FREQ_BANDS from config
 
     Returns:
         Dictionary with 12 features:
@@ -76,7 +77,7 @@ def extract_band_power(
     - gamma: 0.20 - 0.25 Hz (Slow-2)
     """
     if bands is None:
-        bands = FREQ_BANDS  # Imported from config.py — single source of truth
+        bands = ACTIVE_FREQ_BANDS  # Imported from config.py — single source of truth
 
     # Nyquist-safe adjustment: keep feature shape stable while avoiding aliasing warning spam.
     global _NYQUIST_NOTE_EMITTED
@@ -171,20 +172,10 @@ def extract_frequency_features_batch(ts_matrix: np.ndarray, fs: float = 0.5) -> 
         Columns: [delta_power, delta_peak, theta_power, theta_peak, ..., spectral_entropy, phase_std]
     """
     n_rois = ts_matrix.shape[1]
-    feature_names = [
-        "delta_power",
-        "delta_peak_freq",
-        "theta_power",
-        "theta_peak_freq",
-        "alpha_power",
-        "alpha_peak_freq",
-        "beta_power",
-        "beta_peak_freq",
-        "gamma_power",
-        "gamma_peak_freq",
-        "spectral_entropy",
-        "phase_std",
-    ]
+    feature_names = []
+    for band in ACTIVE_FREQ_BANDS:
+        feature_names.extend([f"{band}_power", f"{band}_peak_freq"])
+    feature_names.extend(["spectral_entropy", "phase_std"])
     n_features = len(feature_names)
 
     # Initialize output matrix
@@ -280,7 +271,9 @@ def extract_single_roi_features(ts: np.ndarray, tr: float, include_frequency: bo
         List of features (8 or 20 depending on include_frequency)
     """
     if not np.isfinite(ts).all() or np.std(ts) < 1e-6:
-        n_features = 20 if include_frequency else 8
+        n_features = len(FEATURE_GROUPS["temporal"]) + (
+            len(FEATURE_GROUPS["frequency"]) if include_frequency else 0
+        )
         return [0.0] * n_features
 
     # Compute statistics with bounds checking to prevent extreme outliers
@@ -308,20 +301,13 @@ def extract_single_roi_features(ts: np.ndarray, tr: float, include_frequency: bo
         fs = 1.0 / tr
         freq_features = extract_band_power(ts, fs=fs)
 
-        frequency_values = [
-            freq_features["delta_power"],
-            freq_features["delta_peak_freq"],
-            freq_features["theta_power"],
-            freq_features["theta_peak_freq"],
-            freq_features["alpha_power"],
-            freq_features["alpha_peak_freq"],
-            freq_features["beta_power"],
-            freq_features["beta_peak_freq"],
-            freq_features["gamma_power"],
-            freq_features["gamma_peak_freq"],
-            freq_features["spectral_entropy"],
-            freq_features["phase_std"],
-        ]
+        frequency_values = []
+        for feat_name in FEATURE_GROUPS["frequency"]:
+            if feat_name.endswith("_peak"):
+                band = feat_name[:-5]
+                frequency_values.append(float(freq_features.get(f"{band}_peak_freq", 0.0)))
+            else:
+                frequency_values.append(float(freq_features.get(feat_name, 0.0)))
 
         return base_features + frequency_values
 
@@ -348,7 +334,9 @@ def main(add_frequency: bool = True) -> None:
     all_subject_data = []
     failed_subjects = []
 
-    features_per_roi = 20 if add_frequency else 8
+    features_per_roi = len(FEATURE_GROUPS["temporal"]) + (
+        len(FEATURE_GROUPS["frequency"]) if add_frequency else 0
+    )
     logger.info(f"Extracting temporal features for {len(manifest)} subjects...")
     logger.info(
         f"Features per ROI: {features_per_roi} ({'with' if add_frequency else 'without'} frequency features)"
@@ -419,24 +407,9 @@ def main(add_frequency: bool = True) -> None:
 
     # Create columns
     columns = ["subject_id"]
-    stats = ["mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr"]
+    stats = list(FEATURE_GROUPS["temporal"])
     if add_frequency:
-        stats.extend(
-            [
-                "delta_power",
-                "delta_peak",
-                "theta_power",
-                "theta_peak",
-                "alpha_power",
-                "alpha_peak",
-                "beta_power",
-                "beta_peak",
-                "gamma_power",
-                "gamma_peak",
-                "spectral_entropy",
-                "phase_std",
-            ]
-        )
+        stats.extend(FEATURE_GROUPS["frequency"])
 
     for r in range(1, 171):
         for s in stats:

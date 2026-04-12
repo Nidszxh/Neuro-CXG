@@ -1,10 +1,13 @@
-# Train/Val/Test Sets
-path: ./data/final/
+# Neuro-CXG YOLO dataset config
+# Used by src/pipelines/roi_detection.py via CONFIG_BRAIN_YAML
+
+path: /home/nidszxh/Projects/Neuro-CXG/data/final
 train: train/images
 val: val/images
 test: test/images
 
-# Classes (12 Neuroanatomical Regions - Updated January 2026)
+# 12 neuroanatomical classes (must match class_id in generate_labels.py)
+nc: 12
 names:
   0: Frontal_Superior
   1: Frontal_Orbital

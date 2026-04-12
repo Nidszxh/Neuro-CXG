@@ -44,11 +44,13 @@ def _make_manifest(n: int = 20, seed: int = 0) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _make_temporal_features(manifest: pd.DataFrame, n_feat: int = 20) -> pd.DataFrame:
+def _make_temporal_features(manifest: pd.DataFrame, n_feat: int = None) -> pd.DataFrame:
     """Create a mock temporal features DataFrame aligned to manifest subjects."""
     rng = np.random.default_rng(42)
     from src.core.config import LOBE_NAMES, FEATURE_GROUPS
     feat_names = FEATURE_GROUPS["temporal"] + FEATURE_GROUPS["frequency"]
+    if n_feat is None:
+        n_feat = len(feat_names)
     # Pad or trim to n_feat columns
     feat_names = (feat_names * ((n_feat // len(feat_names)) + 1))[:n_feat]
     cols = {}
@@ -147,6 +149,38 @@ class TestOutlierClipFoldSafe:
         )
         # The extreme outlier must not survive clipping.
         assert test_clipped["col_a"].max() < 100.0, "Extreme test outlier (1000) survived clipping"
+
+    def test_harmonize_cv_safe_fold_uses_train_only_bounds(self, tmp_path):
+        """harmonize_cv_safe_fold() must not use val/test statistics for clipping."""
+        from src.features.fold_safe_harmonization import harmonize_cv_safe_fold
+
+        manifest = _make_manifest(n=30)
+        features = _make_temporal_features(manifest)
+
+        # Inject a large outlier only in the held-out test split.
+        test_subjects = set(manifest.loc[manifest["split"] == "test", "subject_id"])
+        feature_cols = [c for c in features.columns if c != "subject_id"]
+        target_col = feature_cols[0]
+        features.loc[features["subject_id"].isin(test_subjects), target_col] = 999.0
+
+        out_path = tmp_path / "harmonized.csv"
+        folds = harmonize_cv_safe_fold(
+            features,
+            manifest,
+            full_output_path=out_path,
+        )
+
+        assert folds, "harmonize_cv_safe_fold() returned no folds"
+        assert out_path.exists(), "Expected harmonized output CSV to be written"
+
+        result = pd.read_csv(out_path)
+        numeric_cols = result.select_dtypes(include=[np.number]).columns
+        assert len(numeric_cols) > 0, "No numeric columns found in harmonized output"
+
+        # If clipping is train-only and active, the injected 999.0 outlier should never survive.
+        assert result[numeric_cols].to_numpy().max() < 100.0, (
+            "Test-set outlier survived harmonization — train-only clipping may not be applied"
+        )
 
 
 class TestSpatialHarmonization:

@@ -22,9 +22,41 @@ logger = logging.getLogger(__name__)
 TRAIN_RATIO, VAL_RATIO = 0.70, 0.15 
 random.seed(42)
 SOURCE_IMG   = DATA_ROOT / "images"
-# Prefer dedicated time-series directory when available, keep legacy fallback.
-SOURCE_TS    = DATA_TIME_SERIES if DATA_TIME_SERIES.exists() else DATA_PROCESSED
 SOURCE_LBL   = DATA_ROOT / "labels"
+
+
+def _resolve_source_ts_dir() -> Path:
+    """Resolve source time-series directory across canonical and legacy layouts."""
+    candidates = [
+        DATA_TIME_SERIES,          # data/processed/time_series (canonical)
+        DATA_ROOT / "timeseries", # data/timeseries (legacy)
+        DATA_PROCESSED,            # legacy flat fallback
+    ]
+
+    best_dir = None
+    best_count = -1
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        count = len(list(candidate.glob("*_ts.npy")))
+        if count > best_count:
+            best_dir = candidate
+            best_count = count
+
+    if best_dir is not None:
+        logger.info(
+            "Using source time-series directory: %s (%d *_ts.npy files)",
+            best_dir,
+            max(best_count, 0),
+        )
+        return best_dir
+
+    # Last-resort default to canonical target path if nothing exists yet.
+    logger.info("No source time-series directory found; defaulting to %s", DATA_TIME_SERIES)
+    return DATA_TIME_SERIES
+
+
+SOURCE_TS = _resolve_source_ts_dir()
 
 
 def _move_with_dedup(src: Path, dst: Path):

@@ -1,4 +1,5 @@
 import logging
+import hashlib
 import torch
 from torch_geometric.data import Data, Dataset
 import pandas as pd
@@ -22,6 +23,31 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def _get_cache_path(csv_path: Path) -> Path:
+    """Build a cache filename tied to source CSV modification time."""
+    mtime_key = str(csv_path.stat().st_mtime_ns)
+    digest = hashlib.md5(mtime_key.encode()).hexdigest()[:8]
+    return csv_path.parent / f".cache_{csv_path.stem}_{digest}.pkl"
+
+
+def _load_csv_cached(csv_path: Path, index_col: str = None) -> pd.DataFrame:
+    """Load CSV through a lightweight pickle cache to reduce parser overhead."""
+    cache_path = _get_cache_path(csv_path)
+    if cache_path.exists():
+        return pd.read_pickle(cache_path)
+
+    df = pd.read_csv(csv_path)
+    if index_col is not None:
+        df = df.set_index(index_col)
+    df.to_pickle(cache_path)
+    return df
+
+
+def _stable_subject_seed(subject_id: str) -> int:
+    """Derive a reproducible 32-bit seed from subject_id."""
+    return int(hashlib.md5(subject_id.encode()).hexdigest()[:8], 16)
 
 class ABIDECausalDataset(Dataset):
 
@@ -62,10 +88,10 @@ class ABIDECausalDataset(Dataset):
     def _load_data_sources(self):
         """Load the harmonized 12-region features and spatial coordinates."""
         # 1. Master manifest
-        self.manifest_raw = pd.read_csv(MASTER_MANIFEST)
+        self.manifest_raw = _load_csv_cached(MASTER_MANIFEST)
         
         # 2. Harmonized temporal features (aggregated to 12 regions)
-        self.node_attr = pd.read_csv(NODE_ATTRIBUTES_HARMONIZED).set_index('subject_id')
+        self.node_attr = _load_csv_cached(NODE_ATTRIBUTES_HARMONIZED, index_col='subject_id')
         
         # 3. Spatial coordinates and geometric features (6 per lobe).
         # Prefer the ComBat-harmonized version (conf_std / detection_count corrected for
@@ -76,7 +102,7 @@ class ABIDECausalDataset(Dataset):
             else NODE_FEATURES_3D
         )
         logger.info("  Spatial features: %s", _spatial_path.name)
-        self.coords = pd.read_csv(_spatial_path).set_index('subject_id')
+        self.coords = _load_csv_cached(_spatial_path, index_col='subject_id')
         
         # 4. Adjacency matrices directory
         self.adj_dir = CAUSAL_GRAPHS_DIR
@@ -115,6 +141,8 @@ class ABIDECausalDataset(Dataset):
 
         valid_subs = []
         invalid_count = 0
+        self._subject_edge_counts = {}
+        self._graph_cache = {}
         
         for sub in available_subs:
             graph_path = self.adj_dir / f"{sub}_graph.pt"
@@ -134,6 +162,15 @@ class ABIDECausalDataset(Dataset):
                         continue
                     
                     valid_subs.append(sub)
+                    self._subject_edge_counts[sub] = int(num_edges)
+                    self._graph_cache[sub] = {
+                        'adj': adj.clone().to(torch.float32),
+                        'internal_features': graph_data.get('internal_features'),
+                        'zero_lobe_mask': graph_data.get(
+                            'zero_lobe_mask',
+                            torch.zeros(NUM_LOBES, dtype=torch.bool),
+                        ).bool(),
+                    }
                 except Exception as e:
                     logger.warning(f"Subject {sub}: Failed to validate graph: {e}")
                     invalid_count += 1
@@ -197,9 +234,21 @@ class ABIDECausalDataset(Dataset):
         
         try:
             # 1. Load 12×12 Causal Adjacency Matrix
-            graph_path = self.adj_dir / f"{sub_id}_graph.pt"
-            graph_dict = torch.load(graph_path, weights_only=False)
-            adj = graph_dict['adj']  # Should be (12, 12)
+            graph_dict = self._graph_cache.get(sub_id)
+            if graph_dict is None:
+                graph_path = self.adj_dir / f"{sub_id}_graph.pt"
+                raw_graph = torch.load(graph_path, weights_only=False)
+                graph_dict = {
+                    'adj': raw_graph['adj'].clone().to(torch.float32),
+                    'internal_features': raw_graph.get('internal_features'),
+                    'zero_lobe_mask': raw_graph.get(
+                        'zero_lobe_mask',
+                        torch.zeros(NUM_LOBES, dtype=torch.bool),
+                    ).bool(),
+                }
+                self._graph_cache[sub_id] = graph_dict
+
+            adj = graph_dict['adj'].clone()  # Should be (12, 12)
             
             if torch.isnan(adj).any() or torch.isinf(adj).any():
                 logger.error(f"Subject {sub_id}: Adjacency matrix contains NaN/Inf")
@@ -263,7 +312,7 @@ class ABIDECausalDataset(Dataset):
             # 5. Create Edge Index with validation
             edge_index = adj.nonzero().t().contiguous()
             
-            if edge_index.shape[1] == 0:
+            if self._subject_edge_counts.get(sub_id, edge_index.shape[1]) == 0:
                 logger.warning(f"Subject {sub_id}: Zero edges detected")
                 return None
             
@@ -305,7 +354,9 @@ class ABIDECausalDataset(Dataset):
             )
 
             # Apply augmentation to training data
-            data_obj = self._augment_graph(data_obj)
+            if self.augment_graphs:
+                fold_rng = np.random.default_rng(_stable_subject_seed(sub_id))
+                data_obj = self._augment_graph(data_obj, rng=fold_rng)
 
             return data_obj
             
@@ -424,21 +475,31 @@ class ABIDECausalDataset(Dataset):
 
         return self._site_mapping.get(site_name, 0)  # Default to site 0 if unknown
 
-    def _augment_graph(self, data):
+    def _augment_graph(self, data, rng: np.random.Generator = None):
         """
         Applies light augmentation to training graphs (feature noise, edge dropout).
         Only applied to training set to improve generalization.
         """
-        if not self.augment_graphs or np.random.random() > 0.5:  # 50% augmentation rate
+        if not self.augment_graphs:
             return data
+        if rng is None:
+            rng = np.random.default_rng()
+        if rng.random() > 0.5:  # 50% augmentation rate
+            return data
+
+        data = data.clone()
         
         # Light feature noise (5% Gaussian noise on node features)
-        noise = torch.randn_like(data.x) * 0.05
+        noise = torch.tensor(
+            rng.normal(loc=0.0, scale=0.05, size=data.x.shape),
+            dtype=data.x.dtype,
+            device=data.x.device,
+        )
         data.x = data.x + noise
         
         # Edge weight dropout (30% chance to drop edge weights, but keep edge)
         edge_dropout = 0.3
-        keep_mask = torch.rand(data.edge_attr.shape[0]) > edge_dropout
+        keep_mask = torch.from_numpy(rng.random(data.edge_attr.shape[0]) > edge_dropout).to(data.edge_attr.device)
         if keep_mask.sum() > 0:
             data.edge_attr = data.edge_attr * keep_mask.unsqueeze(1).float()
         

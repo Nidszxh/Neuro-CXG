@@ -30,7 +30,6 @@ import pandas as pd
 import torch
 from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.model_selection import StratifiedKFold
-from torch_geometric.loader import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
@@ -66,7 +65,7 @@ from src.core.config import (
     RESULTS_DATA_QUALITY_DIR,
 )
 from src.models.gnn_model import FocalLoss
-from src.models.training_utils import CheckpointManager, train_fold_with_onecycle
+from src.models.training_utils import CheckpointManager, make_loader, train_fold_with_onecycle
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -134,7 +133,7 @@ def experiment_cross_site_auc() -> pd.DataFrame:
         return pd.DataFrame()
 
     test_data = [test_ds[i] for i in range(len(test_ds)) if test_ds[i] is not None]
-    test_loader = DataLoader(test_data, batch_size=GNN_BATCH_SIZE)
+    test_loader = make_loader(test_data, batch_size=GNN_BATCH_SIZE)
 
     # ── Load checkpoint (fold 0, representative) ──────────────────────────────
     ckpt_mgr = CheckpointManager(CHECKPOINT_DIR, monitor="auc", mode="max")
@@ -392,9 +391,12 @@ def _compute_atlas_centroids() -> Optional[np.ndarray]:
                 lobe_centroids[lobe_id, 0] = cx
                 lobe_centroids[lobe_id, 1] = cy
                 lobe_centroids[lobe_id, 2] = cz
-                lobe_centroids[lobe_id, 3] = float(len(coords))  # size proxy
-                lobe_centroids[lobe_id, 4] = 0.0                 # conf_std = 0
-                lobe_centroids[lobe_id, 5] = 1.0                 # detection_count = 1
+                if NUM_SPATIAL_FEATURES > 3:
+                    lobe_centroids[lobe_id, 3] = float(len(coords))  # size proxy
+                if NUM_SPATIAL_FEATURES > 4:
+                    lobe_centroids[lobe_id, 4] = 0.0                 # conf_std = 0
+                if NUM_SPATIAL_FEATURES > 5:
+                    lobe_centroids[lobe_id, 5] = 1.0                 # detection_count = 1
         return lobe_centroids
 
     # Attempt to compute from atlas NIfTI if nibabel is available
@@ -425,9 +427,12 @@ def _compute_atlas_centroids() -> Optional[np.ndarray]:
                     arr = np.array(coords, dtype=np.float32)
                     cx, cy, cz = arr.mean(axis=0)
                     lobe_centroids[lobe_id, :3] = [cx, cy, cz]
-                    lobe_centroids[lobe_id, 3] = float(len(coords))
-                    lobe_centroids[lobe_id, 4] = 0.0
-                    lobe_centroids[lobe_id, 5] = 1.0
+                    if NUM_SPATIAL_FEATURES > 3:
+                        lobe_centroids[lobe_id, 3] = float(len(coords))
+                    if NUM_SPATIAL_FEATURES > 4:
+                        lobe_centroids[lobe_id, 4] = 0.0
+                    if NUM_SPATIAL_FEATURES > 5:
+                        lobe_centroids[lobe_id, 5] = 1.0
             return lobe_centroids
     except ImportError:
         logger.warning("  nibabel not available — atlas centroid extraction skipped")
@@ -537,8 +542,8 @@ def experiment_atlas_centroid_baseline() -> Dict:
         vd = [atlas_ds[i] for i in val_idx if atlas_ds[i] is not None]
         if not td or not vd:
             continue
-        tl = DataLoader(td, batch_size=GNN_BATCH_SIZE, shuffle=True)
-        vl = DataLoader(vd, batch_size=GNN_BATCH_SIZE)
+        tl = make_loader(td, batch_size=GNN_BATCH_SIZE, shuffle=True)
+        vl = make_loader(vd, batch_size=GNN_BATCH_SIZE)
         model = gnn_factory().to(DEVICE)
         _, best_metrics, _ = train_fold_with_onecycle(
             model=model, train_loader=tl, val_loader=vl,
