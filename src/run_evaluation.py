@@ -93,6 +93,7 @@ from src.core.config import (
 )
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
+from src.models.factory import build_model
 from src.models.training_utils import make_loader
 
 logging.basicConfig(
@@ -125,21 +126,12 @@ def _load_model(fold_id: int) -> CausalBrainGNN:
     saved_in_features = state["lin_in.weight"].shape[1]
     node_emb_dim = saved_in_features - GNN_IN_CHANNELS - site_dim
 
-    model = CausalBrainGNN(
-        num_node_features=GNN_IN_CHANNELS,
-        hidden_channels=GNN_HIDDEN_CHANNELS,
-        num_classes=2,
-        num_heads=GNN_NUM_HEADS,
-        num_layers=GNN_NUM_LAYERS,
-        pooling=GNN_POOLING,
-        dropout=GNN_DROPOUT,
-        use_site_embedding=GNN_USE_SITE_EMBEDDING,
-        use_demographics=GNN_USE_DEMOGRAPHICS,
+    model = build_model(
+        device=DEVICE,
         use_grl=GNN_USE_GRL,
         grl_alpha=GNN_GRL_ALPHA,
-        edge_gate=GNN_EDGE_GATE,
         node_emb_dim=node_emb_dim,
-    ).to(DEVICE)
+    )
 
     model.load_state_dict(state, strict=False)
     model.eval()
@@ -158,12 +150,15 @@ def _predict_probs(model: CausalBrainGNN, loader: DataLoader) -> Tuple[np.ndarra
         if batch is None:
             continue
         batch = batch.to(DEVICE)
-        out = model(
-            batch.x, batch.edge_index, batch.edge_attr, batch.batch,
+        out = model.forward_batch(batch) if hasattr(model, "forward_batch") else model(
+            batch.x,
+            batch.edge_index,
+            batch.edge_attr,
+            batch.batch,
             site_id=batch.site_id if hasattr(batch, "site_id") else None,
-            age=batch.age  if hasattr(batch, "age")  else None,
-            sex=batch.sex  if hasattr(batch, "sex")  else None,
-            fiq=batch.fiq  if hasattr(batch, "fiq")  else None,
+            age=batch.age if hasattr(batch, "age") else None,
+            sex=batch.sex if hasattr(batch, "sex") else None,
+            fiq=batch.fiq if hasattr(batch, "fiq") else None,
         )
         probs = torch.softmax(out, dim=1)[:, 1].cpu().numpy()
         all_probs.append(probs)

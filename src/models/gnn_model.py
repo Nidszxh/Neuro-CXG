@@ -5,7 +5,7 @@ import random
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import (
     roc_auc_score, f1_score, confusion_matrix,
-    accuracy_score, precision_recall_curve, average_precision_score
+    accuracy_score
 )
 import numpy as np
 import pandas as pd
@@ -47,6 +47,7 @@ from src.core.config import (
     CAUSAL_GRAPHS_DIR,
     DATA_METADATA,
     RESULTS_TRAINING_DIR,
+    HARMONIZED_FOLDS_DIR,
 )
 from src.models.training_utils import (
     TrainingTracker, 
@@ -54,6 +55,9 @@ from src.models.training_utils import (
     make_loader,
     train_fold_with_onecycle
 )
+from src.core.experiment_tracker import ExperimentTracker
+from src.models.evaluation import evaluate_loader, optimal_threshold
+from src.models.factory import build_model
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
@@ -136,100 +140,14 @@ def compute_class_weights(labels):
 
 
 def find_optimal_threshold(y_true, y_probs):
-    """
-    Find classification threshold that maximizes F1 score.
-    
-    Args:
-        y_true: Ground truth labels
-        y_probs: Predicted probabilities
-    
-    Returns:
-        (best_threshold, best_f1): Optimal threshold and corresponding F1 score
-    """
-    precision, recall, thresholds = precision_recall_curve(y_true, y_probs)
-    f1_scores = 2 * (precision * recall) / (precision + recall + 1e-10)
-    
-    best_idx = np.argmax(f1_scores)
-    best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
-    best_f1 = f1_scores[best_idx]
-    
-    return best_threshold, best_f1
+    """Compatibility wrapper around the shared threshold utility."""
+    return optimal_threshold(y_probs, y_true)
 
 
 @torch.no_grad()
 def evaluate(model, loader, threshold=0.5):
-    """
-    Evaluate model on a dataset.
-    
-    Args:
-        model: Trained GNN model
-        loader: DataLoader with evaluation data
-        threshold: Classification threshold
-    
-    Returns:
-        Dictionary with metrics: acc, f1, auc, auprc, cm, probs, labels
-    """
-    model.eval()
-    all_probs = []
-    all_labels = []
-    
-    for data in loader:
-        if data is None:
-            continue
-            
-        data = data.to(DEVICE)
-        out = model(
-            data.x,
-            data.edge_index,
-            data.edge_attr,
-            data.batch,
-            getattr(data, 'site_id', None),
-            getattr(data, 'age', None),
-            getattr(data, 'sex', None),
-            getattr(data, 'fiq', None)
-        )
-        probs = torch.softmax(out, dim=1)
-        all_probs.append(probs[:, 1].cpu().numpy())
-        all_labels.append(data.y.cpu().numpy())
-    
-    if not all_probs:
-        logger.warning("No predictions collected during evaluation")
-        return {
-            'acc': 0.0, 'f1': 0.0, 'auc': 0.5, 'auprc': 0.0,
-            'cm': np.zeros((2, 2)),
-            'probs': np.array([]), 'labels': np.array([])
-        }
-    
-    probs_array = np.concatenate(all_probs)
-    labels_array = np.concatenate(all_labels)
-    
-    # SAFETY: Check for NaN in probs before computing metrics
-    if np.isnan(probs_array).any():
-        logger.error(f"Predictions contain NaN values! Skipping AUC computation.")
-        logger.error(f"  NaN count: {np.isnan(probs_array).sum()} / {len(probs_array)}")
-        return {
-            'acc': 0.0, 'f1': 0.0, 'auc': 0.5, 'auprc': 0.0,
-            'cm': np.zeros((2, 2)),
-            'probs': probs_array, 'labels': labels_array
-        }
-    
-    preds_array = (probs_array > threshold).astype(int)
-    
-    auc = roc_auc_score(labels_array, probs_array)
-    auprc = average_precision_score(labels_array, probs_array)
-    f1 = f1_score(labels_array, preds_array, zero_division=0)
-    acc = accuracy_score(labels_array, preds_array)
-    cm = confusion_matrix(labels_array, preds_array)
-    
-    return {
-        'acc': acc,
-        'f1': f1,
-        'auc': auc,
-        'auprc': auprc,
-        'cm': cm,
-        'probs': probs_array,
-        'labels': labels_array
-    }
+    """Compatibility wrapper around shared loader evaluation."""
+    return evaluate_loader(model, loader, DEVICE, threshold=threshold)
 
 
 def evaluate_ensemble(
@@ -246,7 +164,6 @@ def evaluate_ensemble(
         checkpoint_manager: CheckpointManager for loading models
     """
     from src.features.graph_factory import ABIDECausalDataset
-    from src.models.causal_gnn import CausalBrainGNN
     
     logger.info(f"\n{'='*70}")
     logger.info("ENSEMBLE EVALUATION (TEST SET)")
@@ -270,23 +187,11 @@ def evaluate_ensemble(
         
         for fold in range(K_FOLDS):
             # Initialize model
-            model = CausalBrainGNN(
-                num_node_features=GNN_IN_CHANNELS,
-                hidden_channels=GNN_HIDDEN_CHANNELS,
-                num_classes=2,
-                dropout=GNN_DROPOUT,
-                num_heads=GNN_NUM_HEADS,
-                num_layers=GNN_NUM_LAYERS,
-                pooling=GNN_POOLING,
-                num_sites=20,
-                use_site_embedding=GNN_USE_SITE_EMBEDDING,
-                use_demographics=GNN_USE_DEMOGRAPHICS,
+            model = build_model(
+                device=DEVICE,
                 use_grl=use_grl,
                 grl_alpha=grl_alpha,
-                edge_gate=GNN_EDGE_GATE,
-                num_nodes=NUM_LOBES,
-                node_emb_dim=GNN_NODE_EMB_DIM,
-            ).to(DEVICE)
+            )
             try:
                 checkpoint = checkpoint_manager.load(model, fold=fold)
                 threshold = checkpoint.get('threshold', 0.5)
@@ -391,35 +296,6 @@ def _compute_site_auc_values(
     return site_auc_values
 
 
-def _maybe_compile_model(model: nn.Module) -> nn.Module:
-    """Disable torch.compile for now due to CUDA graph tensor reuse issues.
-    
-    See: https://github.com/pytorch/pytorch/issues/86302
-    Error: "accessing tensor output of CUDAGraphs that has been overwritten by a subsequent run"
-    
-    When torch.compile is used with CUDA graphs in gradient accumulation loops, tensors 
-    created in one forward pass can be overwritten in subsequent passes, causing the 
-    CUDA graph replay to fail. This is a known interaction issue in PyTorch 2.x.
-    
-    Workaround options:
-    1. Disable torch.compile (current approach) - safest, no overhead
-    2. Add torch.compiler.cudagraph_mark_step_begin() before each epoch
-    3. Clone tensors to prevent reuse
-    
-    Re-enable once PyTorch fixes the CUDA graph lifecycle management or 
-    we refactor gradient accumulation to avoid tensor reuse.
-    """
-    # Disabled due to CUDA graph tensor reuse issues
-    # if torch.cuda.is_available() and hasattr(torch, "compile"):
-    #     try:
-    #         compiled_model = torch.compile(model, mode="reduce-overhead")
-    #         logger.info("torch.compile enabled (reduce-overhead mode)")
-    #         return compiled_model
-    #     except Exception as exc:
-    #         logger.warning("torch.compile failed, using eager mode: %s", exc)
-    return model
-
-
 def _run_training_once(
     *,
     use_grl: bool,
@@ -438,7 +314,6 @@ def _run_training_once(
     - CheckpointManager: Save/load best models
     """
     from src.features.graph_factory import ABIDECausalDataset
-    from src.models.causal_gnn import CausalBrainGNN
 
     _set_global_seed(42)
 
@@ -473,6 +348,10 @@ def _run_training_once(
     # Initialize tracking
     tracker = TrainingTracker(k_folds=K_FOLDS)
     checkpoint_manager = CheckpointManager(checkpoint_dir, monitor='auc', mode='max')
+    experiment_tracker = ExperimentTracker(experiment_name=f"gnn_training_{run_name}")
+    experiment_tracker.add_note("use_grl", use_grl)
+    experiment_tracker.add_note("grl_alpha", float(grl_alpha))
+    experiment_tracker.add_note("checkpoint_dir", str(checkpoint_dir))
     
     # Initialize training monitor for analysis
     analysis_dir = RESULTS_TRAINING_DIR if run_post_analysis else (RESULTS_TRAINING_DIR / run_name)
@@ -515,6 +394,20 @@ def _run_training_once(
         v_idx = np.where(cv_folds == f)[0]
         cv_splits.append((t_idx, v_idx))
         logger.debug(f"Fold {f}: train={len(t_idx)}, val={len(v_idx)}")
+
+    base_subject_ids = [str(s) for s in dataset.subject_ids]
+    available_fold_files = [
+        f for f in range(K_FOLDS)
+        if (HARMONIZED_FOLDS_DIR / f"harmonized_fold_{f}.csv").exists()
+    ]
+    if len(available_fold_files) < K_FOLDS:
+        logger.warning(
+            "Only %d/%d fold-specific harmonized files found in %s. "
+            "Missing folds will fall back to global harmonized features.",
+            len(available_fold_files),
+            K_FOLDS,
+            HARMONIZED_FOLDS_DIR,
+        )
             
     site_auc_values = []
 
@@ -525,10 +418,44 @@ def _run_training_once(
 
         _set_global_seed(42 + fold)  # deterministic per-fold model initialisation
         fold_start_time = time.time()
+
+        # Prefer fold-specific harmonized features (fit on fold-train only).
+        fold_dataset = dataset
+        fold_temporal_path = HARMONIZED_FOLDS_DIR / f"harmonized_fold_{fold}.csv"
+        if fold_temporal_path.exists():
+            try:
+                candidate_dataset = ABIDECausalDataset(
+                    split='train',
+                    temporal_features_path=fold_temporal_path,
+                )
+                candidate_subject_ids = [str(s) for s in candidate_dataset.subject_ids]
+                if candidate_subject_ids == base_subject_ids:
+                    fold_dataset = candidate_dataset
+                    logger.info("Using fold-specific harmonized features: %s", fold_temporal_path)
+                else:
+                    logger.warning(
+                        "Fold %d harmonized file subject ordering mismatch; "
+                        "falling back to global harmonized features",
+                        fold,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to load fold-specific harmonized features for fold %d (%s); "
+                    "falling back to global harmonized features",
+                    fold,
+                    exc,
+                )
+        else:
+            logger.warning(
+                "Fold-specific harmonized file missing for fold %d (%s); "
+                "falling back to global harmonized features",
+                fold,
+                fold_temporal_path,
+            )
         
         # Create data loaders
-        train_data = [dataset[i] for i in train_idx if dataset[i] is not None]
-        val_data = [dataset[i] for i in val_idx if dataset[i] is not None]
+        train_data = [fold_dataset[i] for i in train_idx if fold_dataset[i] is not None]
+        val_data = [fold_dataset[i] for i in val_idx if fold_dataset[i] is not None]
         
         train_labels = [d.y.item() for d in train_data]
         val_labels = [d.y.item() for d in val_data]
@@ -544,24 +471,11 @@ def _run_training_once(
         val_loader = make_loader(val_data, batch_size=GNN_BATCH_SIZE)
         
         # Initialize model
-        model = CausalBrainGNN(
-            num_node_features=GNN_IN_CHANNELS,
-            hidden_channels=GNN_HIDDEN_CHANNELS,
-            num_classes=2,
-            dropout=GNN_DROPOUT,
-            num_heads=GNN_NUM_HEADS,
-            num_layers=GNN_NUM_LAYERS,
-            pooling=GNN_POOLING,
-            num_sites=20,
-            use_site_embedding=GNN_USE_SITE_EMBEDDING,
-            use_demographics=GNN_USE_DEMOGRAPHICS,
+        model = build_model(
+            device=DEVICE,
             use_grl=use_grl,
             grl_alpha=grl_alpha,
-            edge_gate=GNN_EDGE_GATE,
-            num_nodes=NUM_LOBES,
-            node_emb_dim=GNN_NODE_EMB_DIM,
-        ).to(DEVICE)
-        model = _maybe_compile_model(model)
+        )
         
         # Loss function
         n_control = max((np.array(train_labels) == 0).sum(), 1)
@@ -660,6 +574,17 @@ def _run_training_once(
             val_probs=final_metrics['probs'],
             val_labels=final_metrics['labels']
         )
+        experiment_tracker.log_fold(
+            fold=fold,
+            metrics={
+                'auc': float(final_metrics['auc']),
+                'f1': float(final_metrics['f1']),
+                'acc': float(final_metrics['acc']),
+                'threshold': float(final_threshold),
+                'best_epoch': int(best_epoch),
+                'train_time_sec': float(fold_train_time),
+            },
+        )
         
         # Generate training visualizations for this fold
         if run_post_analysis:
@@ -674,6 +599,15 @@ def _run_training_once(
     tracker.log_summary()
     summary = tracker.get_summary()
     site_auc_variance = float(np.var(site_auc_values)) if site_auc_values else float('inf')
+    experiment_tracker.finalize(
+        {
+            **summary,
+            'run_name': run_name,
+            'grl_alpha': float(grl_alpha),
+            'site_auc_variance': site_auc_variance,
+            'site_auc_count': len(site_auc_values),
+        }
+    )
     logger.info(
         "Per-site validation AUC variance (%s): %.6f from %d site-level AUC values",
         run_name,
@@ -718,23 +652,11 @@ def _run_training_once(
                     feature_names.extend([f"feature_{i+1}" for i in range(missing)])
             
             # Load best model (fold 0 as representative)
-            best_model = CausalBrainGNN(
-                num_node_features=GNN_IN_CHANNELS,
-                hidden_channels=GNN_HIDDEN_CHANNELS,
-                num_classes=2,
-                dropout=GNN_DROPOUT,
-                num_heads=GNN_NUM_HEADS,
-                num_layers=GNN_NUM_LAYERS,
-                pooling=GNN_POOLING,
-                num_sites=20,
-                use_site_embedding=GNN_USE_SITE_EMBEDDING,
-                use_demographics=GNN_USE_DEMOGRAPHICS,
+            best_model = build_model(
+                device=DEVICE,
                 use_grl=use_grl,
                 grl_alpha=grl_alpha,
-                edge_gate=GNN_EDGE_GATE,
-                num_nodes=NUM_LOBES,
-                node_emb_dim=GNN_NODE_EMB_DIM,
-            ).to(DEVICE)
+            )
             checkpoint_manager.load(best_model, fold=0, allow_partial=True)
             
             # Compute feature attributions

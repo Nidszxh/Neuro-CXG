@@ -65,6 +65,7 @@ from src.core.config import (
     RESULTS_DATA_QUALITY_DIR,
 )
 from src.models.gnn_model import FocalLoss
+from src.models.factory import build_model
 from src.models.training_utils import CheckpointManager, make_loader, train_fold_with_onecycle
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
@@ -87,8 +88,11 @@ def _collect_predictions(model, loader, device=DEVICE):
         if data is None:
             continue
         data = data.to(device)
-        out = model(
-            data.x, data.edge_index, data.edge_attr, data.batch,
+        out = model.forward_batch(data) if hasattr(model, "forward_batch") else model(
+            data.x,
+            data.edge_index,
+            data.edge_attr,
+            data.batch,
             getattr(data, "site_id", None),
             getattr(data, "age", None),
             getattr(data, "sex", None),
@@ -119,7 +123,6 @@ def experiment_cross_site_auc() -> pd.DataFrame:
     logger.info("=" * 70)
 
     from src.features.graph_factory import ABIDECausalDataset
-    from src.models.causal_gnn import CausalBrainGNN
 
     # ── Load test dataset ─────────────────────────────────────────────────────
     try:
@@ -137,21 +140,14 @@ def experiment_cross_site_auc() -> pd.DataFrame:
 
     # ── Load checkpoint (fold 0, representative) ──────────────────────────────
     ckpt_mgr = CheckpointManager(CHECKPOINT_DIR, monitor="auc", mode="max")
-    model = CausalBrainGNN(
-        num_node_features=GNN_IN_CHANNELS,
-        hidden_channels=GNN_HIDDEN_CHANNELS,
-        num_classes=2,
-        dropout=GNN_DROPOUT,
-        num_heads=GNN_NUM_HEADS,
-        num_layers=GNN_NUM_LAYERS,
-        pooling=GNN_POOLING,
-        num_sites=20,
+    model = build_model(
+        device=DEVICE,
         use_site_embedding=True,
         use_demographics=True,
         use_grl=True,
         grl_alpha=1.0,
         edge_gate=True,
-    ).to(DEVICE)
+    )
 
     try:
         ckpt_mgr.load(model, fold=0)
@@ -498,27 +494,19 @@ def experiment_atlas_centroid_baseline() -> Dict:
             atlas_centroids[:, col] = (atlas_centroids[:, col] - atlas_centroids[:, col].mean()) / (rng / 2)
 
     from src.features.graph_factory import ABIDECausalDataset
-    from src.models.causal_gnn import CausalBrainGNN
 
     base_ds = ABIDECausalDataset(split="train")
     atlas_ds = AtlasCentroidDataset(base_ds, atlas_centroids)
 
     def gnn_factory():
-        return CausalBrainGNN(
-            num_node_features=GNN_IN_CHANNELS,
-            hidden_channels=GNN_HIDDEN_CHANNELS,
-            num_classes=2,
-            dropout=GNN_DROPOUT,
-            num_heads=GNN_NUM_HEADS,
-            num_layers=GNN_NUM_LAYERS,
-            pooling=GNN_POOLING,
-            num_sites=20,
+        return build_model(
+            device=DEVICE,
             use_site_embedding=True,
             use_demographics=True,
             use_grl=True,
             grl_alpha=1.0,
             edge_gate=True,
-        ).to(DEVICE)
+        )
 
     # Collect labels
     labels = []

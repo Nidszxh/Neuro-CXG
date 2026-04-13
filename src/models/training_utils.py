@@ -20,16 +20,9 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
-from sklearn.metrics import (
-    roc_auc_score,
-    f1_score,
-    accuracy_score,
-    confusion_matrix,
-    precision_recall_curve,
-    average_precision_score,
-)
 from torch_geometric.loader import DataLoader
 from src.core.config import GNN_ONECYCLE_PCT_START, GNN_GRL_ALPHA_MAX
+from src.models.evaluation import evaluate_loader, optimal_threshold
 
 logger = logging.getLogger(__name__)
 
@@ -41,15 +34,20 @@ def make_loader(
     num_workers: int = 4,
 ) -> DataLoader:
     """Create a tuned torch_geometric DataLoader for small-graph workloads."""
+    effective_workers = num_workers
+    if len(dataset) < 800:
+        effective_workers = min(num_workers, 2)
+
     kwargs = {
         "batch_size": batch_size,
         "shuffle": shuffle,
-        "num_workers": num_workers,
+        "num_workers": effective_workers,
         "pin_memory": torch.cuda.is_available(),
-        "persistent_workers": num_workers > 0,
+        "persistent_workers": effective_workers > 0,
+        "drop_last": bool(shuffle),
     }
-    if num_workers > 0:
-        kwargs["prefetch_factor"] = 2
+    if effective_workers > 0:
+        kwargs["prefetch_factor"] = 4
     return DataLoader(dataset, **kwargs)
 
 
@@ -454,7 +452,7 @@ def train_one_epoch_with_accumulation(
                 site_loss = F.cross_entropy(site_logits, site_targets)
                 loss = class_loss + site_loss_weight * site_loss
         else:
-            out = model(
+            out = model.forward_batch(data) if hasattr(model, "forward_batch") else model(
                 data.x,
                 data.edge_index,
                 data.edge_attr,
@@ -489,80 +487,12 @@ def train_one_epoch_with_accumulation(
 
 
 def _find_optimal_threshold(y_true: np.ndarray, y_probs: np.ndarray) -> tuple:
-    precision, recall, thresholds = precision_recall_curve(y_true, y_probs)
-    f1_scores = 2 * (precision * recall) / (precision + recall + 1e-10)
-    best_idx = np.argmax(f1_scores)
-    best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
-    best_f1 = f1_scores[best_idx]
-    return best_threshold, best_f1
+    return optimal_threshold(y_probs, y_true)
 
 
 @torch.no_grad()
 def _evaluate_model(model: torch.nn.Module, loader: torch.utils.data.DataLoader, device: torch.device, threshold: float = 0.5) -> Dict[str, Any]:
-    model.eval()
-    all_probs = []
-    all_labels = []
-
-    for data in loader:
-        if data is None:
-            continue
-
-        data = data.to(device)
-        out = model(
-            data.x,
-            data.edge_index,
-            data.edge_attr,
-            data.batch,
-            getattr(data, 'site_id', None),
-            getattr(data, 'age', None),
-            getattr(data, 'sex', None),
-            getattr(data, 'fiq', None)
-        )
-        probs = torch.softmax(out, dim=1)
-        all_probs.append(probs[:, 1].cpu().numpy())
-        all_labels.append(data.y.cpu().numpy())
-
-    if not all_probs:
-        return {
-            'acc': 0.0,
-            'f1': 0.0,
-            'auc': 0.5,
-            'auprc': 0.0,
-            'cm': np.zeros((2, 2)),
-            'probs': np.array([]),
-            'labels': np.array([]),
-        }
-
-    probs_array = np.concatenate(all_probs)
-    labels_array = np.concatenate(all_labels)
-
-    if np.isnan(probs_array).any():
-        return {
-            'acc': 0.0,
-            'f1': 0.0,
-            'auc': 0.5,
-            'auprc': 0.0,
-            'cm': np.zeros((2, 2)),
-            'probs': probs_array,
-            'labels': labels_array,
-        }
-
-    preds_array = (probs_array > threshold).astype(int)
-    auc = roc_auc_score(labels_array, probs_array)
-    auprc = average_precision_score(labels_array, probs_array)
-    f1 = f1_score(labels_array, preds_array, zero_division=0)
-    acc = accuracy_score(labels_array, preds_array)
-    cm = confusion_matrix(labels_array, preds_array)
-
-    return {
-        'acc': acc,
-        'f1': f1,
-        'auc': auc,
-        'auprc': auprc,
-        'cm': cm,
-        'probs': probs_array,
-        'labels': labels_array,
-    }
+    return evaluate_loader(model, loader, device, threshold=threshold)
 
 
 def train_fold_with_onecycle(

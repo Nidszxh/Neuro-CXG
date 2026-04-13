@@ -86,6 +86,7 @@ from src.core.config import (
 )
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
+from src.models.factory import build_model
 from src.models.training_utils import make_loader
 
 logging.basicConfig(
@@ -101,20 +102,11 @@ REGION_LABELS: List[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 
 def _load_model(checkpoint_path: Path, device: torch.device) -> CausalBrainGNN:
     """Load a CausalBrainGNN from a fold checkpoint."""
-    model = CausalBrainGNN(
-        num_node_features=GNN_IN_CHANNELS,
-        hidden_channels=GNN_HIDDEN_CHANNELS,
-        num_classes=2,
-        num_heads=GNN_NUM_HEADS,
-        num_layers=GNN_NUM_LAYERS,
-        pooling=GNN_POOLING,
-        use_site_embedding=GNN_USE_SITE_EMBEDDING,
-        use_demographics=GNN_USE_DEMOGRAPHICS,
+    model = build_model(
+        device=device,
         use_grl=GNN_USE_GRL,
         grl_alpha=GNN_GRL_ALPHA,
-        edge_gate=GNN_EDGE_GATE,
-        dropout=GNN_DROPOUT,
-    ).to(device)
+    )
 
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")

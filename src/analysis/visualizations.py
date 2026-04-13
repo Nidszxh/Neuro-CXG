@@ -39,7 +39,7 @@ from src.core.config import (
     RESULTS_DIR,
 )
 from src.features.graph_factory import ABIDECausalDataset
-from src.models.causal_gnn import CausalBrainGNN
+from src.models.factory import build_model
 from src.models.training_utils import make_loader
 
 # Import analysis modules
@@ -275,19 +275,7 @@ def generate_simple_feature_importance(output_dir: Path):
         test_loader = make_loader([d for d in test_dataset if d is not None], batch_size=32)
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = CausalBrainGNN(
-            num_node_features=GNN_IN_CHANNELS,
-            hidden_channels=GNN_HIDDEN_CHANNELS,
-            num_classes=2,
-            num_heads=GNN_NUM_HEADS,
-            num_layers=GNN_NUM_LAYERS,
-            pooling=GNN_POOLING,
-            use_site_embedding=GNN_USE_SITE_EMBEDDING,
-            use_demographics=GNN_USE_DEMOGRAPHICS,
-            use_grl=GNN_USE_GRL,
-            grl_alpha=GNN_GRL_ALPHA,
-            edge_gate=GNN_EDGE_GATE,
-        ).to(device)
+        model = build_model(device=device, use_grl=GNN_USE_GRL, grl_alpha=GNN_GRL_ALPHA)
 
         checkpoint_path = CHECKPOINT_DIR / "best_model_fold0.pt"
         if not checkpoint_path.exists():
@@ -312,7 +300,7 @@ def generate_simple_feature_importance(output_dir: Path):
                 batch = batch.to(device)
                 batch.x.requires_grad = True
 
-                out = model(
+                out = model.forward_batch(batch) if hasattr(model, "forward_batch") else model(
                     batch.x,
                     batch.edge_index,
                     batch.edge_attr,
@@ -374,19 +362,7 @@ def run_visualization_pipeline(output_dir: Path):
             logger.info("Running advanced feature importance analysis...")
 
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            model = CausalBrainGNN(
-                num_node_features=GNN_IN_CHANNELS,
-                hidden_channels=GNN_HIDDEN_CHANNELS,
-                num_classes=2,
-                num_heads=GNN_NUM_HEADS,
-                num_layers=GNN_NUM_LAYERS,
-                pooling=GNN_POOLING,
-                use_site_embedding=GNN_USE_SITE_EMBEDDING,
-                use_demographics=GNN_USE_DEMOGRAPHICS,
-                use_grl=GNN_USE_GRL,
-                grl_alpha=GNN_GRL_ALPHA,
-                edge_gate=GNN_EDGE_GATE,
-            ).to(device)
+            model = build_model(device=device, use_grl=GNN_USE_GRL, grl_alpha=GNN_GRL_ALPHA)
 
             checkpoint = torch.load(CHECKPOINT_DIR / "best_model_fold0.pt", map_location=device, weights_only=False)
             missing, unexpected = model.load_state_dict(checkpoint["model_state"], strict=False)

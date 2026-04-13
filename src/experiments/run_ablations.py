@@ -66,6 +66,7 @@ from src.core.config import (
     RESULTS_ABLATIONS_DIR,
 )
 from src.models.gnn_model import FocalLoss
+from src.models.factory import build_model
 from src.models.training_utils import make_loader, train_fold_with_onecycle
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
@@ -334,20 +335,8 @@ def run_kfold(
 
 def _gnn_factory_default(**override_kwargs):
     """Return a factory function that creates CausalBrainGNN with optional overrides."""
-    from src.models.causal_gnn import CausalBrainGNN
-
     def factory():
-        return CausalBrainGNN(
-            num_node_features=GNN_IN_CHANNELS,
-            hidden_channels=GNN_HIDDEN_CHANNELS,
-            num_classes=2,
-            dropout=GNN_DROPOUT,
-            num_heads=GNN_NUM_HEADS,
-            num_layers=GNN_NUM_LAYERS,
-            pooling=GNN_POOLING,
-            num_sites=20,
-            **override_kwargs,
-        )
+        return build_model(device=DEVICE, **override_kwargs)
 
     return factory
 

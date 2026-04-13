@@ -74,6 +74,7 @@ from src.core.config import (
 )
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
+from src.models.factory import build_model
 from src.models.training_utils import make_loader
 
 logging.basicConfig(
@@ -92,20 +93,11 @@ LOBE_LABELS = {v: k for k, v in LOBE_NAMES.items()} if isinstance(LOBE_NAMES, di
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _load_model(fold_id: int) -> CausalBrainGNN:
-    model = CausalBrainGNN(
-        num_node_features=GNN_IN_CHANNELS,
-        hidden_channels=GNN_HIDDEN_CHANNELS,
-        num_classes=2,
-        num_heads=GNN_NUM_HEADS,
-        num_layers=GNN_NUM_LAYERS,
-        pooling=GNN_POOLING,
-        dropout=GNN_DROPOUT,
-        use_site_embedding=GNN_USE_SITE_EMBEDDING,
-        use_demographics=GNN_USE_DEMOGRAPHICS,
+    model = build_model(
+        device=DEVICE,
         use_grl=GNN_USE_GRL,
         grl_alpha=GNN_GRL_ALPHA,
-        edge_gate=GNN_EDGE_GATE,
-    ).to(DEVICE)
+    )
     ckpt_path = get_active_checkpoint_dir() / f"best_model_fold{fold_id}.pt"
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
@@ -138,8 +130,11 @@ def _collect_per_subject(
             if batch is None:
                 continue
             batch = batch.to(DEVICE)
-            out   = model(
-                batch.x, batch.edge_index, batch.edge_attr, batch.batch,
+            out = model.forward_batch(batch) if hasattr(model, "forward_batch") else model(
+                batch.x,
+                batch.edge_index,
+                batch.edge_attr,
+                batch.batch,
                 site_id=getattr(batch, "site_id", None),
                 age=batch.age if hasattr(batch, "age") else None,
                 sex=batch.sex if hasattr(batch, "sex") else None,

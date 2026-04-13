@@ -161,17 +161,36 @@ class CausalBrainGNN(torch.nn.Module):
             Linear(hidden_channels, num_classes)
         )
 
-    def set_grl_alpha(self, progress: float, alpha_max: float = 1.0) -> None:
-        """Anneal GRL alpha using the Ganin et al. 2016 schedule.
+    def set_grl_alpha(self, progress: float, alpha_max: float = 0.1) -> None:
+        """Anneal GRL alpha with warmup and capped adversarial strength.
 
         Args:
             progress: Training progress in [0, 1] (current_epoch / total_epochs).
-                      Alpha increases from 0 to ~1 as training progresses.
-            alpha_max: Maximum alpha reached at end of training.
+            alpha_max: Maximum GRL strength after warmup.
         """
         import math
-        alpha = 2.0 / (1.0 + math.exp(-10.0 * progress)) - 1.0
-        self.grl_alpha = alpha * max(alpha_max, 0.0)
+
+        p = min(max(float(progress), 0.0), 1.0)
+        if p < 0.2:
+            self.grl_alpha = 0.0
+            return
+
+        adjusted_progress = (p - 0.2) / 0.8
+        alpha = 2.0 / (1.0 + math.exp(-5.0 * adjusted_progress)) - 1.0
+        self.grl_alpha = alpha * max(float(alpha_max), 0.0)
+
+    def forward_batch(self, batch) -> torch.Tensor:
+        """Convenience wrapper that forwards a PyG batch object."""
+        return self.forward(
+            batch.x,
+            batch.edge_index,
+            batch.edge_attr,
+            batch.batch,
+            site_id=getattr(batch, "site_id", None),
+            age=getattr(batch, "age", None),
+            sex=getattr(batch, "sex", None),
+            fiq=getattr(batch, "fiq", None),
+        )
 
     def forward(
         self,
