@@ -92,6 +92,8 @@ tree.md
 .coverage
 htmlcov/
 .tox/
+pytest.ini
 
 # --- Misc ---
-dump/
+dump/*
+chats/*
