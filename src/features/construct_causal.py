@@ -16,8 +16,8 @@ from src.core.config import (
     MIN_EDGES_PER_GRAPH, GRAPH_DENSITY_TARGET,
 )
 
-# Legacy lag value for compute_lagged_causality() — kept local to prevent re-introduction in config.
-_LEGACY_CAUSAL_LAG = 1
+# Fixed lag for lagged-Pearson fallback path.
+_LAGGED_PEARSON_LAG = 1
 from src.features.causal_inference import (
     compute_granger_causality,
     compute_granger_causality_gpu,
@@ -34,6 +34,20 @@ logger = logging.getLogger(__name__)
 # Tracks which lobe IDs have already emitted a zero-signal warning so that atlas
 # coverage-gap messages appear once per process run rather than once per subject.
 _zero_lobe_warned: set = set()
+
+
+def _stabilize_sign(dominant_signal: torch.Tensor, roi_data: torch.Tensor) -> torch.Tensor:
+    """Stabilize PCA eigenvariate sign against a robust anchor ROI signal."""
+    roi_means = roi_data.mean(dim=0).abs()
+    if roi_means.numel() == 0:
+        return dominant_signal
+
+    anchor_roi = roi_data[:, int(torch.argmax(roi_means).item())]
+    dot = torch.dot(
+        dominant_signal / (dominant_signal.norm() + 1e-8),
+        anchor_roi / (anchor_roi.norm() + 1e-8),
+    )
+    return dominant_signal if dot >= 0 else -dominant_signal
 
 
 def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
@@ -131,17 +145,7 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
             # First Principal Component captures max variance
             # This preserves the magnitude of activity even when signals are out-of-sync
             dominant_signal = u[:, 0] * s[0]
-            # Sign stabilisation: orient the eigenvariate so it is positively
-            # correlated with the simple ROI mean.  This is more robust than
-            # using the sign of the largest loading (vh[0]), which can flip
-            # when two ROIs have equal magnitude but opposite directions.
-            raw_mean = roi_data.mean(dim=1)  # (T,)
-            correlation = torch.dot(
-                dominant_signal / (dominant_signal.norm() + 1e-8),
-                raw_mean / (raw_mean.norm() + 1e-8),
-            )
-            if correlation < 0:
-                dominant_signal = -dominant_signal
+            dominant_signal = _stabilize_sign(dominant_signal, roi_data)
         except Exception as e:
             logger.debug(f"Lobe {lobe_id}: SVD failed ({str(e)}), falling back to mean")
             dominant_signal = roi_data.mean(dim=1)
@@ -192,14 +196,10 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
     return ts_lobes, features_internal, zero_lobe_mask
 
 
-def compute_lagged_causality(ts_lobe: torch.Tensor) -> torch.Tensor:
-    """
-    Legacy function: Compute lagged Pearson correlation (kept for backward compatibility).
-    
-    For new graphs, use compute_causality_matrix() which supports Granger causality.
-    """
+def _compute_lagged_pearson_matrix(ts_lobe: torch.Tensor) -> torch.Tensor:
+    """Compute lagged Pearson correlation matrix for fallback causality."""
     # Validate input
-    if ts_lobe.shape[0] <= _LEGACY_CAUSAL_LAG:
+    if ts_lobe.shape[0] <= _LAGGED_PEARSON_LAG:
         logger.warning("Insufficient timepoints for lagged correlation")
         return torch.zeros(NUM_LOBES, NUM_LOBES, device=ts_lobe.device)
     
@@ -214,11 +214,11 @@ def compute_lagged_causality(ts_lobe: torch.Tensor) -> torch.Tensor:
     ts_std = (ts_lobe - ts_mean) / ts_std
     
     # 2. Slice for Lag (t-1 -> t)
-    ts_prev = ts_std[:-_LEGACY_CAUSAL_LAG]
-    ts_curr = ts_std[_LEGACY_CAUSAL_LAG:]
+    ts_prev = ts_std[:-_LAGGED_PEARSON_LAG]
+    ts_curr = ts_std[_LAGGED_PEARSON_LAG:]
     
     # 3. Compute Adjacency Matrix (12x12 for 12 regions)
-    directed_adj = (ts_prev.T @ ts_curr) / (ts_std.shape[0] - _LEGACY_CAUSAL_LAG)
+    directed_adj = (ts_prev.T @ ts_curr) / (ts_std.shape[0] - _LAGGED_PEARSON_LAG)
     
     # 4. Validate output
     if torch.isnan(directed_adj).any() or torch.isinf(directed_adj).any():
@@ -285,9 +285,8 @@ def compute_causality_matrix(ts_lobe: torch.Tensor, method: str = None, max_lag:
             )
         
         elif method == 'lagged_pearson':
-            logger.debug(f"Computing lagged Pearson correlation (lag={_LEGACY_CAUSAL_LAG})")
-            # Use legacy function with Fisher-Z transform applied downstream
-            pearson_adj = compute_lagged_causality(ts_lobe)
+            logger.debug(f"Computing lagged Pearson correlation (lag={_LAGGED_PEARSON_LAG})")
+            pearson_adj = _compute_lagged_pearson_matrix(ts_lobe)
             # Fisher-Z transform: z = arctanh(r) — stabilises variance of correlations
             # Clips to (-0.999, 0.999) to avoid ±inf on perfect correlations
             pearson_adj = pearson_adj.clamp(-0.999, 0.999)
@@ -295,7 +294,7 @@ def compute_causality_matrix(ts_lobe: torch.Tensor, method: str = None, max_lag:
         
         else:
             logger.warning(f"Unknown causality method '{method}', falling back to lagged_pearson")
-            fallback_adj = compute_lagged_causality(ts_lobe)
+            fallback_adj = _compute_lagged_pearson_matrix(ts_lobe)
             fallback_adj = fallback_adj.clamp(-0.999, 0.999)
             return torch.arctanh(fallback_adj)
         
@@ -306,7 +305,7 @@ def compute_causality_matrix(ts_lobe: torch.Tensor, method: str = None, max_lag:
     
     except Exception as e:
         logger.warning(f"Causality computation failed ({method}): {e}, falling back to lagged_pearson")
-        return compute_lagged_causality(ts_lobe)
+        return _compute_lagged_pearson_matrix(ts_lobe)
 
 
 def adaptive_sparsification(
@@ -390,12 +389,16 @@ def adaptive_sparsification(
     
     elif method == 'adaptive_statistical':
         # Keep edges above statistical significance threshold.
-        # For Granger causality: retain where -log10(p) > 1.3 (i.e. p < 0.05).
-        # For other methods: use median + 1 std as threshold
+        # For Granger causality use subject-adaptive thresholding.
+        # For other methods: use median + 1 std as threshold.
         if CAUSALITY_METHOD == 'granger':
-            threshold_value = 1.3  # -log10(0.05) significance threshold
+            non_zero_vals = offdiag_values[offdiag_values > 0]
+            if non_zero_vals.numel() > min_edges:
+                threshold_value = torch.quantile(non_zero_vals, 0.70)
+            else:
+                threshold_value = torch.tensor(0.0, device=causal_matrix.device)
         else:
-            non_zero = abs_matrix[abs_matrix > 0]
+            non_zero = offdiag_values[offdiag_values > 0]
             if len(non_zero) > 0:
                 threshold_value = non_zero.median() + non_zero.std()
             else:
@@ -413,7 +416,8 @@ def adaptive_sparsification(
             fallback_triggered = True
             # Fall back to keeping top min_edges
             flat_values = offdiag_values
-            threshold_value = torch.topk(flat_values, min_edges).values[-1]
+            k = min(min_edges, flat_values.numel())
+            threshold_value = torch.topk(flat_values, k).values[-1]
             adj_matrix = torch.where(
                 (abs_matrix >= threshold_value) & offdiag_mask,
                 causal_matrix,
@@ -437,7 +441,8 @@ def adaptive_sparsification(
         if num_edges < min_edges:
             fallback_triggered = True
             flat_values = offdiag_values
-            threshold_value = torch.topk(flat_values, min_edges).values[-1]
+            k = min(min_edges, flat_values.numel())
+            threshold_value = torch.topk(flat_values, k).values[-1]
             adj_matrix = torch.where(
                 (abs_matrix >= threshold_value) & offdiag_mask,
                 causal_matrix,

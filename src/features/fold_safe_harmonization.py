@@ -7,7 +7,7 @@ Pipeline
 2. Aggregate 170 AAL ROIs -> 12 brain regions (vectorised mean).
 3. 5-fold CV harmonization via neuroHarmonize (ComBat).
 4. Quality-check variance retention across folds.
-5. Write combined leave-one-fold-out output for graph_factory.py.
+5. Write per-fold harmonized outputs plus combined no-leak output for graph_factory.py.
 
 External interface (unchanged):
     harmonize_cv_safe_fold(features_df, manifest_df, ...) -> List[HarmonizationFold]
@@ -27,6 +27,8 @@ from neuroHarmonize import harmonizationApply, harmonizationLearn
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     FEATURE_GROUPS,
+    HARMONIZED_FOLDS_DIR,
+    K_FOLDS,
     LOBE_MAPPING,
     LOBE_NAMES,
     MASTER_MANIFEST,
@@ -147,12 +149,11 @@ def repair_features(df: pd.DataFrame, *, impute_nans: bool = True, clip_outliers
         df[cols] = df[cols].fillna(medians)
 
     # Step 4b — clip outliers beyond ±OUTLIER_STD_THRESHOLD σ (vectorised)
-    # NOTE: only run when clip_outliers=True.  In harmonize_cv_safe_fold(),
-    # this is set to False so that fold-safe clipping is applied inside the
-    # fold loop using _outlier_clip_fit / _outlier_clip_apply instead.
+    # NOTE: only run when clip_outliers=True. In harmonize_cv_safe_fold(),
+    # this is set to False so fold-safe clipping is applied inside the fold loop.
     if clip_outliers:
         means = df[cols].mean()
-        stds = df[cols].std().replace(0, np.nan)   # avoid clipping constant cols
+        stds = df[cols].std().replace(0, np.nan)
         lower = means - OUTLIER_STD_THRESHOLD * stds
         upper = means + OUTLIER_STD_THRESHOLD * stds
         df[cols] = df[cols].clip(lower=lower, upper=upper, axis=1)
@@ -315,9 +316,13 @@ def _harmonize_fold(
         for col in train_features.columns:
             if train_features[col].std() < 1e-5:
                 tf[col] += rng.normal(0, 1e-8, len(tf))
-                vf[col] += rng.normal(0, 1e-8, len(vf))
+                if not vf.empty:
+                    vf[col] += rng.normal(0, 1e-8, len(vf))
         model, train_harm = harmonizationLearn(tf.values, train_covariates)
-        val_harm = harmonizationApply(vf.values, val_covariates, model)
+        if vf.empty:
+            val_harm = np.empty((0, len(train_features.columns)))
+        else:
+            val_harm = harmonizationApply(vf.values, val_covariates, model)
         return (
             model,
             pd.DataFrame(train_harm, columns=train_features.columns, index=train_features.index),
@@ -328,6 +333,82 @@ def _harmonize_fold(
             "Harmonization failed (%s); using unharmonized features for this fold", exc
         )
         return None, train_features, val_features
+
+
+def _harmonize_train_apply_pair(
+    train_data: pd.DataFrame,
+    apply_data: pd.DataFrame,
+    train_manifest: pd.DataFrame,
+    apply_manifest: pd.DataFrame,
+) -> Tuple[Optional[object], pd.DataFrame, pd.DataFrame]:
+    """Fit harmonization on train_data and apply to apply_data (strict no-leak)."""
+    train_data = train_data.copy().reset_index(drop=True)
+    apply_data = apply_data.copy().reset_index(drop=True)
+    train_manifest = train_manifest.copy().reset_index(drop=True)
+    apply_manifest = apply_manifest.copy().reset_index(drop=True)
+
+    cols = _feat_cols(train_data)
+
+    # Fold-safe NaN imputation: fit medians on train only, apply to all splits.
+    train_medians = train_data[cols].median()
+    train_data[cols] = train_data[cols].fillna(train_medians)
+    if not apply_data.empty:
+        apply_data[cols] = apply_data[cols].fillna(train_medians)
+
+    # Fold-safe outlier clipping: fit on train only, apply to target split.
+    train_data, clip_bounds = _outlier_clip_fit(train_data)
+    if not apply_data.empty:
+        apply_data = _outlier_clip_apply(apply_data, clip_bounds)
+
+    train_covariates = _prepare_covariates(train_manifest, train_data)
+    if apply_data.empty:
+        apply_covariates = pd.DataFrame(columns=train_covariates.columns)
+    else:
+        apply_covariates = _prepare_covariates(apply_manifest, apply_data)
+
+    train_features = train_data.drop(columns=["subject_id"])
+    if apply_data.empty:
+        apply_features = pd.DataFrame(columns=train_features.columns, index=apply_data.index)
+    else:
+        apply_features = apply_data.drop(columns=["subject_id"])
+
+    train_features, kept_cols, dropped_cols = _remove_constant_features(train_features)
+    apply_features = apply_features.reindex(columns=kept_cols, fill_value=0.0)
+
+    model, train_harmonized, apply_harmonized = _harmonize_fold(
+        train_features,
+        apply_features,
+        train_covariates,
+        apply_covariates,
+    )
+
+    train_restored = _restore_constant_features(train_harmonized, train_data, kept_cols, dropped_cols)
+    train_restored = pd.concat([train_data[["subject_id"]], train_restored], axis=1)
+    train_lobes = _clip_outliers(aggregate_to_lobes(train_restored))
+
+    if apply_data.empty:
+        apply_lobes = pd.DataFrame(columns=train_lobes.columns)
+    else:
+        apply_restored = _restore_constant_features(apply_harmonized, apply_data, kept_cols, dropped_cols)
+        apply_restored = pd.concat([apply_data[["subject_id"]], apply_restored], axis=1)
+        apply_lobes = _clip_outliers(aggregate_to_lobes(apply_restored))
+
+    return model, train_lobes, apply_lobes
+
+
+def _write_ordered_subject_csv(df: pd.DataFrame, subject_order: List[str], output_path: Path) -> None:
+    """Write CSV ordered by subject_id according to subject_order."""
+    if df.empty:
+        logger.warning("No rows to save for %s", output_path)
+        return
+
+    dedup = df.drop_duplicates(subset=["subject_id"], keep="first").set_index("subject_id")
+    keep_order = [sid for sid in subject_order if sid in dedup.index]
+    ordered = dedup.reindex(keep_order).dropna(how="all").reset_index()
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    ordered.to_csv(output_path, index=False)
+    logger.info("Saved harmonized features -> %s (%d subjects)", output_path, len(ordered))
 
 
 # ── 5. Quality verification ───────────────────────────────────────────────
@@ -341,10 +422,15 @@ def _check_harmonization_quality(
     logger.info("HARMONIZATION QUALITY CHECK")
     logger.info("=" * 60)
 
-    all_harmonized = pd.concat(
-        [pd.concat([f.train, f.val], ignore_index=True) for f in harmonized_folds],
-        ignore_index=True,
-    )
+    val_only = [f.val for f in harmonized_folds if not f.val.empty]
+    if val_only:
+        # Validation slices are disjoint across folds and avoid repeated train subjects.
+        all_harmonized = pd.concat(val_only, ignore_index=True).drop_duplicates(subset=["subject_id"])
+    else:
+        all_harmonized = pd.concat(
+            [pd.concat([f.train, f.val], ignore_index=True) for f in harmonized_folds],
+            ignore_index=True,
+        )
     harm_cols = _feat_cols(all_harmonized)
 
     orig_cols = _feat_cols(original_df)
@@ -435,83 +521,106 @@ def harmonize_cv_safe_fold(
     logger.info("=" * 80)
     logger.info("HARMONIZATION (Strict Train-Only Fitting)")
     logger.info("=" * 80)
-    
+
     validate_features(features_df)
     # impute_nans=False: NaN imputation must happen after the train/val split
-    # so that train-only medians are used — prevents label-independent leakage.
+    # so that train-only medians are used - prevents label-independent leakage.
     features_safe = repair_features(features_df, impute_nans=False, clip_outliers=False)
 
-    # 1. Align manifest and extract splits
-    aligned_manifest = manifest_df.set_index("subject_id").reindex(features_safe["subject_id"]).reset_index()
-    if 'split' not in aligned_manifest.columns:
+    if "split" not in manifest_df.columns:
         raise ValueError("manifest_df must contain 'split' column for strict leakage prevention!")
 
-    train_mask = aligned_manifest['split'] == 'train'
-    train_data = features_safe[train_mask].reset_index(drop=True)
-    val_test_data = features_safe[~train_mask].reset_index(drop=True)
+    # Align manifest to feature ordering and drop rows missing manifest metadata.
+    aligned_manifest = manifest_df.set_index("subject_id").reindex(features_safe["subject_id"])
+    missing_manifest = int(aligned_manifest["split"].isna().sum())
+    if missing_manifest:
+        logger.warning("Dropping %d subjects missing manifest split/site metadata", missing_manifest)
+        keep_mask = ~aligned_manifest["split"].isna().to_numpy()
+        features_safe = features_safe.loc[keep_mask].reset_index(drop=True)
+        aligned_manifest = aligned_manifest.loc[keep_mask]
+    aligned_manifest = aligned_manifest.reset_index()
 
-    # Fold-safe NaN imputation: fit medians on train only, apply to all splits
-    _fc = _feat_cols(train_data)
-    _train_medians = train_data[_fc].median()
-    train_data[_fc] = train_data[_fc].fillna(_train_medians)
-    val_test_data[_fc] = val_test_data[_fc].fillna(_train_medians)
-    
-    train_manifest = aligned_manifest[train_mask].reset_index(drop=True)
-    val_test_manifest = aligned_manifest[~train_mask].reset_index(drop=True)
+    train_mask = aligned_manifest["split"] == "train"
+    train_data_all = features_safe[train_mask].reset_index(drop=True)
+    train_manifest_all = aligned_manifest[train_mask].reset_index(drop=True)
+    holdout_data = features_safe[~train_mask].reset_index(drop=True)
+    holdout_manifest = aligned_manifest[~train_mask].reset_index(drop=True)
 
-    # 2. Fit bounds and Covariates on train ONLY
-    train_data, clip_bounds = _outlier_clip_fit(train_data)
-    val_test_data = _outlier_clip_apply(val_test_data, clip_bounds)
-    
-    train_covariates = _prepare_covariates(train_manifest, train_data)
-    val_test_covariates = _prepare_covariates(val_test_manifest, val_test_data)
-    
-    train_features = train_data.drop(columns=["subject_id"])
-    val_test_features = val_test_data.drop(columns=["subject_id"])
-    
-    train_features, kept_cols, dropped_cols = _remove_constant_features(train_features)
-    val_test_features = val_test_features[kept_cols]
-    
-    # 3. Fit ComBat on Train ONLY, Apply to All
-    model, train_harmonized, val_test_harmonized = _harmonize_fold(
-        train_features,
-        val_test_features,
-        train_covariates,
-        val_test_covariates,
-    )
-    
-    # 4. Restore and aggregate
-    train_df = _restore_constant_features(train_harmonized, train_data, kept_cols, dropped_cols)
-    train_df = pd.concat([train_data[["subject_id"]], train_df], axis=1)
-    
-    val_test_df = _restore_constant_features(val_test_harmonized, val_test_data, kept_cols, dropped_cols)
-    val_test_df = pd.concat([val_test_data[["subject_id"]], val_test_df], axis=1)
-    
-    train_lobes = _clip_outliers(aggregate_to_lobes(train_df))
-    val_test_lobes = _clip_outliers(aggregate_to_lobes(val_test_df))
-    
-    # Create fold object to appease existing downstream logic (just wrap train data)
-    fold_result = HarmonizationFold(
-        fold=0,
-        train=train_lobes,
-        val=train_lobes,
-        train_idx=np.arange(len(train_lobes)),
-        val_idx=np.arange(len(train_lobes)),
-        model=model,
-    )
-    harmonized_folds = [fold_result]
-    
+    if train_data_all.empty:
+        raise ValueError("No training subjects available after manifest alignment")
+
+    # Build CV splits on train subjects only.
+    if cv_splits is None:
+        if "cv_fold" not in train_manifest_all.columns:
+            raise ValueError(
+                "manifest_df must contain 'cv_fold' for per-fold harmonization artifacts"
+            )
+        fold_values = pd.to_numeric(train_manifest_all["cv_fold"], errors="coerce")
+        if fold_values.isna().any():
+            raise ValueError("cv_fold contains non-numeric or missing values")
+        fold_values = fold_values.astype(int).to_numpy()
+        if fold_values.min() < 0 or fold_values.max() >= K_FOLDS:
+            raise ValueError(
+                f"Invalid cv_fold values [{fold_values.min()}, {fold_values.max()}], expected [0, {K_FOLDS - 1}]"
+            )
+        cv_splits = [
+            (np.where(fold_values != f)[0], np.where(fold_values == f)[0])
+            for f in range(K_FOLDS)
+        ]
+
+    harmonized_folds: List[HarmonizationFold] = []
+    train_subject_order = train_data_all["subject_id"].tolist()
+
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Per-fold harmonization: fit on fold-train, apply to fold-val only.
+    for fold, (train_idx, val_idx) in enumerate(cv_splits):
+        if len(train_idx) == 0 or len(val_idx) == 0:
+            logger.warning("Skipping fold %d due to empty train/val split", fold)
+            continue
+
+        fold_train_data = train_data_all.iloc[train_idx].reset_index(drop=True)
+        fold_val_data = train_data_all.iloc[val_idx].reset_index(drop=True)
+        fold_train_manifest = train_manifest_all.iloc[train_idx].reset_index(drop=True)
+        fold_val_manifest = train_manifest_all.iloc[val_idx].reset_index(drop=True)
+
+        model, train_lobes, val_lobes = _harmonize_train_apply_pair(
+            fold_train_data,
+            fold_val_data,
+            fold_train_manifest,
+            fold_val_manifest,
+        )
+
+        harmonized_folds.append(
+            HarmonizationFold(
+                fold=fold,
+                train=train_lobes,
+                val=val_lobes,
+                train_idx=np.asarray(train_idx),
+                val_idx=np.asarray(val_idx),
+                model=model,
+            )
+        )
+
+        if output_dir is not None:
+            fold_df = pd.concat([train_lobes, val_lobes], ignore_index=True)
+            fold_path = output_dir / f"harmonized_fold_{fold}.csv"
+            _write_ordered_subject_csv(fold_df, train_subject_order, fold_path)
+
+    # Global no-leak output: fit on full train split, apply to holdout (val+test).
     if full_output_path is not None:
-        combined_df = pd.concat([train_lobes, val_test_lobes], ignore_index=True)
-        # Drop metadata columns (none added yet, but safety check)
-        meta_cols = ["SITE_ID", "DX_GROUP"]
-        combined_df = combined_df.drop(columns=[c for c in meta_cols if c in combined_df.columns])
-        combined_df = combined_df.drop_duplicates(subset=["subject_id"])
-        
-        Path(full_output_path).parent.mkdir(parents=True, exist_ok=True)
-        combined_df.to_csv(full_output_path, index=False)
-        logger.info("Saved combined NO-LEAK harmonized features \u2192 %s", full_output_path)
-        
+        _, train_lobes_full, holdout_lobes = _harmonize_train_apply_pair(
+            train_data_all,
+            holdout_data,
+            train_manifest_all,
+            holdout_manifest,
+        )
+        combined_df = pd.concat([train_lobes_full, holdout_lobes], ignore_index=True)
+        full_subject_order = features_safe["subject_id"].tolist()
+        _write_ordered_subject_csv(combined_df, full_subject_order, Path(full_output_path))
+
     return harmonized_folds
 
 
@@ -664,7 +773,7 @@ def main():
     features = pd.read_csv(NODE_ATTRIBUTES_TEMPORAL)
     manifest = pd.read_csv(MASTER_MANIFEST)
     
-    output_dir = Path("data") / "metadata" / "harmonized_folds_cv"
+    output_dir = HARMONIZED_FOLDS_DIR
     
     harmonized_folds = harmonize_cv_safe_fold(
         features_df=features,

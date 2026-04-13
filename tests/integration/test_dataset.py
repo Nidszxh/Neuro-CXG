@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import src.core.config as cfg
 from src.core.config import (
     NUM_LOBES, LOBE_NAMES, NUM_TEMPORAL_FEATURES,
-    NUM_SPATIAL_FEATURES, GNN_IN_CHANNELS,
+    NUM_SPATIAL_FEATURES, GNN_IN_CHANNELS, FEATURE_GROUPS,
 )
 
 # ── Constants for mock data ───────────────────────────────────────────────────
@@ -56,14 +56,12 @@ def _make_manifest(subject_id: str, split: str, dx_group: int = DX_GROUP) -> pd.
 
 
 def _make_temporal_features(subject_id: str) -> pd.DataFrame:
-    """Build a harmonized temporal feature row: subject_id + 12*20 float columns."""
+    """Build a harmonized temporal feature row with current temporal+frequency schema."""
     feature_cols = {}
+    temporal_feature_names = FEATURE_GROUPS["temporal"] + FEATURE_GROUPS["frequency"]
     for lobe_id in range(NUM_LOBES):
         lobe_name = LOBE_NAMES[lobe_id]
-        for feat in ["mean", "std", "skew", "kurtosis", "psd", "mssd", "range", "autocorr",
-                     "delta_power", "delta_peak_freq", "theta_power", "theta_peak_freq",
-                     "alpha_power", "alpha_peak_freq", "beta_power", "beta_peak_freq",
-                     "gamma_power", "gamma_peak_freq", "spectral_entropy", "phase_std"]:
+        for feat in temporal_feature_names:
             feature_cols[f"{lobe_name}_{feat}"] = np.random.rand()
     row = {"subject_id": subject_id, **feature_cols}
     return pd.DataFrame([row])
@@ -192,7 +190,7 @@ class TestABIDECausalDataset:
         assert sample is not None, "get(0) returned None — check logs for error details"
 
     def test_node_feature_shape(self, dataset):
-        """x must have shape (NUM_LOBES, GNN_IN_CHANNELS) = (12, 28)."""
+        """x must have shape (NUM_LOBES, GNN_IN_CHANNELS)."""
         sample = dataset.get(0)
         assert sample is not None
         assert sample.x.shape == (NUM_LOBES, GNN_IN_CHANNELS), (

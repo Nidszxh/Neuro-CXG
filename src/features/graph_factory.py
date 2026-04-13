@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import sys
+from typing import Optional
 
 # Setup paths and config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -25,23 +26,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _get_cache_path(csv_path: Path) -> Path:
-    """Build a cache filename tied to source CSV modification time."""
-    mtime_key = str(csv_path.stat().st_mtime_ns)
-    digest = hashlib.md5(mtime_key.encode()).hexdigest()[:8]
-    return csv_path.parent / f".cache_{csv_path.stem}_{digest}.pkl"
-
-
 def _load_csv_cached(csv_path: Path, index_col: str = None) -> pd.DataFrame:
-    """Load CSV through a lightweight pickle cache to reduce parser overhead."""
-    cache_path = _get_cache_path(csv_path)
-    if cache_path.exists():
-        return pd.read_pickle(cache_path)
+    """Load CSV and cache to Feather when available for faster subsequent reads."""
+    cache_path = csv_path.with_suffix(".feather")
 
-    df = pd.read_csv(csv_path)
+    df = None
+    if cache_path.exists() and cache_path.stat().st_mtime_ns >= csv_path.stat().st_mtime_ns:
+        try:
+            df = pd.read_feather(cache_path)
+        except Exception:
+            df = None
+
+    if df is None:
+        df = pd.read_csv(csv_path)
+        try:
+            df.to_feather(cache_path)
+        except Exception:
+            # Feather requires pyarrow; silently fall back to CSV-only loading.
+            pass
+
     if index_col is not None:
         df = df.set_index(index_col)
-    df.to_pickle(cache_path)
     return df
 
 
@@ -51,10 +56,19 @@ def _stable_subject_seed(subject_id: str) -> int:
 
 class ABIDECausalDataset(Dataset):
 
-    def __init__(self, split='train', transform=None, pre_transform=None):
+    def __init__(
+        self,
+        split='train',
+        transform=None,
+        pre_transform=None,
+        temporal_features_path: Optional[Path] = None,
+        graph_cache_limit: int = 256,
+    ):
         super().__init__(None, transform, pre_transform)
         self.split = split
         self.augment_graphs = split == 'train'  # Only augment training data
+        self.temporal_features_path = temporal_features_path or NODE_ATTRIBUTES_HARMONIZED
+        self._cache_limit = max(int(graph_cache_limit), 16)
         self._load_data_sources()
         self._validate_subjects()
         
@@ -91,7 +105,8 @@ class ABIDECausalDataset(Dataset):
         self.manifest_raw = _load_csv_cached(MASTER_MANIFEST)
         
         # 2. Harmonized temporal features (aggregated to 12 regions)
-        self.node_attr = _load_csv_cached(NODE_ATTRIBUTES_HARMONIZED, index_col='subject_id')
+        self.node_attr = _load_csv_cached(self.temporal_features_path, index_col='subject_id')
+        logger.info("  Temporal features: %s", Path(self.temporal_features_path).name)
         
         # 3. Spatial coordinates and geometric features (6 per lobe).
         # Prefer the ComBat-harmonized version (conf_std / detection_count corrected for
@@ -143,12 +158,13 @@ class ABIDECausalDataset(Dataset):
         invalid_count = 0
         self._subject_edge_counts = {}
         self._graph_cache = {}
+        self._graph_stats = {}
         
         for sub in available_subs:
             graph_path = self.adj_dir / f"{sub}_graph.pt"
             if graph_path.exists():
                 try:
-                    graph_data = torch.load(graph_path, weights_only=False)
+                    graph_data = torch.load(graph_path, map_location='cpu', weights_only=False)
                     if 'adj' not in graph_data:
                         invalid_count += 1
                         continue
@@ -163,13 +179,9 @@ class ABIDECausalDataset(Dataset):
                     
                     valid_subs.append(sub)
                     self._subject_edge_counts[sub] = int(num_edges)
-                    self._graph_cache[sub] = {
-                        'adj': adj.clone().to(torch.float32),
-                        'internal_features': graph_data.get('internal_features'),
-                        'zero_lobe_mask': graph_data.get(
-                            'zero_lobe_mask',
-                            torch.zeros(NUM_LOBES, dtype=torch.bool),
-                        ).bool(),
+                    self._graph_stats[sub] = {
+                        'num_edges': int(num_edges),
+                        'path': graph_path,
                     }
                 except Exception as e:
                     logger.warning(f"Subject {sub}: Failed to validate graph: {e}")
@@ -246,6 +258,10 @@ class ABIDECausalDataset(Dataset):
                         torch.zeros(NUM_LOBES, dtype=torch.bool),
                     ).bool(),
                 }
+
+                if len(self._graph_cache) >= self._cache_limit:
+                    oldest_key = next(iter(self._graph_cache))
+                    self._graph_cache.pop(oldest_key, None)
                 self._graph_cache[sub_id] = graph_dict
 
             adj = graph_dict['adj'].clone()  # Should be (12, 12)

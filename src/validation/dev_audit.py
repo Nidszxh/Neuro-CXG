@@ -40,6 +40,8 @@ from src.core.config import (
     MIN_EDGES_PER_GRAPH,
     NODE_ATTRIBUTES_HARMONIZED,
     NUM_LOBES,
+    NUM_SPATIAL_FEATURES,
+    NUM_TEMPORAL_FEATURES,
     SPARSITY_QUANTILE,
 )
 
@@ -59,10 +61,10 @@ for _grp, _feats in FEATURE_GROUPS.items():
 # Constants that should NOT be hardcoded in source files
 _CONFIG_CONSTANTS = {
     "NUM_LOBES": 12,
-    "NUM_TEMPORAL_FEATURES": 20,
-    "NUM_SPATIAL_FEATURES": 6,
-    "NUM_INTERNAL_FEATURES": 2,
-    "GNN_IN_CHANNELS": 28,
+    "NUM_TEMPORAL_FEATURES": NUM_TEMPORAL_FEATURES,
+    "NUM_SPATIAL_FEATURES": NUM_SPATIAL_FEATURES,
+    "NUM_INTERNAL_FEATURES": len(FEATURE_GROUPS.get("internal", [])),
+    "GNN_IN_CHANNELS": GNN_IN_CHANNELS,
 }
 
 
@@ -103,7 +105,7 @@ class CodeAuditor:
             (r"\(5\s*,\s*8\)", "Shape (5, 8) is legacy 5-lobe; use (NUM_LOBES, NUM_TEMPORAL_FEATURES)"),
             (r"\(5\s*,\s*6\)", "Shape (5, 6) is legacy 5-lobe; use (NUM_LOBES, NUM_SPATIAL_FEATURES)"),
             (r"\(5\s*,\s*14\)", "Shape (5, 14) is legacy; use (NUM_LOBES, GNN_IN_CHANNELS)"),
-            (r"\(12\s*,\s*14\)", "Shape (12, 14) is outdated — use (NUM_LOBES, GNN_IN_CHANNELS)=(12, 28)"),
+            (r"\(12\s*,\s*14\)", f"Shape (12, 14) is outdated - use (NUM_LOBES, GNN_IN_CHANNELS)=(12, {GNN_IN_CHANNELS})"),
             (r"\.reshape\s*\(\s*-1\s*,\s*5\s*,\s*14\)", "reshape(-1, 5, 14) should use NUM_LOBES + GNN_IN_CHANNELS"),
             (r"\.reshape\s*\(\s*-1\s*,\s*5\s*,\s*8\)", "reshape(-1, 5, 8) should use NUM_LOBES + NUM_TEMPORAL_FEATURES"),
         ]

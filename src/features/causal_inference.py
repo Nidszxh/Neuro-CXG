@@ -93,9 +93,13 @@ def compute_granger_causality(
             return i, j, 0.0
 
     pairs = [(i, j) for i in range(n_regions) for j in range(n_regions) if i != j]
-    results = Parallel(n_jobs=n_jobs, prefer="threads")(
-        delayed(_test_pair)(i, j) for i, j in pairs
-    )
+    if n_regions <= 15:
+        # Process overhead dominates at 12-region scale; sequential is faster.
+        results = [_test_pair(i, j) for i, j in pairs]
+    else:
+        results = Parallel(n_jobs=n_jobs, prefer="processes", backend="loky")(
+            delayed(_test_pair)(i, j) for i, j in pairs
+        )
 
     for i, j, score in results:
         gc_matrix[i, j] = score

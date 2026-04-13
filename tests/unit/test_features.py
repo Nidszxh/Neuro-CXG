@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from src.core.config import ACTIVE_FREQ_BANDS
 from src.features.extract_temporal import extract_band_power
 from src.features.causal_inference import compute_granger_causality
 
@@ -28,6 +29,7 @@ class TestExtractBandPower:
     # Sampling frequency matching TR=2 s (fs = 1/TR = 0.5 Hz)
     FS = 0.5
     N = 512  # enough samples for reliable Welch PSD
+    BANDS = list(ACTIVE_FREQ_BANDS.keys())
 
     # ── Helper ──────────────────────────────────────────────────────────────
 
@@ -39,17 +41,18 @@ class TestExtractBandPower:
 
     # ── Happy-path ───────────────────────────────────────────────────────────
 
-    def test_returns_12_features(self):
-        """Function must return exactly 12 keys for the default band set."""
+    def test_returns_expected_feature_count(self):
+        """Function must return 2 features per active band plus 2 global features."""
         ts = np.random.randn(self.N)
         feats = extract_band_power(ts, fs=self.FS)
-        assert len(feats) == 12, f"Expected 12 features, got {len(feats)}: {list(feats.keys())}"
+        expected = len(self.BANDS) * 2 + 2
+        assert len(feats) == expected, f"Expected {expected} features, got {len(feats)}: {list(feats.keys())}"
 
     def test_delta_signal_dominates_delta_band(self):
         """A 0.02 Hz sine (within delta: 0.01–0.027 Hz) should have the highest power in delta."""
         ts = self._pure_sine(freq_hz=0.02, n=self.N, fs=self.FS)
         feats = extract_band_power(ts, fs=self.FS)
-        band_powers = {b: feats[f"{b}_power"] for b in ["delta", "theta", "alpha", "beta", "gamma"]}
+        band_powers = {b: feats[f"{b}_power"] for b in self.BANDS}
         assert band_powers["delta"] == max(band_powers.values()), (
             f"Expected delta to dominate, got: {band_powers}"
         )
@@ -67,7 +70,7 @@ class TestExtractBandPower:
         """A 0.05 Hz sine (within theta: 0.027–0.073 Hz) should dominate theta."""
         ts = self._pure_sine(freq_hz=0.05, n=self.N, fs=self.FS)
         feats = extract_band_power(ts, fs=self.FS)
-        band_powers = {b: feats[f"{b}_power"] for b in ["delta", "theta", "alpha", "beta", "gamma"]}
+        band_powers = {b: feats[f"{b}_power"] for b in self.BANDS}
         assert band_powers["theta"] == max(band_powers.values()), (
             f"Expected theta to dominate, got: {band_powers}"
         )
@@ -76,7 +79,7 @@ class TestExtractBandPower:
         """Band power values must be ≥ 0 (power spectral density is non-negative)."""
         ts = np.random.randn(self.N)
         feats = extract_band_power(ts, fs=self.FS)
-        for band in ["delta", "theta", "alpha", "beta", "gamma"]:
+        for band in self.BANDS:
             assert feats[f"{band}_power"] >= 0, (
                 f"{band}_power is negative: {feats[f'{band}_power']}"
             )
@@ -127,7 +130,7 @@ class TestExtractBandPower:
         """A constant (zero-variance) signal should not raise; band powers must be ≥ 0."""
         ts = np.ones(self.N) * 3.0
         feats = extract_band_power(ts, fs=self.FS)
-        for band in ["delta", "theta", "alpha", "beta", "gamma"]:
+        for band in self.BANDS:
             p = feats[f"{band}_power"]
             assert p >= 0 and np.isfinite(p), (
                 f"{band}_power not a non-negative finite for constant signal: {p}"
