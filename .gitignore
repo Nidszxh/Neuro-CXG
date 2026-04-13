@@ -94,5 +94,4 @@ htmlcov/
 .tox/
 
 # --- Misc ---
-docs/
-scripts/
+dump/
