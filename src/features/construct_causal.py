@@ -20,8 +20,6 @@ from src.core.config import (
 _LAGGED_PEARSON_LAG = 1
 from src.features.causal_inference import (
     compute_granger_causality,
-    compute_granger_causality_gpu,
-    compute_transfer_entropy,
 )
 
 # Setup logging
@@ -253,37 +251,13 @@ def compute_causality_matrix(ts_lobe: torch.Tensor, method: str = None, max_lag:
     
     try:
         if method == 'granger':
-            # Check for GPU
-            use_gpu = torch.cuda.is_available() and DEVICE.type == 'cuda'
-            if use_gpu:
-                logger.debug(f"Computing Granger causality on GPU (max_lag={max_lag} timepoints)")
-                try:
-                    causal_matrix_np = compute_granger_causality_gpu(
-                        ts_numpy,
-                        max_lag=max_lag,
-                        device=DEVICE
-                    )
-                except Exception as e:
-                    logger.warning(f"GPU Granger failed: {e}. Falling back to CPU.")
-                    causal_matrix_np = compute_granger_causality(
-                        ts_numpy,
-                        max_lag=max_lag
-                    )
-            else:
-                logger.debug(f"Computing Granger causality on CPU (max_lag={max_lag} timepoints)")
-                causal_matrix_np = compute_granger_causality(
-                    ts_numpy,
-                    max_lag=max_lag
-                )
-        
-        elif method == 'transfer_entropy':
-            logger.debug("Computing transfer entropy")
-            causal_matrix_np = compute_transfer_entropy(
+            # CPU-only Granger (GPU path removed in Task 6 — DD-014)
+            logger.debug(f"Computing Granger causality on CPU (max_lag={max_lag} timepoints)")
+            causal_matrix_np = compute_granger_causality(
                 ts_numpy,
-                k=1,
-                bins=10
+                max_lag=max_lag
             )
-        
+
         elif method == 'lagged_pearson':
             logger.debug(f"Computing lagged Pearson correlation (lag={_LAGGED_PEARSON_LAG})")
             pearson_adj = _compute_lagged_pearson_matrix(ts_lobe)
@@ -670,5 +644,237 @@ def main():
         )
 
 
+
+
 if __name__ == "__main__":
     main()
+
+
+# ─── TASK 2: Multi-View Causal Graph Construction (DD-010) ───────────────────────
+
+def construct_multiview_graphs(
+    subject_id: str,
+    time_series: torch.Tensor,
+    lobe_ids: torch.Tensor,
+    lobe_to_roi: dict,
+    tr: float,
+    output_dir: Path,
+    rng: np.random.Generator = None,
+) -> bool:
+    """
+    Generate 6 causal graph views per subject for CausalInvarianceLoss training.
+
+    Views:
+        base:            Existing saved graph (reused from causal_graphs/); just
+                         reads from disk rather than recomputing.
+        extended_lag:    Granger with max_lag = round(GRANGER_MAX_LAG_SECONDS / tr * 1.5).
+        bootstrap_0/1/2: Granger fitted on 80% random timepoint subsample (seeds 0/1/2).
+        high_confidence: Top-15% edges only from base, with remainder zeroed.
+
+    All 6 views are saved as a single dict to:
+        output_dir / subject_id / "multiview_graphs.pt"
+
+    Args:
+        subject_id: ABIDE subject identifier string.
+        time_series: Raw time series tensor (T, num_rois).
+        lobe_ids: ROI-to-lobe assignment (num_rois,).
+        lobe_to_roi: Dict from lobe index to list of ROI indices.
+        tr: Repetition time in seconds.
+        output_dir: Root directory for multiview outputs (CAUSAL_GRAPHS_MULTIVIEW_DIR).
+        rng: Optional numpy Generator for reproducible bootstrap sampling.
+
+    Returns:
+        True if all 6 views were successfully generated and saved, False otherwise.
+    """
+    from src.features.causal_inference import compute_granger_causality
+
+    if rng is None:
+        rng = np.random.default_rng(seed=42)
+
+    base_path = CAUSAL_GRAPHS_DIR / f"{subject_id}_graph.pt"
+    if not base_path.exists():
+        logger.warning("Base graph not found for %s; skipping multiview construction.", subject_id)
+        return False
+
+    try:
+        base_graph = torch.load(base_path, weights_only=False)
+        adj_base = base_graph['adj'].float()
+    except Exception as e:
+        logger.warning("Failed to load base graph for %s: %s", subject_id, e)
+        return False
+
+    ts_np = time_series.numpy() if isinstance(time_series, torch.Tensor) else time_series
+    T, num_rois = ts_np.shape
+
+    # Helper: aggregate ROI signals to lobe-level
+    def _aggregate_lobes(ts_full: np.ndarray) -> np.ndarray:
+        """Average ROI time series within each lobe → (T, NUM_LOBES)."""
+        lobe_ts = np.zeros((ts_full.shape[0], NUM_LOBES), dtype=np.float32)
+        for lobe_idx, roi_list in lobe_to_roi.items():
+            if roi_list:
+                lobe_ts[:, lobe_idx] = ts_full[:, roi_list].mean(axis=1)
+        return lobe_ts
+
+    lobe_ts = _aggregate_lobes(ts_np)
+
+    # 1. Extended-lag view
+    base_lag = max(1, round(GRANGER_MAX_LAG_SECONDS / max(tr, 0.1)))
+    ext_lag = round(base_lag * 1.5)
+    try:
+        adj_ext_np = compute_granger_causality(lobe_ts, max_lag=ext_lag)
+        adj_extended = torch.tensor(adj_ext_np, dtype=torch.float32)
+    except Exception as e:
+        logger.warning("Extended-lag Granger failed for %s: %s", subject_id, e)
+        adj_extended = adj_base.clone()
+
+    # 2-4. Bootstrap views (80% timepoint subsample, 3 seeds)
+    adj_bootstraps = []
+    for seed in range(3):
+        rng_seed = np.random.default_rng(seed=seed)
+        n_keep = max(int(T * 0.80), base_lag + 10)
+        idx = rng_seed.choice(T, size=n_keep, replace=False)
+        idx = np.sort(idx)
+        lobe_ts_sub = lobe_ts[idx]
+        try:
+            adj_np = compute_granger_causality(lobe_ts_sub, max_lag=base_lag)
+            adj_bootstraps.append(torch.tensor(adj_np, dtype=torch.float32))
+        except Exception as e:
+            logger.warning("Bootstrap %d Granger failed for %s: %s", seed, subject_id, e)
+            adj_bootstraps.append(adj_base.clone())
+
+    # 5. High-confidence view: keep top-15% edges from base
+    adj_flat = adj_base.flatten()
+    nonzero_vals = adj_flat[adj_flat > 0]
+    if nonzero_vals.numel() > 0:
+        threshold_val = float(torch.quantile(nonzero_vals, 0.85))
+        adj_high_conf = (adj_base >= threshold_val).float() * adj_base
+    else:
+        adj_high_conf = adj_base.clone()
+
+    views = {
+        "base":             adj_base,
+        "extended_lag":     adj_extended,
+        "bootstrap_0":      adj_bootstraps[0],
+        "bootstrap_1":      adj_bootstraps[1],
+        "bootstrap_2":      adj_bootstraps[2],
+        "high_confidence":  adj_high_conf,
+    }
+
+    out_path = output_dir / subject_id / "multiview_graphs.pt"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(views, out_path)
+    return True
+
+
+def main_multiview():
+    """
+    Task 2 entry point: generate multi-view causal graphs for all subjects.
+
+    Reads subjects from MASTER_MANIFEST.  For each subject that already has
+    a base graph in CAUSAL_GRAPHS_DIR, constructs 5 additional views and
+    saves to CAUSAL_GRAPHS_MULTIVIEW_DIR.
+
+    Usage (via pipeline registry with --multiview flag, or directly):
+        python -m src.features.construct_causal --multiview
+    """
+    from src.core.config import CAUSAL_GRAPHS_MULTIVIEW_DIR, MASTER_MANIFEST, GRANGER_MAX_LAG_SECONDS
+
+    logger.info("=" * 70)
+    logger.info("MULTI-VIEW CAUSAL GRAPH CONSTRUCTION (Task 2 — DD-010)")
+    logger.info("=" * 70)
+
+    manifest = pd.read_csv(MASTER_MANIFEST)
+    all_subjects = manifest['subject_id'].astype(str).tolist()
+
+    # Build a minimal lobe_to_roi from LOBE_MAPPING (ROI → lobe index)
+    lobe_to_roi: Dict[int, list] = {i: [] for i in range(NUM_LOBES)}
+    for roi_id, lobe_idx in LOBE_MAPPING.items():
+        lobe_to_roi[lobe_idx].append(roi_id)
+
+    CAUSAL_GRAPHS_MULTIVIEW_DIR.mkdir(parents=True, exist_ok=True)
+
+    success, skipped, failed = 0, 0, 0
+    for sub_id in tqdm(all_subjects, desc="Multi-view graphs"):
+        out_file = CAUSAL_GRAPHS_MULTIVIEW_DIR / sub_id / "multiview_graphs.pt"
+        if out_file.exists():
+            skipped += 1
+            continue
+
+        base_path = CAUSAL_GRAPHS_DIR / f"{sub_id}_graph.pt"
+        if not base_path.exists():
+            failed += 1
+            continue
+
+        # Load time series — needed for bootstrap/extended-lag views
+        # Try standard final split layout
+        ts_path = None
+        for split in ("train", "val", "test"):
+            candidate = DATA_FINAL / split / "time_series" / f"{sub_id}_ts.npy"
+            if candidate.exists():
+                ts_path = candidate
+                break
+
+        if ts_path is None:
+            # Fall back to processed dir
+            from src.core.paths import DATA_TIME_SERIES as _DTS
+            candidate2 = _DTS / f"{sub_id}_ts.npy"
+            if candidate2.exists():
+                ts_path = candidate2
+
+        if ts_path is None:
+            logger.debug("No time series for %s; copying base graph only.", sub_id)
+            # Still create multiview with base-derived views only (no bootstrap)
+            base_graph = torch.load(base_path, weights_only=False)
+            adj_base = base_graph['adj'].float()
+            adj_flat = adj_base.flatten()
+            nz = adj_flat[adj_flat > 0]
+            adj_hc = (adj_base >= float(torch.quantile(nz, 0.85))).float() * adj_base if nz.numel() > 0 else adj_base.clone()
+            views = {
+                "base": adj_base, "extended_lag": adj_base.clone(),
+                "bootstrap_0": adj_base.clone(), "bootstrap_1": adj_base.clone(),
+                "bootstrap_2": adj_base.clone(), "high_confidence": adj_hc,
+            }
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(views, out_file)
+            success += 1
+            continue
+
+        try:
+            ts_np = np.load(ts_path)  # (T, num_rois)
+            row = manifest[manifest['subject_id'].astype(str) == sub_id]
+            tr = float(row.get('TR', pd.Series([2.0])).values[0]) if len(row) > 0 else 2.0
+            ts_tensor = torch.tensor(ts_np, dtype=torch.float32)
+            lobe_ids = torch.zeros(ts_np.shape[1], dtype=torch.long)
+
+            ok = construct_multiview_graphs(
+                subject_id=sub_id,
+                time_series=ts_tensor,
+                lobe_ids=lobe_ids,
+                lobe_to_roi=lobe_to_roi,
+                tr=tr,
+                output_dir=CAUSAL_GRAPHS_MULTIVIEW_DIR,
+            )
+            if ok:
+                success += 1
+            else:
+                failed += 1
+        except Exception as exc:
+            logger.warning("Multi-view construction failed for %s: %s", sub_id, exc)
+            failed += 1
+
+    logger.info(
+        "Multi-view construction complete: %d success | %d skipped | %d failed",
+        success, skipped, failed,
+    )
+    logger.info("Output directory: %s", CAUSAL_GRAPHS_MULTIVIEW_DIR)
+
+
+if __name__ == "__main__":
+    import argparse
+    _parser = argparse.ArgumentParser()
+    _parser.add_argument("--multiview", action="store_true", help="Run multi-view graph construction (Task 2)")
+    _args = _parser.parse_args()
+    if _args.multiview:
+        main_multiview()
+    else:
+        main()

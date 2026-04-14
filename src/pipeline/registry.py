@@ -9,6 +9,7 @@ from typing import Dict, Iterable, List, Optional
 from src.core.config import (
     ATLAS_METADATA,
     CAUSAL_GRAPHS_DIR,
+    CAUSAL_GRAPHS_MULTIVIEW_DIR,
     CHECKPOINT_DIR,
     DATA_METADATA,
     FINAL_TRAIN,
@@ -128,6 +129,31 @@ STAGES: List[Stage] = [
     Stage("feature_diagnostics", "Feature Diagnostics", "src.validation.diagnose_features", None),
     Stage("data_quality_experiments", "Data Quality Experiments", "src.experiments.data_quality", RESULTS_DATA_QUALITY_DIR),
     Stage("ablation_studies", "Ablation Studies", "src.experiments.run_ablations", RESULTS_ABLATIONS_DIR),
+    # Task 2 (DD-010): Opt-in multi-view causal graph construction.
+    # Run AFTER causal_graphs. Only activates CausalInvarianceLoss during gnn_training
+    # when CAUSAL_GRAPHS_MULTIVIEW_DIR is populated.  Use --multiview flag:
+    #   python run_pipeline.py --stages multiview_graphs
+    Stage(
+        "multiview_graphs",
+        "Multi-View Causal Graph Construction",
+        "src.features.construct_causal",
+        CAUSAL_GRAPHS_MULTIVIEW_DIR,
+        dependencies=["causal_graphs"],
+        function="main_multiview",
+        args=["--multiview"],
+    ),
+    # Task 5 (DD-013): Opt-in site-stratified CV fold regeneration.
+    # Run AFTER split and BEFORE harmonization/gnn_training.
+    #   python src/data/split.py --site-stratified-cv
+    Stage(
+        "site_stratified_cv",
+        "Site-Stratified CV Fold Assignment",
+        "src.data.split",
+        MASTER_MANIFEST,
+        dependencies=["split"],
+        function="run_site_stratified_split",
+        args=["--site-stratified-cv"],
+    ),
 ]
 
 

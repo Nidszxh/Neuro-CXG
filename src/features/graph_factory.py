@@ -209,8 +209,9 @@ class ABIDECausalDataset(Dataset):
           graph with -log10(p) or Pearson correlation weights).
         * **Temporal + internal features** – 20 harmonised temporal features per
           region + 2 ReHo/PCA internal features from the graph dict.
-        * **Spatial features** – 6 YOLO-derived coordinates per region
-          (x, y, z_depth, size, conf_std, detection_count).
+        * **Spatial features** – 4 anatomical coordinates per region
+          (x, y, z_depth, size). conf_std and detection_count are excluded
+          (site leakage — RF AUC=1.000 in run 3; DD-012).
 
         The three sources are concatenated along the feature axis to produce
         node features ``x`` of shape ``(NUM_LOBES, GNN_IN_CHANNELS)`` = ``(12, 28)``.
@@ -303,11 +304,11 @@ class ABIDECausalDataset(Dataset):
                 logger.error(f"Subject {sub_id}: Missing features")
                 return None
 
-            # 4. Combine all features: (12, 20) temporal + (12, 2) internal + (12, 6) spatial = (12, 28)
+            # 4. Combine all features: (12, 18+) temporal/freq + (12, 2) internal + (12, 4) spatial = (12, GNN_IN_CHANNELS)
             x = torch.cat([
-                torch.tensor(temporal_features, dtype=torch.float32),  # (12, 20)
-                internal_features,                                    # (12, 2) <-- ADDED
-                torch.tensor(spatial_features, dtype=torch.float32)   # (12, 6)
+                torch.tensor(temporal_features, dtype=torch.float32),  # (12, NUM_TEMPORAL_FEATURES)
+                internal_features,                                       # (12, 2)
+                torch.tensor(spatial_features, dtype=torch.float32)     # (12, NUM_SPATIAL_FEATURES)
             ], dim=1)
             
             # SAFETY: Check final feature tensor for NaN/Inf

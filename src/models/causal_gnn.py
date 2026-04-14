@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import (
     GATv2Conv,
@@ -8,6 +9,11 @@ from torch_geometric.nn import (
 )
 from torch_geometric.nn.aggr import AttentionalAggregation
 from torch.nn import Linear, Sequential, GELU, Dropout, LayerNorm
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from src.core.atlas_config import LOBE_TO_NETWORK, NETWORK_TO_LOBES, NUM_NETWORKS, NUM_LOBES
 
 
 class GradientReversal(torch.autograd.Function):
@@ -20,36 +26,155 @@ class GradientReversal(torch.autograd.Function):
     def backward(ctx, grad_output):
         return grad_output.neg() * ctx.alpha, None
 
+
+# ─── TASK 3: Anatomical Hierarchical Pooling (DD-011) ──────────────────────────
+
+class AnatomicalHierarchyPool(nn.Module):
+    """
+    Two-level anatomical pooling replacing global mean/max/sum pooling.
+
+    Rationale (DD-011): Global pooling collapses 12 lobe embeddings into a single
+    vector without respecting the known functional hierarchy of the brain. This
+    discards structured information about which *networks* (DMN, Salience, etc.)
+    drive classification. Hierarchical pooling forces the model to first summarise
+    lobes within each functional network and then aggregate networks into a graph
+    vector, matching the known two-level organisation of resting-state fMRI.
+
+    Level 1: Attention-weighted aggregation of lobes within each of 4 networks.
+             Produces network_embeddings of shape (batch, NUM_NETWORKS, hidden_dim).
+
+    Level 2: Attention-weighted aggregation of NUM_NETWORKS embeddings → graph vector
+             of shape (batch, hidden_dim).
+
+    The intermediate ``last_network_embeddings`` is stored as an instance attribute
+    after every forward call so that explainability code can access it without
+    re-running the model.
+
+    Args:
+        hidden_dim: Size of node embeddings coming from the last GATv2Conv layer.
+        num_networks: Number of functional networks (default 4).
+        lobe_to_network: Dict mapping lobe index → network index.
+        network_to_lobes: Dict mapping network index → list of lobe indices.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_networks: int = NUM_NETWORKS,
+        lobe_to_network: dict = None,
+        network_to_lobes: dict = None,
+    ):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_networks = num_networks
+        self.lobe_to_network = lobe_to_network or LOBE_TO_NETWORK
+        self.network_to_lobes = network_to_lobes or NETWORK_TO_LOBES
+
+        # Level-1 attention gate: scores each lobe within its network
+        self.lobe_gate = Linear(hidden_dim, 1)
+
+        # Level-2 attention gate: scores each network embedding
+        self.network_gate = Linear(hidden_dim, 1)
+
+        # Stored during forward for explainability access
+        self.last_network_embeddings: torch.Tensor = None
+
+    def forward(
+        self,
+        h: torch.Tensor,
+        batch: torch.Tensor,
+        num_graphs: int,
+    ) -> torch.Tensor:
+        """
+        Args:
+            h: Node embeddings after GATv2 layers, shape (total_nodes, hidden_dim).
+               total_nodes = num_graphs * NUM_LOBES (fixed 12-node graphs).
+            batch: Graph-assignment vector, shape (total_nodes,). Maps each node
+                   to a graph index in [0, num_graphs).
+            num_graphs: Number of graphs in the mini-batch.
+
+        Returns:
+            graph_emb: shape (num_graphs, hidden_dim)
+        """
+        device = h.device
+
+        # Build network embeddings: (num_graphs, num_networks, hidden_dim)
+        network_embs = torch.zeros(
+            num_graphs, self.num_networks, self.hidden_dim, device=device
+        )
+
+        for net_idx, lobe_list in self.network_to_lobes.items():
+            # For each graph, gather lobe embeddings belonging to this network.
+            # node global index = graph_idx * NUM_LOBES + lobe_local_idx
+            lobe_tensor = torch.tensor(lobe_list, device=device)  # (L,)
+
+            # Get global node indices for all graphs × lobes in this network
+            # Shape: (num_graphs, L)
+            global_ids = (
+                torch.arange(num_graphs, device=device).unsqueeze(1) * NUM_LOBES
+                + lobe_tensor.unsqueeze(0)
+            )  # (num_graphs, L)
+
+            flat_ids = global_ids.view(-1)  # (num_graphs * L,)
+
+            # Guard against out-of-range (should not happen with fixed 12-node graphs)
+            valid_mask = flat_ids < h.size(0)
+            if not valid_mask.all():
+                flat_ids = flat_ids[valid_mask]
+
+            lobe_embs_flat = h[flat_ids]  # (num_graphs * L, hidden_dim)
+            lobe_embs = lobe_embs_flat.view(num_graphs, len(lobe_list), self.hidden_dim)
+
+            # Level-1 attention: (num_graphs, L, 1) → softmax over L
+            gates = self.lobe_gate(lobe_embs)  # (num_graphs, L, 1)
+            attn = torch.softmax(gates, dim=1)  # (num_graphs, L, 1)
+            net_emb = (attn * lobe_embs).sum(dim=1)  # (num_graphs, hidden_dim)
+
+            network_embs[:, net_idx, :] = net_emb
+
+        # Store for explainability before Level-2 aggregation
+        self.last_network_embeddings = network_embs.detach()
+
+        # Level-2 attention: collapse (num_graphs, num_networks, hidden_dim) → (num_graphs, hidden_dim)
+        gates2 = self.network_gate(network_embs)          # (num_graphs, num_networks, 1)
+        attn2 = torch.softmax(gates2, dim=1)              # (num_graphs, num_networks, 1)
+        graph_emb = (attn2 * network_embs).sum(dim=1)     # (num_graphs, hidden_dim)
+
+        return graph_emb
+
+
+# ─── MAIN GNN MODEL ────────────────────────────────────────────────────────────
+
 class CausalBrainGNN(torch.nn.Module):
     """
     GNN for 12-Node Lobe Graphs (Phase 3: Balanced Capacity).
-    
+
     Architecture:
-    - Dynamic feature input (28 features: 20 temporal + 2 internal + 6 spatial)
+    - Dynamic feature input (24 features: 18 temporal+freq + 2 internal + 4 spatial)
     - 2-3 GAT layers (configurable for 12-node graphs)
     - GELU activations (smooth, well-behaved gradients)
     - Residual connections and LayerNorm
-    - Multi-scale pooling (mean + max + sum)
+    - Anatomical hierarchical pooling (Task 3) or attention / mean+max+sum
     - Optional site conditioning (16-dim embeddings)
     - Optional per-lobe identity embeddings (16-dim by default)
     """
     def __init__(
-        self, 
-        num_node_features,  # Dynamic: should be 28
-        hidden_channels=128,  # Increased capacity for 28-feature inputs
+        self,
+        num_node_features,
+        hidden_channels=128,
         num_classes=2,
-        dropout=0.4,  # Reduced to prevent underfitting
+        dropout=0.4,
         num_heads=4,
         num_layers=2,
-        pooling="mean_max_sum",
+        pooling="anatomical",   # changed default from "mean_max_sum" to "anatomical" (Task 3)
         num_sites=20,
         use_site_embedding=True,
         use_demographics=True,
         use_grl=False,
         grl_alpha=1.0,
         edge_gate=True,
-        num_nodes=12,        # Number of graph nodes (lobes) — used for identity embedding
-        node_emb_dim=16,     # Learnable per-lobe identity embedding size (0 = disabled)
+        num_nodes=12,
+        node_emb_dim=16,
     ):
         super(CausalBrainGNN, self).__init__()
         torch.manual_seed(42)
@@ -64,12 +189,11 @@ class CausalBrainGNN(torch.nn.Module):
         self.node_emb_dim = node_emb_dim
 
         # Learnable per-lobe identity embedding (analogous to positional embedding).
-        # Gives the GNN a stable anatomical identity for each of the 12 brain lobes.
         if node_emb_dim > 0:
             self.node_embedding = torch.nn.Embedding(num_nodes, node_emb_dim)
             torch.nn.init.xavier_uniform_(self.node_embedding.weight.unsqueeze(0))
         else:
-            node_emb_dim = 0  # ensure correct lin_in size
+            node_emb_dim = 0
 
         # Site embedding for scanner bias reduction
         if use_site_embedding:
@@ -81,7 +205,7 @@ class CausalBrainGNN(torch.nn.Module):
         # 1. Input Projection with LayerNorm
         self.lin_in = Linear(num_node_features + site_embed_dim + node_emb_dim, hidden_channels)
         self.norm_in = LayerNorm(hidden_channels)
-        
+
         # 2. GAT Layer 1
         self.conv1 = GATv2Conv(
             hidden_channels,
@@ -130,7 +254,11 @@ class CausalBrainGNN(torch.nn.Module):
 
         # 4. Pooling
         demo_dim = 3 if use_demographics else 0
-        if pooling == "attention":
+        if pooling == "anatomical":
+            # Task 3: two-level anatomical hierarchical pooling
+            self.anatomical_pool = AnatomicalHierarchyPool(hidden_channels)
+            pooling_dim = hidden_channels + demo_dim
+        elif pooling == "attention":
             self.att_pool = AttentionalAggregation(
                 gate_nn=Sequential(
                     Linear(hidden_channels, hidden_channels // 2),
@@ -152,7 +280,7 @@ class CausalBrainGNN(torch.nn.Module):
                 GELU(),
                 Linear(32, num_sites)
             )
-        
+
         # 5. Classification Head
         self.classifier = Sequential(
             Linear(pooling_dim, hidden_channels),
@@ -162,19 +290,12 @@ class CausalBrainGNN(torch.nn.Module):
         )
 
     def set_grl_alpha(self, progress: float, alpha_max: float = 0.1) -> None:
-        """Anneal GRL alpha with warmup and capped adversarial strength.
-
-        Args:
-            progress: Training progress in [0, 1] (current_epoch / total_epochs).
-            alpha_max: Maximum GRL strength after warmup.
-        """
+        """Anneal GRL alpha with warmup and capped adversarial strength."""
         import math
-
         p = min(max(float(progress), 0.0), 1.0)
         if p < 0.2:
             self.grl_alpha = 0.0
             return
-
         adjusted_progress = (p - 0.2) / 0.8
         alpha = 2.0 / (1.0 + math.exp(-5.0 * adjusted_progress)) - 1.0
         self.grl_alpha = alpha * max(float(alpha_max), 0.0)
@@ -192,77 +313,51 @@ class CausalBrainGNN(torch.nn.Module):
             fiq=getattr(batch, "fiq", None),
         )
 
-    def forward(
-        self,
-        x,
-        edge_index,
-        edge_attr,
-        batch,
-        site_id=None,
-        age=None,
-        sex=None,
-        fiq=None,
-        return_site_logits=False
-    ):
+    def forward_multiview(self, views: list) -> tuple:
         """
-        Forward pass through the GATv2-based brain connectivity classifier.
-
-        Processing pipeline:
-            1. [Optional] Site embedding: append 16-dim site vector to node features.
-               When ``site_id`` is None the embedding column is zero-padded so that
-               ``lin_in`` always receives the same input width.
-            2. Input projection: ``lin_in`` (Linear) + LayerNorm + GELU activation.
-            3. Soft edge gating: learnable sigmoid gate applied to ``edge_attr``.
-            4. GATv2 layer 1 with skip connection + LayerNorm + GELU + Dropout.
-            5. GATv2 layer 2 with skip connection + LayerNorm + GELU + Dropout.
-            6. [Optional] GATv2 layer 3 with skip connection (when ``num_layers >= 3``).
-            7. Global graph pooling (attention or mean+max+sum).
-            8. [Optional] Append demographics (age, sex, fiq) before classifier.
-            9. Classifier head → class logits.
-           10. [Optional] Adversarial site head via GRL.
+        Forward pass over multiple PyG Batch objects (different causal graph views
+        of the same subjects). Returns class logits and graph embeddings for each view.
 
         Args:
-            x (Tensor): Node feature matrix of shape ``(num_nodes, in_channels)``.
-                        ``in_channels = GNN_IN_CHANNELS`` (default 28).
-            edge_index (LongTensor): COO edge connectivity, shape ``(2, num_edges)``.
-            edge_attr (Tensor): Edge weights, shape ``(num_edges, 1)``.
-                                Values are -log10(p-value) for Granger causality or
-                                Pearson correlation coefficients.
-            batch (LongTensor): Graph assignment vector, shape ``(num_nodes,)``.
-                                Maps each node to a graph within the mini-batch.
-            site_id (LongTensor, optional): Site index per graph, shape ``(num_graphs,)``.
-                                            Integer in ``[0, num_sites)``.  Pass ``None``
-                                            to disable site conditioning (uses zero-padding).
-            age (Tensor, optional): Normalised age per graph, shape ``(num_graphs, 1)``.
-                                    Normalisation: ``(age - 15) / 20``.
-            sex (Tensor, optional): Normalised sex per graph, shape ``(num_graphs, 1)``.
-                                    Normalisation: ``sex - 1.5``.  (1=M → -0.5, 2=F → 0.5)
-            fiq (Tensor, optional): Normalised FIQ per graph, shape ``(num_graphs, 1)``.
-                                    Normalisation: ``(fiq - 100) / 30``.
-            return_site_logits (bool): If ``True`` and GRL is active, also return the
-                                       site classification logits. Default ``False``.
+            views: List of PyG Batch objects, each representing one causal graph view.
 
         Returns:
-            Tensor: Classification logits, shape ``(num_graphs, num_classes)``.
-                    Apply ``softmax`` for probabilities or use directly with
-                    ``F.cross_entropy`` / ``FocalLoss``.
-            Tensor (optional): Site logits ``(num_graphs, num_sites)`` — only returned
-                               when ``return_site_logits=True`` and ``use_grl=True``.
-
-        Note:
-            * Setting ``return_site_logits=True`` without enabling GRL at init-time
-              returns only the classification logits (the GRL head is absent).
-            * During Captum attribution, pass ``site_id=None`` so the 28-feature input
-              projection stays correctly dimensioned; the site embedding column is
-              automatically zero-padded.
+            logits_list: List of logit tensors, one per view.
+            embeddings_list: List of graph embedding tensors (before classifier),
+                             shape (batch, hidden_dim) per view, used for CausalInvarianceLoss.
         """
+        logits_list = []
+        embeddings_list = []
+        for batch in views:
+            logits, emb = self._forward_with_embedding(
+                batch.x,
+                batch.edge_index,
+                batch.edge_attr,
+                batch.batch,
+                site_id=getattr(batch, "site_id", None),
+                age=getattr(batch, "age", None),
+                sex=getattr(batch, "sex", None),
+                fiq=getattr(batch, "fiq", None),
+            )
+            logits_list.append(logits)
+            embeddings_list.append(emb)
+        return logits_list, embeddings_list
+
+    def _forward_with_embedding(
+        self, x, edge_index, edge_attr, batch,
+        site_id=None, age=None, sex=None, fiq=None,
+    ):
+        """Internal: returns (logits, graph_embedding) for contrastive/multiview use."""
+        g = self._encode(x, edge_index, edge_attr, batch, site_id, age, sex, fiq)
+        return self.classifier(g), g
+
+    def _encode(self, x, edge_index, edge_attr, batch, site_id, age, sex, fiq):
+        """Shared encoder body used by both forward() and _forward_with_embedding()."""
         # 1. Optionally add site embeddings
-        # When site_id is None (e.g., during attribution/inference without site info),
-        # concatenate zeros so lin_in always receives the same input dimensionality.
         if self.use_site_embedding:
             if site_id is not None:
-                site_emb = self.site_embedding(site_id)  # (num_graphs, 16)
-                site_per_node = site_emb[batch]          # (num_nodes, 16)
+                site_emb = self.site_embedding(site_id)
+                site_per_node = site_emb[batch]
             else:
                 site_per_node = torch.zeros(
                     x.shape[0], self.site_embedding.embedding_dim,
@@ -270,18 +365,16 @@ class CausalBrainGNN(torch.nn.Module):
                 )
             x = torch.cat([x, site_per_node], dim=1)
 
-        # 1b. Per-lobe identity embedding.
-        # Each graph has exactly self.num_nodes nodes in a fixed lobe order,
-        # so local lobe index = global node index modulo num_nodes.
+        # 1b. Per-lobe identity embedding
         if self.node_emb_dim > 0:
             lobe_idx = torch.arange(x.shape[0], device=x.device) % self.num_nodes
-            node_emb = self.node_embedding(lobe_idx)  # (num_nodes_in_batch, node_emb_dim)
+            node_emb = self.node_embedding(lobe_idx)
             x = torch.cat([x, node_emb], dim=1)
 
-        # 2. Input projection with activation
+        # 2. Input projection
         h = self.norm_in(F.gelu(self.lin_in(x)))
-        
-        # 3. Soft edge gating (Dynamic based on source/target nodes and original edge weight)
+
+        # 3. Edge gating
         if self.edge_gate:
             row, col = edge_index
             gate_input = torch.cat([h[row], h[col], edge_attr], dim=-1)
@@ -294,7 +387,7 @@ class CausalBrainGNN(torch.nn.Module):
         h = self.norm1(h + h_res)
         h = F.gelu(h)
         h = self.dropout1(h)
-        
+
         # 5. GAT Layer 2 with residual
         h_res = self.skip2(h)
         h = self.conv2(h, edge_index, edge_attr)
@@ -302,7 +395,7 @@ class CausalBrainGNN(torch.nn.Module):
         h = F.gelu(h)
         h = self.dropout2(h)
 
-        # 6. GAT Layer 3 with residual (optional)
+        # 6. GAT Layer 3 (optional)
         if self.num_layers > 2:
             h_res = self.skip3(h)
             h = self.conv3(h, edge_index, edge_attr)
@@ -310,8 +403,11 @@ class CausalBrainGNN(torch.nn.Module):
             h = F.gelu(h)
             h = self.dropout3(h)
 
-        # 7. Global pooling
-        if self.pooling == "attention":
+        # 7. Pooling
+        num_graphs = int(batch.max().item()) + 1
+        if self.pooling == "anatomical":
+            g = self.anatomical_pool(h, batch, num_graphs)
+        elif self.pooling == "attention":
             g = self.att_pool(h, batch)
         else:
             g_mean = global_mean_pool(h, batch)
@@ -319,17 +415,52 @@ class CausalBrainGNN(torch.nn.Module):
             g_sum = global_add_pool(h, batch)
             g = torch.cat([g_mean, g_max, g_sum], dim=1)
 
-        # 8. Append demographics if enabled
+        # 8. Demographics
         if self.use_demographics and age is not None:
-            # Ensure tensors are 1D (batch,) not scalar or multi-dimensional
             age_flat = age.view(-1) if age.dim() > 0 else age.unsqueeze(0)
             sex_flat = sex.view(-1) if sex.dim() > 0 else sex.unsqueeze(0)
             fiq_flat = fiq.view(-1) if fiq.dim() > 0 else fiq.unsqueeze(0)
-            demo = torch.stack([age_flat, sex_flat, fiq_flat], dim=1)  # (batch_size, 3)
+            demo = torch.stack([age_flat, sex_flat, fiq_flat], dim=1)
             g = torch.cat([g, demo], dim=1)
             g = self.post_fusion_norm(g)
 
-        # 9. Classification
+        return g
+
+    def forward(
+        self,
+        x, edge_index, edge_attr, batch,
+        site_id=None, age=None, sex=None, fiq=None,
+        return_site_logits=False,
+    ):
+        """
+        Forward pass through the GATv2-based brain connectivity classifier.
+
+        Processing pipeline:
+            1. [Optional] Site embedding appended to node features.
+            2. Input projection: lin_in + LayerNorm + GELU.
+            3. Soft edge gating with learned sigmoid gate.
+            4. GATv2 layer 1 with skip connection + LayerNorm + GELU + Dropout.
+            5. GATv2 layer 2 with skip connection + LayerNorm + GELU + Dropout.
+            6. [Optional] GATv2 layer 3.
+            7. Anatomical hierarchical pooling (or attention / mean+max+sum).
+            8. [Optional] Demographics concatenated before classifier.
+            9. Classifier head → class logits.
+           10. [Optional] Adversarial site head via GRL.
+
+        Args:
+            x:        Node features (num_nodes, GNN_IN_CHANNELS).
+            edge_index: COO connectivity  (2, E).
+            edge_attr:  Edge weights      (E, 1).
+            batch:      Graph assignment  (num_nodes,).
+            site_id:    Site index        (num_graphs,) or None.
+            age/sex/fiq: Demographics    (num_graphs, 1) each.
+            return_site_logits: Also return site logits when GRL is active.
+
+        Returns:
+            class_logits: (num_graphs, num_classes)
+            site_logits (optional): (num_graphs, num_sites)
+        """
+        g = self._encode(x, edge_index, edge_attr, batch, site_id, age, sex, fiq)
         class_logits = self.classifier(g)
 
         if self.use_grl and return_site_logits:
