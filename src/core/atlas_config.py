@@ -46,3 +46,39 @@ LOBE_NAMES = {
 }
 NUM_LOBES = 12  # Updated from 5 to 12 regions
 SPATIAL_MIN_REQUIRED_REGIONS = 9  # relaxed gate; final golden filter enforces complete 12-region subjects
+
+# --- FOUR-NETWORK HIERARCHY FOR ANATOMICAL HIERARCHICAL POOLING (Task 3 — DD-011) ---
+# Maps each of the 12 lobe indices to one of 4 functional networks.
+# Based on fMRI functional connectivity literature (Power et al. 2011, Yeo et al. 2011).
+# ASD literature: DMN and Salience are the primary affected networks.
+LOBE_TO_NETWORK = {
+    0: 0,   # Frontal_Superior  → DMN (default mode)
+    1: 0,   # Frontal_Orbital   → DMN
+    4: 0,   # Cingulate         → DMN (ACC is a DMN hub)
+    7: 0,   # Parietal          → DMN (angular/precuneus)
+    8: 0,   # Temporal          → DMN (inferior temporal)
+    2: 1,   # Motor_Premotor    → Salience (SMA/motor cingulate)
+    3: 1,   # Insula            → Salience (anterior insula hub)
+    9: 1,   # Subcortical       → Salience (thalamus/striatum)
+    6: 2,   # Occipital         → Visual/Cerebellar
+    10: 2,  # Cerebellum        → Visual/Cerebellar
+    5: 3,   # Limbic            → Limbic (hippocampus/amygdala)
+    11: 3,  # Brainstem         → Limbic (brainstem modulation)
+}
+
+NUM_NETWORKS = 4
+
+NETWORK_NAMES = {
+    0: "DMN",
+    1: "Salience",
+    2: "Visual_Cerebellar",
+    3: "Limbic",
+}
+
+# Reverse mapping: network index → list of lobe indices
+NETWORK_TO_LOBES = {
+    0: [0, 1, 4, 7, 8],   # DMN
+    1: [2, 3, 9],          # Salience
+    2: [6, 10],            # Visual/Cerebellar
+    3: [5, 11],            # Limbic
+}

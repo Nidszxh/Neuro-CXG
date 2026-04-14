@@ -5,7 +5,7 @@ import logging
 from .atlas_config import *
 from .feature_registry import *
 from .hyperparams import *
-from .paths import *
+from .paths import *  # includes CAUSAL_GRAPHS_MULTIVIEW_DIR (Task 2)
 from .validators import (
     get_active_checkpoint_dir,
     log_training_diagnostics,

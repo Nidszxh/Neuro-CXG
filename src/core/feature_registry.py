@@ -88,5 +88,13 @@ ALL_FEATURE_NAMES = (
     + FEATURE_GROUPS["spatial"]
 )
 
-# Dynamic calculation - currently 26 with gamma removed at runtime.
+# Dynamic calculation — currently 24 when gamma excluded at runtime (4 active bands × 2
+# + 8 base temporal + spectral_entropy + phase_std + 2 internal + 4 spatial).
 GNN_IN_CHANNELS = len(ALL_FEATURE_NAMES)
+
+# Task 4 sentinel: conf_std and detection_count must NOT appear in spatial features.
+# They encode site/scanner identity (RF AUC=1.000 in run 3) — pure site leakage.
+assert NUM_SPATIAL_FEATURES == 4, (
+    f"NUM_SPATIAL_FEATURES must be 4 (x, y, z_depth, size). "
+    f"Got {NUM_SPATIAL_FEATURES}. conf_std and detection_count are forbidden."
+)

@@ -139,7 +139,7 @@ USE_FOCAL_LOSS = True
 USE_CLASS_WEIGHTS = False
 USE_BALANCED_SAMPLING = False
 
-EVAL_FREQUENCY = 10
+# EVAL_FREQUENCY removed in Task 6 (DD-014) — was unused throughout the codebase.
 
 # --- DIAGNOSTIC THRESHOLDS ---
 AUC_RANDOM_THRESHOLD = 0.52
