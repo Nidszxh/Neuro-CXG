@@ -38,11 +38,33 @@ from torch_geometric.data import Batch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import LOBE_NAMES, NUM_LOBES, GNN_IN_CHANNELS
+from src.core.atlas_config import LOBE_TO_NETWORK, NETWORK_TO_LOBES, NUM_NETWORKS, NETWORK_NAMES
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 REGION_LABELS: List[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
+NETWORK_LABELS: List[str] = [NETWORK_NAMES[i] for i in range(NUM_NETWORKS)]
+
+
+def _aggregate_to_networks(lobe_scores: np.ndarray) -> np.ndarray:
+    """
+    Aggregate per-lobe importance scores to the network level.
+
+    Uses the LOBE_TO_NETWORK mapping from atlas_config to average lobe
+    scores within each of the 4 functional networks (Task 3 — DD-011).
+
+    Args:
+        lobe_scores: (NUM_LOBES,) array of per-lobe importance scores.
+
+    Returns:
+        (NUM_NETWORKS,) array of per-network importance scores.
+    """
+    network_scores = np.zeros(NUM_NETWORKS)
+    for net_idx, lobe_list in NETWORK_TO_LOBES.items():
+        if lobe_list:
+            network_scores[net_idx] = np.mean(lobe_scores[lobe_list])
+    return network_scores
 
 
 # ── AttentionWeightExtractor ───────────────────────────────────────────────────
@@ -304,6 +326,22 @@ class NodeImportanceAnalyzer:
             "gradcam":   {**gradcam_results, "diff": diff},
             "attention": attn_results,
         }
+
+        # Task 3: Network-level attribution (DD-011)
+        asd_net  = _aggregate_to_networks(asd_scores)
+        ctrl_net = _aggregate_to_networks(ctrl_scores)
+        net_diff = asd_net - ctrl_net
+        combined["gradcam"]["asd_network_mean"]     = asd_net
+        combined["gradcam"]["control_network_mean"] = ctrl_net
+        combined["gradcam"]["network_diff"]          = net_diff
+
+        logger.info("Network-level GradCAM (ASD - Control):")
+        for ni in range(NUM_NETWORKS):
+            logger.info("  %s: Δ=%.4f (ASD=%.4f, Ctrl=%.4f)",
+                        NETWORK_LABELS[ni], net_diff[ni], asd_net[ni], ctrl_net[ni])
+
+        self._plot_network_diff(net_diff, asd_net, ctrl_net,
+                                output_dir / "node_importance_network_level.png")
         return combined
 
     # ── GradCAM pass ───────────────────────────────────────────────────────────
@@ -544,3 +582,40 @@ class NodeImportanceAnalyzer:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
         plt.close()
         logger.info("Differential importance plot saved → %s", save_path)
+
+    def _plot_network_diff(
+        self,
+        net_diff: np.ndarray,
+        asd_net: np.ndarray,
+        ctrl_net: np.ndarray,
+        save_path: Path,
+    ) -> None:
+        """Bar chart of ASD vs Control GradCAM importance at the network level (Task 3 — DD-011)."""
+        x = np.arange(NUM_NETWORKS)
+        w = 0.30
+        fig, ax = plt.subplots(figsize=(9, 5))
+        ax.bar(x - w / 2, ctrl_net, w, label="Control", color="#3498db", alpha=0.85)
+        ax.bar(x + w / 2, asd_net,  w, label="ASD",     color="#e74c3c", alpha=0.85)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(NETWORK_LABELS, fontsize=12, fontweight="bold")
+        ax.set_ylabel("Mean GradCAM Importance", fontsize=12)
+        ax.set_title(
+            "Network-Level Node Importance: ASD vs Control\n"
+            "(two-level anatomical hierarchical pooling, DD-011)",
+            fontsize=13, fontweight="bold",
+        )
+        ax.legend(fontsize=11)
+        ax.grid(axis="y", alpha=0.3)
+
+        # Annotate difference
+        for ni in range(NUM_NETWORKS):
+            delta = net_diff[ni]
+            ypos = max(asd_net[ni], ctrl_net[ni]) + 0.002
+            ax.text(x[ni], ypos, f"Δ{delta:+.3f}", ha="center", fontsize=9,
+                    color="#e74c3c" if delta > 0 else "#3498db")
+
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.close()
+        logger.info("Network-level importance plot saved → %s", save_path)

@@ -1,38 +1,104 @@
-# Changelog
+# CHANGELOG
 
-All notable changes to this project are documented in this file.
+All notable changes to Neuro-CXG are documented here.
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+---
 
-### Added
-- New documentation set for project onboarding and maintenance:
-  - docs/problem.md
-  - docs/architecture.md
-  - docs/decisions.md
-  - docs/setup.md
-  - docs/usage.md
-  - docs/data.md
-  - docs/evaluation.md
-  - docs/experiments.md
-  - docs/results.md
-  - configs/README.md
+## [Unreleased] — 2026-04-14
 
-### Changed
-- .gitignore updated to allow tracking docs/ content.
-- Consolidated and removed legacy overview/architecture docs after migrating their content into active docs.
+### Task 1 — Structural Learning Enforcement (DD-009)
+**Root Cause**: Model used node features as primary signal; edge structure largely ignored
+(GradientEdgeAttributor returned near-zero scores for most edges).
 
-### Notes
-- Documentation values now distinguish canonical historical run metrics from current on-disk evaluation artifacts.
+**Added**
+- `_apply_structural_dropout()` in `training_utils.py`: zeros node features for ~30%
+  of graphs per batch during training, forcing edge-structure-only classification paths.
+- `EdgeStructureContrastiveLoss` in `training_utils.py`: NT-Xent loss (τ=0.5) between
+  full-feature and edge-only graph embeddings; weight 0.05 in total loss.
+- `_forward_with_embedding()` in `CausalBrainGNN`: returns (logits, embedding) for
+  dual-view forward training.
+- `structural_dropout_prob` and `edge_contrastive_weight` args to
+  `train_one_epoch_with_accumulation` and `train_fold_with_onecycle` (default 0.0 —
+  backward compatible). Canonical training now uses 0.30 / 0.05.
+- Unit tests: `tests/unit/test_structural_learning.py`
 
-## [2026-04-12]
+---
 
-### Changed
-- Refactored configuration surface: src/core/config.py now re-exports from dedicated modules (paths, hyperparams, feature registry, atlas config, validators).
-- Added stage registry wiring so run_pipeline derives stage metadata/order from src/pipeline/registry.py.
-- Improved fold-safe harmonization integration and fold-specific training data loading.
-- Added lightweight experiment tracker integration for run metadata and summary persistence.
-- Hardened causal graph construction (robust lagged correlation helper, sign stabilization, adaptive sparsification safeguards).
+### Task 2 — Multi-View Causal Graph Construction (DD-010)
+**Root Cause**: Single Granger estimate is noisy; one bad fit propagates directly
+to graph embedding without any self-correction.
 
-### Fixed
-- Resolved CUDA graph/tensor reuse instability by disabling torch.compile path in training until upstream lifecycle behavior is safe for this workload.
-- Aligned audit checks with current feature/config dimensions and reduced false-fail behavior for spatial completeness edge cases.
+**Added**
+- `construct_multiview_graphs()` in `construct_causal.py`: generates 6 causal graph
+  views per subject (base, extended_lag, 3 bootstraps, high_confidence).
+- `main_multiview()` entry point in `construct_causal.py` with `--multiview` CLI flag.
+- `CAUSAL_GRAPHS_MULTIVIEW_DIR` in `paths.py`: `data/processed/causal_graphs_multiview/`.
+- `CausalInvarianceLoss` in `gnn_model.py`: NT-Xent loss (τ=0.07) across views;
+  weight 0.15. Activates automatically when multiview dir is populated.
+- `forward_multiview()` in `CausalBrainGNN`: forwards list of Batch objects.
+- `multiview_graphs` Stage in `registry.py` (opt-in, after `causal_graphs`).
+- Unit tests: `tests/unit/test_causal_invariance.py`
+
+---
+
+### Task 3 — Anatomical Hierarchical Pooling (DD-011)
+**Root Cause**: Global pooling collapses the brain's two-level functional hierarchy.
+
+**Added**
+- `LOBE_TO_NETWORK`, `NETWORK_TO_LOBES`, `NUM_NETWORKS`, `NETWORK_NAMES` in `atlas_config.py`.
+- `AnatomicalHierarchyPool` in `causal_gnn.py`: 2-level attention pooling
+  (lobes→networks→graph). Stores `last_network_embeddings` for explainability.
+- Default `pooling` changed to `"anatomical"` in `CausalBrainGNN`. Old modes retained.
+- `_aggregate_to_networks()` and network-level GradCAM plot in `node_importance.py`.
+- Unit tests: `tests/unit/test_anatomical_pool.py`
+
+---
+
+### Task 4 — Spatial Feature Cleanup (DD-012)
+**Root Cause**: `conf_std` and `detection_count` perfectly predict acquisition site
+(RF AUC=1.000 in run 3) — pure site leakage.
+
+**Changed**
+- `feature_registry.py`: sentinel `assert NUM_SPATIAL_FEATURES == 4` added.
+- `feature_registry.py`: stale "currently 26" comment corrected to "currently 24".
+- `graph_factory.py`: fixed 3 stale docstrings (6→4 spatial features).
+- `SpatialInvarianceLoss` added to `gnn_model.py` for residual site variance guard.
+- Unit tests: `tests/unit/test_spatial_cleanup.py`
+
+---
+
+### Task 5 — Site-Stratified Cross-Validation (DD-013)
+**Root Cause**: StratifiedKFold inflates CV AUC by allowing same-scanner subjects
+in both training and validation splits.
+
+**Added**
+- `SCANNER_MANUFACTURER` map, `_assign_site_clusters()`, `generate_site_stratified_folds()`,
+  `run_site_stratified_split()` in `split.py`.
+- `--site-stratified-cv` CLI flag in `split.py`.
+- `site_stratified_cv` Stage in `registry.py` (opt-in).
+- Hard `FileNotFoundError` assertion in `gnn_model._run_training_once()`.
+
+---
+
+### Task 6 — Dead Code Removal (DD-014)
+**Root Cause**: Unmaintained functions inflate maintenance burden.
+
+**Removed**
+- `compute_granger_causality_gpu`, `compute_transfer_entropy`, `_compute_te_pair`,
+  `_conditional_entropy`, `compute_multilag_causality` from `causal_inference.py`.
+- GPU branch and `transfer_entropy` branch from `construct_causal.compute_causality_matrix()`.
+- `EVAL_FREQUENCY = 10` from `hyperparams.py` (never read).
+
+---
+
+## Previous Notable Changes
+
+### 2026-03-09 — P0/P1 Fixes (CV AUC 0.6194→0.7434, Test AUC→0.6487)
+- Disabled high-alpha GRL (alpha=1.0 → GRL off by default)
+- Added DX_GROUP as protected ComBat covariate
+- Fixed dead-lobe NaN handling before PCA
+- Applied fold-safe CV harmonization
+
+### 2026-02-15 — Baseline
+- Initial GATv2 architecture, global harmonization, CV AUC ~0.62

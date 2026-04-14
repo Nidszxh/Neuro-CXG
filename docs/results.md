@@ -115,3 +115,26 @@ When presenting results, include:
 3. Held-out test metrics with confidence intervals.
 4. Permutation p-values.
 5. Subgroup and site analysis caveats.
+
+---
+
+## Task Implementation Impact — Pre/Post Expected Metrics
+
+The following table documents the **pre-implementation baseline** and **target post-training**
+metrics after the 6 improvement tasks. The post-task values should be filled in after
+running a full pipeline re-train (`python run_pipeline.py --stages gnn_training`).
+
+| Metric | Pre (Canonical) | Post-Task Target | Primary Driver |
+|---|---|---|---|
+| CV AUC (mean) | 0.7434 ± 0.0417 | ≥ 0.76 | Tasks 1, 3 |
+| CV AUC (worst fold) | 0.6709 | ≥ 0.72 | Task 5 (site-stratified) |
+| Test AUC | 0.6487 | ≥ 0.70 | Tasks 1, 3 |
+| CV–Test AUC Gap | ~0.09 | ≤ 0.06 | Tasks 4, 5 |
+| Specificity | 0.41 | ≥ 0.50 | Tasks 1, 3 |
+| Sensitivity | 0.80 | ≥ 0.75 (balanced) | Tasks 1, 3 |
+| Site AUC Variance (std) | high | reduced | Task 5 |
+
+> [!NOTE]
+> Task 2 (multi-view graphs) requires running `python run_pipeline.py --stages multiview_graphs`
+> before gnn_training to activate `CausalInvarianceLoss`. Task 5 requires
+> `python src/data/split.py --site-stratified-cv` and a re-run of `fold_safe_harmonization.py`.
