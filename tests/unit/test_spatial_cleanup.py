@@ -56,7 +56,7 @@ class TestGraphFactorySpatialExtraction:
     def _make_coords_df(self, include_confounders: bool = False) -> pd.DataFrame:
         """Build a synthetic coords CSV row for one subject."""
         row: dict = {"subject_id": "test_sub"}
-        for lobe_name in LOBE_NAMES:
+        for lobe_name in LOBE_NAMES.values():
             row[f"{lobe_name}_x"] = np.random.rand()
             row[f"{lobe_name}_y"] = np.random.rand()
             row[f"{lobe_name}_z_depth"] = np.random.rand()
@@ -108,3 +108,33 @@ class TestGraphFactorySpatialExtraction:
         assert result.shape == (NUM_LOBES, 4), (
             f"Expected ({NUM_LOBES}, 4) even with confounders in CSV; got {result.shape}"
         )
+
+
+class TestAtlasSpatialExtractorCompatibility:
+    """Atlas mode must emit the same 4-feature lobe schema consumed by graph_factory."""
+
+    def test_atlas_lobe_features_are_four_dimensional(self):
+        from src.features.extract_spatial_atlas import extract_lobe_features
+
+        # Minimal synthetic centroids for two ROIs in one lobe
+        centroids = {
+            1: {"roi_id": 1, "x": 1.0, "y": 2.0, "z": 3.0},
+            2: {"roi_id": 2, "x": 2.0, "y": 3.0, "z": 4.0},
+        }
+        roi_sizes = {1: 0.5, 2: 0.8}
+        feats = extract_lobe_features(lobe_id=0, roi_indices=[0, 1], centroids=centroids, roi_sizes=roi_sizes)
+
+        assert len(feats) == 4, f"Atlas lobe feature length must be 4; got {len(feats)}"
+
+    def test_atlas_schema_matches_graph_factory_keys(self):
+        # Expected atlas output keys consumed by graph_factory._get_subject_spatial
+        expected_cols = {
+            f"{lobe_name}_{feat}"
+            for lobe_name in LOBE_NAMES.values()
+            for feat in ("x", "y", "z_depth", "size")
+        }
+
+        assert all("conf_std" not in c for c in expected_cols)
+        assert all("detection_count" not in c for c in expected_cols)
+        assert all(not c.startswith("roi") for c in expected_cols)
+        assert len(expected_cols) == NUM_LOBES * NUM_SPATIAL_FEATURES

@@ -2,11 +2,9 @@
 Extract spatial features from atlas ROI centroids.
 
 This is a lightweight alternative to YOLO-based detection that uses precomputed
-atlas centroids from AAL3v1. It provides 6 spatial features per lobe:
-  - x, y, z_depth: Centroid coordinates (mm in MNI space)
-  - size: Relative size based on voxel count
-  - conf_std: Confidence std (fixed to 0.0 for atlas-based)
-  - detection_count: Number of detections per lobe (fixed to 1.0 for atlas)
+atlas centroids from AAL3v1. It provides 4 anatomical spatial features per lobe:
+    - x, y, z_depth: Centroid coordinates (mm in MNI space)
+    - size: Relative size based on voxel count
 
 Pipeline: Extract centroids → Group by lobe → Compute lobe-level statistics
 """
@@ -30,6 +28,7 @@ from src.core.config import (
     NUM_LOBES,
     NUM_SPATIAL_FEATURES,
     DATA_METADATA,
+    ATLAS_PATH,
 )
 
 # Setup logging
@@ -42,10 +41,63 @@ logger = logging.getLogger(__name__)
 CENTROIDS_PATH = DATA_METADATA / "roi_centroids.json"
 
 
+def _compute_and_save_centroids_from_atlas() -> dict:
+    """Compute ROI centroids from atlas and persist roi_centroids.json."""
+    try:
+        import nibabel as nib
+    except ImportError as exc:
+        raise RuntimeError(
+            "nibabel is required to compute atlas centroids when roi_centroids.json is missing"
+        ) from exc
+
+    if not ATLAS_PATH.exists():
+        raise FileNotFoundError(
+            f"Atlas not found at {ATLAS_PATH}. Cannot auto-generate {CENTROIDS_PATH}."
+        )
+
+    atlas_img = nib.load(str(ATLAS_PATH))
+    atlas_data = atlas_img.get_fdata()
+    affine = atlas_img.affine
+
+    labels = np.unique(atlas_data)
+    labels = labels[labels > 0]
+
+    centroids_list = []
+    for label in labels:
+        roi_id = int(label)
+        voxels = np.argwhere(atlas_data == label)
+        if voxels.size == 0:
+            continue
+        mean_vox = voxels.mean(axis=0)
+        mni = affine @ np.append(mean_vox, 1.0)
+        centroids_list.append(
+            {
+                "roi_id": roi_id,
+                "x": float(mni[0]),
+                "y": float(mni[1]),
+                "z": float(mni[2]),
+            }
+        )
+
+    if not centroids_list:
+        raise RuntimeError(f"No ROI centroids computed from atlas at {ATLAS_PATH}")
+
+    CENTROIDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(CENTROIDS_PATH, "w") as f:
+        json.dump(centroids_list, f)
+
+    logger.info("Generated %d ROI centroids at %s", len(centroids_list), CENTROIDS_PATH)
+    return {c["roi_id"]: c for c in centroids_list}
+
+
 def load_centroids():
     """Load precomputed atlas ROI centroids."""
     if not CENTROIDS_PATH.exists():
-        raise FileNotFoundError(f"Centroids not found at {CENTROIDS_PATH}")
+        logger.warning(
+            "Centroids not found at %s. Attempting auto-generation from atlas...",
+            CENTROIDS_PATH,
+        )
+        return _compute_and_save_centroids_from_atlas()
     
     with open(CENTROIDS_PATH) as f:
         centroids_list = json.load(f)
@@ -88,7 +140,7 @@ def extract_lobe_features(lobe_id, roi_indices, centroids, roi_sizes):
     """
     Aggregate spatial features for one lobe from its constituent ROIs.
     
-    Returns: [x, y, z_depth, size, conf_std, detection_count]
+    Returns: [x, y, z_depth, size]
     """
     # Get centroids for ROIs in this lobe (1-indexed)
     lobe_centroids = []
@@ -104,7 +156,7 @@ def extract_lobe_features(lobe_id, roi_indices, centroids, roi_sizes):
     if not lobe_centroids:
         # Fallback for missing lobe (shouldn't happen with AAL)
         logger.warning(f"Lobe {lobe_id} ({LOBE_NAMES[lobe_id]}) has no centroids")
-        return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        return [0.0, 0.0, 0.0, 0.0]
     
     lobe_centroids = np.array(lobe_centroids)
     lobe_sizes = np.array(lobe_sizes)
@@ -115,13 +167,7 @@ def extract_lobe_features(lobe_id, roi_indices, centroids, roi_sizes):
     mean_z = float(np.mean(lobe_centroids[:, 2]))
     mean_size = float(np.mean(lobe_sizes))
     
-    # conf_std: 0.0 for atlas (no detection variance)
-    conf_std = 0.0
-    
-    # detection_count: 1.0 for atlas (1 unique lobe definition)
-    detection_count = 1.0
-    
-    return [mean_x, mean_y, mean_z, mean_size, conf_std, detection_count]
+    return [mean_x, mean_y, mean_z, mean_size]
 
 
 def extract_spatial():
@@ -159,13 +205,15 @@ def extract_spatial():
         logger.error("No features extracted!")
         return
     
-    # Create feature names: subject_id + roi1_x, roi1_y, ..., roi12_z, etc.
+    # Create feature names matching graph_factory expectations:
+    # subject_id + {LOBE_NAME}_{feature}
     columns = ["subject_id"]
-    spatial_names = ["x", "y", "z_depth", "size", "conf_std", "detection_count"]
+    spatial_names = ["x", "y", "z_depth", "size"]
     
     for lobe_id in range(NUM_LOBES):
+        lobe_name = LOBE_NAMES[lobe_id]
         for feat_name in spatial_names:
-            columns.append(f"roi{lobe_id+1}_{feat_name}")
+            columns.append(f"{lobe_name}_{feat_name}")
     
     # Save to CSV
     df = pd.DataFrame(all_features, columns=columns)

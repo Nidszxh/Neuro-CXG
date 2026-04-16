@@ -646,16 +646,11 @@ def main():
 
 
 
-if __name__ == "__main__":
-    main()
-
-
 # ─── TASK 2: Multi-View Causal Graph Construction (DD-010) ───────────────────────
 
 def construct_multiview_graphs(
     subject_id: str,
     time_series: torch.Tensor,
-    lobe_ids: torch.Tensor,
     lobe_to_roi: dict,
     tr: float,
     output_dir: Path,
@@ -677,7 +672,6 @@ def construct_multiview_graphs(
     Args:
         subject_id: ABIDE subject identifier string.
         time_series: Raw time series tensor (T, num_rois).
-        lobe_ids: ROI-to-lobe assignment (num_rois,).
         lobe_to_roi: Dict from lobe index to list of ROI indices.
         tr: Repetition time in seconds.
         output_dir: Root directory for multiview outputs (CAUSAL_GRAPHS_MULTIVIEW_DIR).
@@ -762,7 +756,12 @@ def construct_multiview_graphs(
 
     out_path = output_dir / subject_id / "multiview_graphs.pt"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(views, out_path)
+    package = {
+        "views": {k: v.cpu() for k, v in views.items()},
+        "subject_id": subject_id,
+        "lobe_order": [LOBE_NAMES[i] for i in range(NUM_LOBES)],
+    }
+    torch.save(package, out_path)
     return True
 
 
@@ -786,10 +785,11 @@ def main_multiview():
     manifest = pd.read_csv(MASTER_MANIFEST)
     all_subjects = manifest['subject_id'].astype(str).tolist()
 
-    # Build a minimal lobe_to_roi from LOBE_MAPPING (ROI → lobe index)
-    lobe_to_roi: Dict[int, list] = {i: [] for i in range(NUM_LOBES)}
-    for roi_id, lobe_idx in LOBE_MAPPING.items():
-        lobe_to_roi[lobe_idx].append(roi_id)
+    # Build lobe_to_roi from config mapping (lobe index -> list[0-based ROI indices]).
+    lobe_to_roi: Dict[int, list] = {
+        int(lobe_idx): [int(roi_idx) for roi_idx in roi_indices]
+        for lobe_idx, roi_indices in LOBE_MAPPING.items()
+    }
 
     CAUSAL_GRAPHS_MULTIVIEW_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -835,7 +835,12 @@ def main_multiview():
                 "bootstrap_2": adj_base.clone(), "high_confidence": adj_hc,
             }
             out_file.parent.mkdir(parents=True, exist_ok=True)
-            torch.save(views, out_file)
+            package = {
+                "views": {k: v.cpu() for k, v in views.items()},
+                "subject_id": sub_id,
+                "lobe_order": [LOBE_NAMES[i] for i in range(NUM_LOBES)],
+            }
+            torch.save(package, out_file)
             success += 1
             continue
 
@@ -844,12 +849,9 @@ def main_multiview():
             row = manifest[manifest['subject_id'].astype(str) == sub_id]
             tr = float(row.get('TR', pd.Series([2.0])).values[0]) if len(row) > 0 else 2.0
             ts_tensor = torch.tensor(ts_np, dtype=torch.float32)
-            lobe_ids = torch.zeros(ts_np.shape[1], dtype=torch.long)
-
             ok = construct_multiview_graphs(
                 subject_id=sub_id,
                 time_series=ts_tensor,
-                lobe_ids=lobe_ids,
                 lobe_to_roi=lobe_to_roi,
                 tr=tr,
                 output_dir=CAUSAL_GRAPHS_MULTIVIEW_DIR,
@@ -877,4 +879,4 @@ if __name__ == "__main__":
     if _args.multiview:
         main_multiview()
     else:
-        main()
+        main()

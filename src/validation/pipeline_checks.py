@@ -1734,12 +1734,6 @@ class PipelineValidator:
         return is_healthy
 
 
-# PipelineHealthCheck functionality has been merged into PipelineValidator.
-# This alias ensures all existing imports and instantiations continue to work
-# without modification.  PipelineValidator is the single source of truth.
-PipelineHealthCheck = PipelineValidator
-
-
 def run_quality_validation(visualize: bool = False, strict: bool = False) -> bool:
     checker = PipelineValidator(visualize=visualize)
     is_healthy = checker.run_full_validation()

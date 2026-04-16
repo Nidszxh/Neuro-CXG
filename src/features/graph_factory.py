@@ -71,6 +71,7 @@ class ABIDECausalDataset(Dataset):
         self._cache_limit = max(int(graph_cache_limit), 16)
         self._load_data_sources()
         self._validate_subjects()
+        self.subject_ids = self.manifest['subject_id'].astype(str).tolist()
         
         # Validate feature counts match config
         self._validate_feature_dimensions()

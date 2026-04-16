@@ -140,17 +140,11 @@ def extract_spatial():
                 subject_row[f"{lobe_name}_y"] = 0.0
                 subject_row[f"{lobe_name}_z_depth"] = 0.0
                 subject_row[f"{lobe_name}_size"] = 0.0
-                subject_row[f"{lobe_name}_conf_std"] = 0.0
-                subject_row[f"{lobe_name}_detection_count"] = 0.0
             else:
                 subject_row[f"{lobe_name}_x"] = lobe_data["x"].mean()
                 subject_row[f"{lobe_name}_y"] = lobe_data["y"].mean()
                 subject_row[f"{lobe_name}_z_depth"] = lobe_data["z"].mean()
                 subject_row[f"{lobe_name}_size"] = lobe_data["w"].mean() * lobe_data["h"].mean()
-                subject_row[f"{lobe_name}_conf_std"] = (
-                    lobe_data["conf"].std() if len(lobe_data) > 1 else 0.0
-                )
-                subject_row[f"{lobe_name}_detection_count"] = len(lobe_data)
         
         # Append if region aggregation succeeded (processing didn't encounter corruption)
         if subject_row is not None:
@@ -179,7 +173,7 @@ def extract_spatial():
         empty_cols = ["subject_id", "spatial_complete"] + [
             f"{lobe}_{feat}" 
             for lobe in LOBE_NAMES.values() 
-            for feat in ["x", "y", "z_depth", "size", "conf_std", "detection_count"]
+            for feat in ["x", "y", "z_depth", "size"]
         ]
         final_df = pd.DataFrame(columns=empty_cols)
         output_df = pd.merge(final_df, manifest, on="subject_id", how="inner")
