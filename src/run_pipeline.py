@@ -484,9 +484,15 @@ Examples:
     parser.add_argument("--skip-annotate", action="store_true",
                         help="Skip atlas-based annotation (use existing labels)")
     parser.add_argument("--skip-yolo", action="store_true",
-                        help="Skip YOLO training (use existing weights)")    
+                        help="Skip YOLO training (use existing weights)")
+    parser.add_argument("--use-yolo-spatial", action="store_true",
+                        help="Use YOLO-derived spatial features. Default uses atlas-centroid spatial features.")
     parser.add_argument("--use-atlas-spatial", action="store_true",
-                        help="Use atlas centroid spatial features instead of YOLO-derived spatial features")
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--multiview", action="store_true",
+                        help="Run optional multi-view causal graph construction stage after causal_graphs")
+    parser.add_argument("--site-stratified-cv", action="store_true",
+                        help="Run optional site-stratified CV fold assignment stage after split")
     parser.add_argument("--skip-gnn", action="store_true",
                         help="Skip GNN training")
     parser.add_argument("--skip-integrity", action="store_true",
@@ -542,6 +548,12 @@ Examples:
                         help="Wipe all intermediate CSVs and Graphs")
     
     args = parser.parse_args()
+
+    # Backward-compatible alias: --use-atlas-spatial is now the default behavior.
+    if args.use_yolo_spatial and args.use_atlas_spatial:
+        parser.error("Use only one of --use-yolo-spatial or --use-atlas-spatial")
+    if args.use_atlas_spatial:
+        args.use_yolo_spatial = False
 
     if args.full_src:
         args.skip_audit_check = False
@@ -600,7 +612,11 @@ Examples:
     download_will_run = not args.skip_download and not data_downloaded
     split_will_run = not args.skip_split and (not data_split or args.force_reset)
     labels_will_run = not args.skip_annotate and (args.force_reset or not existing_labels)
-    yolo_will_run = (not yolo_weights.exists() or args.force_reset) and not args.skip_yolo and not args.use_atlas_spatial
+    yolo_will_run = (
+        (not yolo_weights.exists() or args.force_reset)
+        and not args.skip_yolo
+        and args.use_yolo_spatial
+    )
     spatial_will_run = not existing_spatial or args.force_reset or args.regenerate_features
     temporal_will_run = not existing_temporal or args.force_reset or args.regenerate_features
     harmonization_will_run = not existing_harmonized or args.force_reset or args.regenerate_features
@@ -610,7 +626,7 @@ Examples:
     download_ready_or_planned = data_downloaded or download_will_run
     split_ready_or_planned = data_split or split_will_run
     labels_ready_or_planned = existing_labels or labels_will_run
-    yolo_ready_or_planned = yolo_weights.exists() or yolo_will_run or args.use_atlas_spatial
+    yolo_ready_or_planned = (not args.use_yolo_spatial) or yolo_weights.exists() or yolo_will_run
     spatial_ready_or_planned = existing_spatial or spatial_will_run
     temporal_ready_or_planned = existing_temporal or temporal_will_run
     timeseries_ready_or_planned = existing_timeseries or split_will_run
@@ -628,12 +644,14 @@ Examples:
         "pipeline_validation": not args.skip_validation,
         "post_download_integrity": not args.skip_integrity and download_ready_or_planned,
         "annotate": labels_will_run and split_ready_or_planned,
+        "site_stratified_cv": args.site_stratified_cv and split_ready_or_planned,
         "yolo": yolo_will_run and labels_ready_or_planned,
         "spatial_features": spatial_will_run and split_ready_or_planned and yolo_ready_or_planned,
         "temporal_features": temporal_will_run and split_ready_or_planned,
         "harmonization": harmonization_will_run and spatial_ready_or_planned and temporal_ready_or_planned,
         "pre_gnn_integrity": not args.skip_integrity and harmonized_ready_or_planned,
         "causal_graphs": graphs_will_run and harmonized_ready_or_planned,
+        "multiview_graphs": args.multiview and graphs_ready_or_planned,
         "dead_lobe_diagnosis": not args.skip_dead_lobe_diagnosis and timeseries_ready_or_planned,
         "diagnostics": not args.skip_diagnostics and graphs_ready_or_planned,
         "quality_validation": not args.skip_comprehensive_validation and graphs_ready_or_planned,
@@ -659,12 +677,14 @@ Examples:
         "pipeline_validation": "Full pipeline health check (Stage 5)",
         "post_download_integrity": "Validate PNG/NPY files after download (Stage 6)",
         "annotate": "Generate YOLO training labels from AAL3 atlas (Stage 7)",
+        "site_stratified_cv": "Regenerate cv_fold with site-stratified GroupKFold by site-cluster",
         "yolo": "Train YOLO26n for 12-region detection (Stage 8)" if not yolo_weights.exists() else "Force retrain",
-        "spatial_features": "YOLO inference -> 3D spatial coords aggregation (Stage 9)",
+        "spatial_features": "Atlas-centroid 3D spatial coords aggregation (Stage 9)",
         "temporal_features": "20 features per ROI: 8 time-domain + 12 frequency (Stage 11)",
         "harmonization": "Fold-safe neuroHarmonize, protects DX_GROUP (Stage 12)",
         "pre_gnn_integrity": "Validate dataset completeness per split (Stage 13)",
         "causal_graphs": "Granger causality/lagged correlation (Stage 14)",
+        "multiview_graphs": "Optional multi-view causal graph construction for invariance training",
         "dead_lobe_diagnosis": "Quick sanity check for lobe aggregation and causality readiness",
         "diagnostics": "Comprehensive health report after graphs built (Stage 15)",
         "quality_validation": "YOLO quality, graph sparsity, stratification (Stage 16)",
@@ -691,11 +711,12 @@ Examples:
 
         if stage_meta.key == "spatial_features":
             name = "Spatial Feature Extraction (12-region)"
-            if args.use_atlas_spatial:
+            if args.use_yolo_spatial:
+                module_name = "src.features.extract_spatial"
+                reason = "YOLO inference -> 3D spatial coords aggregation (Stage 9)"
+            else:
                 module_name = "src.features.extract_spatial_atlas"
                 reason = "Atlas centroids -> 3D spatial coords aggregation (Stage 9)"
-            else:
-                reason = "YOLO inference -> 3D spatial coords aggregation (Stage 9)"
         elif stage_meta.key == "split":
             name = "Train/Val/Test Split (2D Stratified)"
         elif stage_meta.key == "pipeline_validation":

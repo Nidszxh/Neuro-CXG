@@ -164,6 +164,23 @@ def run_phase_node(model, test_loader, device, output_dir: Path) -> Dict:
     logger.info("=" * 55)
     analyzer = NodeImportanceAnalyzer(model, test_loader, device)
     results  = analyzer.run(output_dir / "node")
+
+    # Task 3: persist anatomical network embeddings used by hierarchical pooling.
+    network_embeddings = None
+    if hasattr(model, "get_last_network_embeddings"):
+        network_embeddings = model.get_last_network_embeddings()
+
+    if network_embeddings is not None and torch.is_tensor(network_embeddings):
+        node_dir = output_dir / "node"
+        node_dir.mkdir(parents=True, exist_ok=True)
+        net_np = network_embeddings.detach().cpu().numpy()
+        np.save(node_dir / "network_embeddings_last_batch.npy", net_np)
+        results["network_embeddings"] = {
+            "shape": list(net_np.shape),
+            "mean_abs_per_network": np.abs(net_np).mean(axis=(0, 2)).tolist(),
+            "saved_path": str(node_dir / "network_embeddings_last_batch.npy"),
+        }
+
     logger.info("Phase 8.1 complete — figures saved to %s/node/", output_dir)
     return results
 
@@ -332,6 +349,9 @@ def run_explainability_pipeline(
         summary["gradcam_top5_differential"] = [
             {"region": REGION_LABELS[i], "delta": float(diff[i])} for i in top5
         ]
+
+    if node_results and "network_embeddings" in node_results:
+        summary["network_embeddings"] = node_results["network_embeddings"]
 
     # ── Edge top-5 log ─────────────────────────────────────────────────────────
     if edge_results and "gradient" in edge_results:

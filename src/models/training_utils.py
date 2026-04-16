@@ -29,6 +29,16 @@ from src.models.evaluation import evaluate_loader, optimal_threshold
 
 logger = logging.getLogger(__name__)
 
+_MULTIVIEW_VIEW_ORDER = (
+    "base",
+    "extended_lag",
+    "bootstrap_0",
+    "bootstrap_1",
+    "bootstrap_2",
+    "high_confidence",
+)
+_MULTIVIEW_CACHE: Dict[str, Dict[str, torch.Tensor]] = {}
+
 
 def make_loader(
     dataset,
@@ -441,6 +451,174 @@ class EdgeStructureContrastiveLoss(nn.Module):
         return F.cross_entropy(sim, labels)
 
 
+def _expand_site_targets_to_nodes(batch) -> Optional[torch.Tensor]:
+    """Expand per-graph site labels to per-node labels using ``batch.batch``."""
+    site_targets = getattr(batch, "site_id", None)
+    if site_targets is None or not torch.is_tensor(site_targets):
+        return None
+
+    site_targets = site_targets.view(-1)
+    if site_targets.numel() == 0:
+        return None
+
+    num_graphs = int(batch.batch.max().item()) + 1
+    if site_targets.numel() != num_graphs:
+        return None
+
+    return site_targets[batch.batch]
+
+
+def _extract_batch_subject_ids(batch, num_graphs: int) -> Optional[List[str]]:
+    """Extract per-graph subject IDs from a PyG batch.
+
+    Handles common collate representations:
+    - list/tuple of subject IDs (preferred)
+    - scalar string for single-graph batches
+    - node-level repeated subject IDs (compressed by first node per graph)
+    """
+    raw_ids = getattr(batch, "sub_id", None)
+    if raw_ids is None:
+        return None
+
+    if isinstance(raw_ids, str):
+        ids = [raw_ids]
+    elif isinstance(raw_ids, (list, tuple)):
+        ids = [str(x) for x in raw_ids]
+    elif isinstance(raw_ids, np.ndarray):
+        ids = [str(x) for x in raw_ids.tolist()]
+    elif torch.is_tensor(raw_ids):
+        ids = [str(x) for x in raw_ids.view(-1).tolist()]
+    else:
+        ids = [str(raw_ids)]
+
+    if len(ids) == num_graphs:
+        return ids
+
+    # Some collations may carry node-level repeated IDs; compress to graph-level.
+    if len(ids) == batch.x.shape[0]:
+        compressed = []
+        for g_idx in range(num_graphs):
+            node_ids = (batch.batch == g_idx).nonzero(as_tuple=False).view(-1)
+            if node_ids.numel() == 0:
+                return None
+            compressed.append(ids[int(node_ids[0].item())])
+        return compressed
+
+    return None
+
+
+def _load_multiview_package(file_path: Path) -> Optional[Dict[str, torch.Tensor]]:
+    """Load and normalize one subject's multiview adjacency package."""
+    cache_key = str(file_path)
+    if cache_key in _MULTIVIEW_CACHE:
+        return _MULTIVIEW_CACHE[cache_key]
+
+    try:
+        payload = torch.load(file_path, map_location="cpu", weights_only=False)
+    except Exception:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    views = payload.get("views", payload)
+    if not isinstance(views, dict):
+        return None
+
+    normalized: Dict[str, torch.Tensor] = {}
+    for name, value in views.items():
+        if torch.is_tensor(value):
+            tensor = value.detach().cpu().float()
+        else:
+            tensor = torch.as_tensor(value, dtype=torch.float32)
+        normalized[str(name)] = tensor
+
+    if "base" not in normalized:
+        return None
+
+    _MULTIVIEW_CACHE[cache_key] = normalized
+    return normalized
+
+
+def _build_multiview_batches(batch, multiview_dir: Path) -> Optional[List]:
+    """Construct per-view batch clones with replaced edges from multiview files.
+
+    Returns:
+        List of batches in fixed order (base first) or None when not available.
+    """
+    num_graphs = int(batch.batch.max().item()) + 1
+    subject_ids = _extract_batch_subject_ids(batch, num_graphs)
+    if subject_ids is None:
+        return None
+
+    graph_node_ids: List[torch.Tensor] = []
+    for g_idx in range(num_graphs):
+        node_ids = (batch.batch == g_idx).nonzero(as_tuple=False).view(-1)
+        if node_ids.numel() == 0:
+            return None
+        graph_node_ids.append(node_ids)
+
+    views_by_graph: List[Dict[str, torch.Tensor]] = []
+    for sub_id in subject_ids:
+        package_path = multiview_dir / str(sub_id) / "multiview_graphs.pt"
+        if not package_path.exists():
+            return None
+
+        package = _load_multiview_package(package_path)
+        if package is None:
+            return None
+        views_by_graph.append(package)
+
+    view_batches = []
+    device = batch.x.device
+
+    for view_name in _MULTIVIEW_VIEW_ORDER:
+        edge_index_parts: List[torch.Tensor] = []
+        edge_attr_parts: List[torch.Tensor] = []
+
+        for g_idx in range(num_graphs):
+            n_nodes = int(graph_node_ids[g_idx].numel())
+            graph_views = views_by_graph[g_idx]
+
+            adj = graph_views.get(view_name)
+            if adj is None:
+                adj = graph_views["base"]
+
+            adj = adj.to(device=device, dtype=torch.float32)
+            if tuple(adj.shape) != (n_nodes, n_nodes):
+                base_adj = graph_views["base"].to(device=device, dtype=torch.float32)
+                if tuple(base_adj.shape) != (n_nodes, n_nodes):
+                    return None
+                adj = base_adj
+
+            adj = adj.clone()
+            adj.fill_diagonal_(0.0)
+            local_edges = (adj != 0).nonzero(as_tuple=False).t().contiguous()
+
+            if local_edges.numel() == 0:
+                base_adj = graph_views["base"].to(device=device, dtype=torch.float32).clone()
+                base_adj.fill_diagonal_(0.0)
+                local_edges = (base_adj != 0).nonzero(as_tuple=False).t().contiguous()
+                adj = base_adj
+
+            if local_edges.numel() == 0:
+                return None
+
+            node_ids = graph_node_ids[g_idx]
+            global_edges = node_ids[local_edges]
+            edge_weights = adj[local_edges[0], local_edges[1]].unsqueeze(1)
+
+            edge_index_parts.append(global_edges)
+            edge_attr_parts.append(edge_weights)
+
+        view_batch = batch.clone()
+        view_batch.edge_index = torch.cat(edge_index_parts, dim=1)
+        view_batch.edge_attr = torch.cat(edge_attr_parts, dim=0)
+        view_batches.append(view_batch)
+
+    return view_batches
+
+
 # ── EPOCH-LEVEL TRAINING ─────────────────────────────────────────────────────────
 
 def train_one_epoch_with_accumulation(
@@ -456,6 +634,13 @@ def train_one_epoch_with_accumulation(
     # Task 1 additions (DD-009) — default 0.0 = backward compatible
     structural_dropout_prob: float = 0.0,
     edge_contrastive_weight: float = 0.0,
+    # Task 2 additions (DD-010)
+    invariance_loss_fn: Optional[nn.Module] = None,
+    invariance_weight: float = 0.0,
+    multiview_dir: Optional[Path] = None,
+    # Task 4 additions (DD-012)
+    spatial_invariance_loss_fn: Optional[nn.Module] = None,
+    spatial_invariance_weight: float = 0.0,
 ) -> float:
     """
     Train for one epoch with gradient accumulation.
@@ -477,6 +662,11 @@ def train_one_epoch_with_accumulation(
         use_grl: Whether to use gradient reversal layer
         structural_dropout_prob: Fraction of graphs to zero node features for
         edge_contrastive_weight: Weight for EdgeStructureContrastiveLoss
+        invariance_loss_fn: Optional CausalInvarianceLoss module
+        invariance_weight: Weight for multi-view invariance loss
+        multiview_dir: Directory containing per-subject multi-view graphs
+        spatial_invariance_loss_fn: Optional spatial-channel adversarial loss module
+        spatial_invariance_weight: Weight for spatial invariance loss
 
     Returns:
         Average total loss for the epoch
@@ -494,6 +684,17 @@ def train_one_epoch_with_accumulation(
             continue
 
         data = data.to(device)
+
+        multiview_batches = None
+        if (
+            invariance_loss_fn is not None
+            and invariance_weight > 0.0
+            and multiview_dir is not None
+            and hasattr(model, "forward_multiview")
+        ):
+            multiview_batches = _build_multiview_batches(data, Path(multiview_dir))
+
+        emb_full = None
 
         # ── Forward pass ────────────────────────────────────────────────────
         if use_grl:
@@ -515,39 +716,57 @@ def train_one_epoch_with_accumulation(
                 site_loss = _F.cross_entropy(site_logits, site_targets)
                 loss = class_loss + site_loss_weight * site_loss
 
-        elif structural_dropout_prob > 0.0 and edge_contrastive_weight > 0.0 and hasattr(model, '_forward_with_embedding'):
-            # Task 1: dual-view forward for structural learning
-            # View 1: full features
-            logits_full, emb_full = model._forward_with_embedding(
-                data.x, data.edge_index, data.edge_attr, data.batch,
-                site_id=getattr(data, 'site_id', None),
-                age=getattr(data, 'age', None),
-                sex=getattr(data, 'sex', None),
-                fiq=getattr(data, 'fiq', None),
-            )
-            focal = criterion(logits_full, data.y)
-
-            # View 2: edge-only (node features zeroed for dropout_prob fraction)
-            data_edge = _apply_structural_dropout(data, structural_dropout_prob, training=True)
-            _, emb_edge = model._forward_with_embedding(
-                data_edge.x, data_edge.edge_index, data_edge.edge_attr, data_edge.batch,
-                site_id=getattr(data_edge, 'site_id', None),
-                age=getattr(data_edge, 'age', None),
-                sex=getattr(data_edge, 'sex', None),
-                fiq=getattr(data_edge, 'fiq', None),
-            )
-            contrastive = contrastive_fn(emb_full, emb_edge)
-            loss = focal + edge_contrastive_weight * contrastive
-
         else:
-            out = model.forward_batch(data) if hasattr(model, "forward_batch") else model(
-                data.x, data.edge_index, data.edge_attr, data.batch,
-                getattr(data, 'site_id', None),
-                getattr(data, 'age', None),
-                getattr(data, 'sex', None),
-                getattr(data, 'fiq', None),
-            )
-            loss = criterion(out, data.y)
+            if multiview_batches is not None:
+                logits_full, multiview_embeddings = model.forward_multiview(multiview_batches)
+                emb_full = multiview_embeddings[0]
+                focal = criterion(logits_full, data.y)
+                invariance = invariance_loss_fn(multiview_embeddings)
+                loss = focal + invariance_weight * invariance
+            elif hasattr(model, "_forward_with_embedding"):
+                logits_full, emb_full = model._forward_with_embedding(
+                    data.x, data.edge_index, data.edge_attr, data.batch,
+                    site_id=getattr(data, 'site_id', None),
+                    age=getattr(data, 'age', None),
+                    sex=getattr(data, 'sex', None),
+                    fiq=getattr(data, 'fiq', None),
+                )
+                loss = criterion(logits_full, data.y)
+            else:
+                out = model.forward_batch(data) if hasattr(model, "forward_batch") else model(
+                    data.x, data.edge_index, data.edge_attr, data.batch,
+                    getattr(data, 'site_id', None),
+                    getattr(data, 'age', None),
+                    getattr(data, 'sex', None),
+                    getattr(data, 'fiq', None),
+                )
+                loss = criterion(out, data.y)
+
+            # Task 1: structural dual-view contrastive regularization.
+            if (
+                emb_full is not None
+                and structural_dropout_prob > 0.0
+                and edge_contrastive_weight > 0.0
+                and contrastive_fn is not None
+                and hasattr(model, '_forward_with_embedding')
+            ):
+                data_edge = _apply_structural_dropout(data, structural_dropout_prob, training=True)
+                _, emb_edge = model._forward_with_embedding(
+                    data_edge.x, data_edge.edge_index, data_edge.edge_attr, data_edge.batch,
+                    site_id=getattr(data_edge, 'site_id', None),
+                    age=getattr(data_edge, 'age', None),
+                    sex=getattr(data_edge, 'sex', None),
+                    fiq=getattr(data_edge, 'fiq', None),
+                )
+                contrastive = contrastive_fn(emb_full, emb_edge)
+                loss = loss + edge_contrastive_weight * contrastive
+
+        # Task 4: spatial-channel adversarial regularization.
+        if spatial_invariance_loss_fn is not None and spatial_invariance_weight > 0.0:
+            node_site_targets = _expand_site_targets_to_nodes(data)
+            if node_site_targets is not None:
+                spatial_loss = spatial_invariance_loss_fn(data.x, node_site_targets)
+                loss = loss + spatial_invariance_weight * spatial_loss
 
         # ── Gradient accumulation ────────────────────────────────────────────
         loss = loss / gradient_accumulation_steps
@@ -599,6 +818,13 @@ def train_fold_with_onecycle(
     # Task 1 additions (DD-009)
     structural_dropout_prob: float = 0.0,
     edge_contrastive_weight: float = 0.0,
+    # Task 2 additions (DD-010)
+    invariance_loss_fn: Optional[nn.Module] = None,
+    invariance_weight: float = 0.0,
+    multiview_dir: Optional[Path] = None,
+    # Task 4 additions (DD-012)
+    spatial_invariance_loss_fn: Optional[nn.Module] = None,
+    spatial_invariance_weight: float = 0.0,
 ) -> tuple:
     assert pct_start < (patience / max(epochs, 1)), (
         f"Warmup ({pct_start * epochs:.0f} epochs) >= patience ({patience}): "
@@ -607,8 +833,13 @@ def train_fold_with_onecycle(
 
     model.to(device)
 
+    optim_params = list(model.parameters())
+    if spatial_invariance_loss_fn is not None:
+        spatial_invariance_loss_fn = spatial_invariance_loss_fn.to(device)
+        optim_params.extend(list(spatial_invariance_loss_fn.parameters()))
+
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        optim_params,
         lr=max_lr / 25.0,
         weight_decay=weight_decay,
     )
@@ -641,6 +872,11 @@ def train_fold_with_onecycle(
             use_grl=use_grl,
             structural_dropout_prob=structural_dropout_prob,
             edge_contrastive_weight=edge_contrastive_weight,
+            invariance_loss_fn=invariance_loss_fn,
+            invariance_weight=invariance_weight,
+            multiview_dir=multiview_dir,
+            spatial_invariance_loss_fn=spatial_invariance_loss_fn,
+            spatial_invariance_weight=spatial_invariance_weight,
         )
         scheduler.step()
 

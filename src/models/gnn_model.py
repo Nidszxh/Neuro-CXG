@@ -44,7 +44,9 @@ from src.core.config import (
     GNN_USE_DEMOGRAPHICS,
     GNN_NODE_EMB_DIM,
     NUM_LOBES,
+    NUM_SPATIAL_FEATURES,
     CAUSAL_GRAPHS_DIR,
+    CAUSAL_GRAPHS_MULTIVIEW_DIR,
     DATA_METADATA,
     RESULTS_TRAINING_DIR,
     HARMONIZED_FOLDS_DIR,
@@ -54,8 +56,6 @@ from src.models.training_utils import (
     CheckpointManager,
     make_loader,
     train_fold_with_onecycle,
-    _apply_structural_dropout,
-    EdgeStructureContrastiveLoss,
 )
 from src.core.experiment_tracker import ExperimentTracker
 from src.models.evaluation import evaluate_loader, optimal_threshold
@@ -152,31 +152,22 @@ class CausalInvarianceLoss(nn.Module):
         if B < 2:
             return torch.tensor(0.0, device=embeddings_list[0].device, requires_grad=True)
 
-        # Normalise all views
-        zs = [F.normalize(e, dim=1) for e in embeddings_list]  # V × (B, D)
+        # Normalize all views
+        zs = [F.normalize(e, dim=1) for e in embeddings_list]
 
-        # Stack: (V*B, D)
-        z_all = torch.cat(zs, dim=0)
-        sim = torch.mm(z_all, z_all.t()) / self.temperature  # (V*B, V*B)
+        # Symmetric NT-Xent across ALL view pairs
+        pair_losses = []
+        labels = torch.arange(B, device=zs[0].device)
+        for i in range(V):
+            for j in range(i + 1, V):
+                sim_ij = torch.mm(zs[i], zs[j].t()) / self.temperature  # (B, B)
+                pair_losses.append(F.cross_entropy(sim_ij, labels))
+                pair_losses.append(F.cross_entropy(sim_ij.t(), labels))
 
-        # Mask self-similarity
-        eye = torch.eye(V * B, dtype=torch.bool, device=z_all.device)
-        sim = sim.masked_fill(eye, float('-inf'))
+        if not pair_losses:
+            return torch.tensor(0.0, device=zs[0].device, requires_grad=True)
 
-        # Labels: for row i (view v, subject b), positive = same subject b in any other view
-        # Simplify: use view-0 ↔ view-1 pairs as the primary contrastive signal
-        # (same as NT-Xent with V=2 on the first two views)
-        z0 = zs[0]  # (B, D)
-        z1 = zs[1]  # (B, D)
-        z_pair = torch.cat([z0, z1], dim=0)  # (2B, D)
-        sim2 = torch.mm(z_pair, z_pair.t()) / self.temperature
-        eye2 = torch.eye(2 * B, dtype=torch.bool, device=z_pair.device)
-        sim2 = sim2.masked_fill(eye2, float('-inf'))
-        labels2 = torch.cat([
-            torch.arange(B, 2 * B, device=z_pair.device),
-            torch.arange(0,  B, device=z_pair.device),
-        ])
-        return F.cross_entropy(sim2, labels2)
+        return torch.stack(pair_losses).mean()
 
 
 # ── TASK 4: Spatial Invariance Loss (DD-012) ─────────────────────────────────────
@@ -203,7 +194,7 @@ class SpatialInvarianceLoss(nn.Module):
         self.spatial_start_idx = spatial_start_idx
         self.reversal_weight = reversal_weight
         self.site_head = nn.Sequential(
-            nn.Linear(NUM_SPATIAL_FEATURES if 'NUM_SPATIAL_FEATURES' in dir() else 4, 16),
+            nn.Linear(NUM_SPATIAL_FEATURES, 16),
             nn.GELU(),
             nn.Linear(16, num_sites),
         )
@@ -507,21 +498,27 @@ def _run_training_once(
 
     base_subject_ids = [str(s) for s in dataset.subject_ids]
     # Hard assertion: fold-harmonized files must exist if we reach training
-    available_fold_files = [
+    missing_fold_files = [
         f for f in range(K_FOLDS)
-        if (HARMONIZED_FOLDS_DIR / f"harmonized_fold_{f}.csv").exists()
+        if not (HARMONIZED_FOLDS_DIR / f"harmonized_fold_{f}.csv").exists()
     ]
-    if len(available_fold_files) == 0:
+    if missing_fold_files:
         raise FileNotFoundError(
-            f"No fold-specific harmonized files found in {HARMONIZED_FOLDS_DIR}. "
+            f"Missing fold-specific harmonized files for folds {missing_fold_files} in {HARMONIZED_FOLDS_DIR}. "
             "Run fold_safe_harmonization.py before gnn_training."
         )
-    if len(available_fold_files) < K_FOLDS:
-        logger.warning(
-            "Only %d/%d fold-specific harmonized files found in %s. "
-            "Missing folds will fall back to global harmonized features.",
-            len(available_fold_files), K_FOLDS, HARMONIZED_FOLDS_DIR,
+
+    multiview_available = (
+        CAUSAL_GRAPHS_MULTIVIEW_DIR.exists()
+        and any(CAUSAL_GRAPHS_MULTIVIEW_DIR.glob("*/multiview_graphs.pt"))
+    )
+    invariance_criterion = CausalInvarianceLoss(temperature=0.07) if multiview_available else None
+    if multiview_available:
+        logger.info(
+            "Multi-view causal graphs detected — enabling CausalInvarianceLoss (weight=0.15)."
         )
+    else:
+        logger.info("No multi-view graphs detected — training falls back to standard single-view objective.")
             
     site_auc_values = []
 
@@ -533,39 +530,20 @@ def _run_training_once(
         _set_global_seed(42 + fold)  # deterministic per-fold model initialisation
         fold_start_time = time.time()
 
-        # Prefer fold-specific harmonized features (fit on fold-train only).
-        fold_dataset = dataset
+        # Enforce fold-specific harmonized features (no global fallback).
         fold_temporal_path = HARMONIZED_FOLDS_DIR / f"harmonized_fold_{fold}.csv"
-        if fold_temporal_path.exists():
-            try:
-                candidate_dataset = ABIDECausalDataset(
-                    split='train',
-                    temporal_features_path=fold_temporal_path,
-                )
-                candidate_subject_ids = [str(s) for s in candidate_dataset.subject_ids]
-                if candidate_subject_ids == base_subject_ids:
-                    fold_dataset = candidate_dataset
-                    logger.info("Using fold-specific harmonized features: %s", fold_temporal_path)
-                else:
-                    logger.warning(
-                        "Fold %d harmonized file subject ordering mismatch; "
-                        "falling back to global harmonized features",
-                        fold,
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to load fold-specific harmonized features for fold %d (%s); "
-                    "falling back to global harmonized features",
-                    fold,
-                    exc,
-                )
-        else:
-            logger.warning(
-                "Fold-specific harmonized file missing for fold %d (%s); "
-                "falling back to global harmonized features",
-                fold,
-                fold_temporal_path,
+        candidate_dataset = ABIDECausalDataset(
+            split='train',
+            temporal_features_path=fold_temporal_path,
+        )
+        candidate_subject_ids = [str(s) for s in candidate_dataset.subject_ids]
+        if candidate_subject_ids != base_subject_ids:
+            raise ValueError(
+                f"Fold {fold} harmonized file subject ordering mismatch in {fold_temporal_path}; "
+                "aborting to prevent fold leakage."
             )
+        fold_dataset = candidate_dataset
+        logger.info("Using fold-specific harmonized features: %s", fold_temporal_path)
         
         # Create data loaders
         train_data = [fold_dataset[i] for i in train_idx if fold_dataset[i] is not None]
@@ -598,14 +576,12 @@ def _run_training_once(
         criterion = FocalLoss(alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA, pos_weight=pos_weight)
         checkpoint_manager.reset()
 
-        # Check for multiview graphs (Task 2: DD-010)
-        from src.core.config import CAUSAL_GRAPHS_MULTIVIEW_DIR
-        multiview_available = CAUSAL_GRAPHS_MULTIVIEW_DIR.exists() and any(
-            CAUSAL_GRAPHS_MULTIVIEW_DIR.iterdir()
-        ) if CAUSAL_GRAPHS_MULTIVIEW_DIR.exists() else False
-        if multiview_available:
-            logger.info("Multi-view causal graphs detected — will apply CausalInvarianceLoss (weight=0.15)")
-        invariance_criterion = CausalInvarianceLoss(temperature=0.07) if multiview_available else None
+        # Task 4: residual site signal adversarial regularization on spatial channels.
+        spatial_invariance_criterion = SpatialInvarianceLoss(
+            spatial_start_idx=GNN_IN_CHANNELS - NUM_SPATIAL_FEATURES,
+            num_sites=20,
+            reversal_weight=1.0,
+        )
 
         best_state, best_metrics, history = train_fold_with_onecycle(
             model=model,
@@ -625,6 +601,13 @@ def _run_training_once(
             # Task 1: structural learning enforcement (DD-009)
             structural_dropout_prob=0.30,
             edge_contrastive_weight=0.05,
+            # Task 2: multi-view causal invariance (DD-010)
+            invariance_loss_fn=invariance_criterion,
+            invariance_weight=0.15 if multiview_available else 0.0,
+            multiview_dir=CAUSAL_GRAPHS_MULTIVIEW_DIR if multiview_available else None,
+            # Task 4: spatial-channel adversarial invariance (DD-012)
+            spatial_invariance_loss_fn=spatial_invariance_criterion,
+            spatial_invariance_weight=0.10,
         )
 
         for entry in history:

@@ -314,22 +314,23 @@ class CausalBrainGNN(torch.nn.Module):
         )
 
     def forward_multiview(self, views: list) -> tuple:
-        """
-        Forward pass over multiple PyG Batch objects (different causal graph views
-        of the same subjects). Returns class logits and graph embeddings for each view.
+        """Forward multiple causal views of the same subjects.
 
         Args:
-            views: List of PyG Batch objects, each representing one causal graph view.
+            views: List of PyG Batch objects, one per causal graph view.
+                   ``views[0]`` is treated as the base view for classification.
 
         Returns:
-            logits_list: List of logit tensors, one per view.
-            embeddings_list: List of graph embedding tensors (before classifier),
-                             shape (batch, hidden_dim) per view, used for CausalInvarianceLoss.
+            logits_base: Class logits from the base view, shape (batch, num_classes).
+            embeddings_list: List of graph embeddings, one per view, each shape (batch, hidden_dim).
+                             Used by CausalInvarianceLoss during training.
         """
-        logits_list = []
+        if not views:
+            raise ValueError("forward_multiview requires at least one view batch")
+
         embeddings_list = []
         for batch in views:
-            logits, emb = self._forward_with_embedding(
+            _, emb = self._forward_with_embedding(
                 batch.x,
                 batch.edge_index,
                 batch.edge_attr,
@@ -339,9 +340,16 @@ class CausalBrainGNN(torch.nn.Module):
                 sex=getattr(batch, "sex", None),
                 fiq=getattr(batch, "fiq", None),
             )
-            logits_list.append(logits)
             embeddings_list.append(emb)
-        return logits_list, embeddings_list
+
+        logits_base = self.classifier(embeddings_list[0])
+        return logits_base, embeddings_list
+
+    def get_last_network_embeddings(self):
+        """Return most recent (batch, NUM_NETWORKS, hidden_dim) embeddings when anatomical pooling is active."""
+        if hasattr(self, "anatomical_pool"):
+            return self.anatomical_pool.last_network_embeddings
+        return None
 
     def _forward_with_embedding(
         self, x, edge_index, edge_attr, batch,
