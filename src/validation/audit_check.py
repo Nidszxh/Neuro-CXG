@@ -25,7 +25,9 @@ from src.core.config import (
     NODE_ATTRIBUTES_HARMONIZED,
     NODE_ATTRIBUTES_TEMPORAL,
     NODE_FEATURES_3D,
+    LOBE_NAMES,
     NUM_LOBES,
+    NUM_SPATIAL_FEATURES,
     NUM_TEMPORAL_FEATURES,
     SPATIAL_MIN_REQUIRED_REGIONS,
 )
@@ -165,44 +167,89 @@ class AuditCheck:
             self.check("Master manifest exists", False, "File not found")
 
     def _check_yolo_completeness(self):
-        """Assess YOLO regional coverage quality.
+        """Assess spatial regional coverage quality.
 
-        Strict 12/12 completeness is treated as informational here because
-        downstream filtering removes invalid subjects before training.
+        The current extractor emits 4 anatomical spatial columns per lobe:
+        x, y, z_depth, and size. Older legacy outputs may still include
+        detection_count columns, so we accept either schema.
         """
         if not NODE_FEATURES_3D.exists():
             self.check("Spatial features available", False, "File not found")
             return
 
         df = pd.read_csv(NODE_FEATURES_3D)
-        
-        # Check for detection_count columns
-        count_cols = [col for col in df.columns if col.endswith('_detection_count')]
-        
-        if len(count_cols) != NUM_LOBES:
+
+        legacy_count_cols = [col for col in df.columns if col.endswith("_detection_count")]
+        modern_size_cols = [
+            f"{lobe_name}_size"
+            for lobe_name in LOBE_NAMES.values()
+            if f"{lobe_name}_size" in df.columns
+        ]
+
+        if legacy_count_cols:
             self.check(
                 f"All {NUM_LOBES} region count columns present",
-                False,
-                f"Expected {NUM_LOBES} columns, found {len(count_cols)}"
+                len(legacy_count_cols) == NUM_LOBES,
+                f"Expected {NUM_LOBES} columns, found {len(legacy_count_cols)}",
             )
+            if len(legacy_count_cols) == NUM_LOBES:
+                subjects_with_missing = (df[legacy_count_cols] == 0).any(axis=1).sum()
+                self.check_warn(
+                    "All subjects have all 12 regions detected",
+                    subjects_with_missing == 0,
+                    f"{subjects_with_missing} subjects have at least one missing region" if subjects_with_missing > 0 else "",
+                )
+                regions_present = (df[legacy_count_cols] > 0).sum(axis=1)
+                below_min_required = int((regions_present < SPATIAL_MIN_REQUIRED_REGIONS).sum())
+                self.check(
+                    f"Subjects meet min detected regions (>= {SPATIAL_MIN_REQUIRED_REGIONS})",
+                    below_min_required == 0,
+                    f"{below_min_required} subjects below minimum required region count",
+                )
             return
 
-        # Strict 12/12 completeness (informational warning)
-        subjects_with_missing = (df[count_cols] == 0).any(axis=1).sum()
+        self.check(
+            f"All {NUM_LOBES} region size columns present",
+            len(modern_size_cols) == NUM_LOBES,
+            f"Expected {NUM_LOBES} columns, found {len(modern_size_cols)}",
+        )
+        if len(modern_size_cols) != NUM_LOBES:
+            return
 
-        self.check_warn(
-            "All subjects have all 12 regions detected",
-            subjects_with_missing == 0,
-            f"{subjects_with_missing} subjects have at least one missing region" if subjects_with_missing > 0 else ""
+        # Modern atlas-default extraction uses 4 anatomical features per lobe.
+        spatial_feature_cols = [
+            col
+            for lobe_name in LOBE_NAMES.values()
+            for col in (
+                f"{lobe_name}_x",
+                f"{lobe_name}_y",
+                f"{lobe_name}_z_depth",
+                f"{lobe_name}_size",
+            )
+            if col in df.columns
+        ]
+        expected_spatial_cols = NUM_LOBES * NUM_SPATIAL_FEATURES
+        self.check(
+            f"All {expected_spatial_cols} modern spatial columns present",
+            len(spatial_feature_cols) == expected_spatial_cols,
+            f"Expected {expected_spatial_cols} columns, found {len(spatial_feature_cols)}",
         )
 
-        # Config-aligned minimum required regions.
-        regions_present = (df[count_cols] > 0).sum(axis=1)
+        # With atlas-default spatial extraction, size should be non-zero for all
+        # lobes present in the atlas. Use this as a coarse integrity proxy.
+        subjects_with_missing = (df[modern_size_cols] == 0).any(axis=1).sum()
+        self.check_warn(
+            "All subjects have all 12 regions populated",
+            subjects_with_missing == 0,
+            f"{subjects_with_missing} subjects have at least one zero-size lobe",
+        )
+
+        regions_present = (df[modern_size_cols] > 0).sum(axis=1)
         below_min_required = int((regions_present < SPATIAL_MIN_REQUIRED_REGIONS).sum())
         self.check(
-            f"Subjects meet min detected regions (>= {SPATIAL_MIN_REQUIRED_REGIONS})",
+            f"Subjects meet min populated regions (>= {SPATIAL_MIN_REQUIRED_REGIONS})",
             below_min_required == 0,
-            f"{below_min_required} subjects below minimum required region count"
+            f"{below_min_required} subjects below minimum required region count",
         )
 
     def _check_harmonized_integrity(self):

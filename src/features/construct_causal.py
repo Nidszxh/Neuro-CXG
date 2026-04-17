@@ -14,6 +14,9 @@ from src.core.config import (
     DATA_FINAL, MASTER_MANIFEST, CAUSAL_GRAPHS_DIR, DEVICE,
     CAUSALITY_METHOD, GRANGER_MAX_LAG, GRANGER_MAX_LAG_SECONDS, SPARSITY_METHOD,
     MIN_EDGES_PER_GRAPH, GRAPH_DENSITY_TARGET,
+    MULTIVIEW_GENERATION_ENFORCE_QUALITY_GATE,
+    MULTIVIEW_GENERATION_MAX_ZERO_EDGE_RATE,
+    MULTIVIEW_GENERATION_POLICY,
 )
 
 # Fixed lag for lagged-Pearson fallback path.
@@ -28,6 +31,15 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+_MULTIVIEW_VIEW_ORDER = (
+    "base",
+    "extended_lag",
+    "bootstrap_0",
+    "bootstrap_1",
+    "bootstrap_2",
+    "high_confidence",
+)
 
 # Tracks which lobe IDs have already emitted a zero-signal warning so that atlas
 # coverage-gap messages appear once per process run rather than once per subject.
@@ -700,41 +712,79 @@ def construct_multiview_graphs(
     ts_np = time_series.numpy() if isinstance(time_series, torch.Tensor) else time_series
     T, num_rois = ts_np.shape
 
-    # Helper: aggregate ROI signals to lobe-level
-    def _aggregate_lobes(ts_full: np.ndarray) -> np.ndarray:
-        """Average ROI time series within each lobe → (T, NUM_LOBES)."""
-        lobe_ts = np.zeros((ts_full.shape[0], NUM_LOBES), dtype=np.float32)
-        for lobe_idx, roi_list in lobe_to_roi.items():
-            if roi_list:
-                lobe_ts[:, lobe_idx] = ts_full[:, roi_list].mean(axis=1)
-        return lobe_ts
-
-    lobe_ts = _aggregate_lobes(ts_np)
-
-    # 1. Extended-lag view
-    base_lag = max(1, round(GRANGER_MAX_LAG_SECONDS / max(tr, 0.1)))
-    ext_lag = round(base_lag * 1.5)
-    try:
-        adj_ext_np = compute_granger_causality(lobe_ts, max_lag=ext_lag)
-        adj_extended = torch.tensor(adj_ext_np, dtype=torch.float32)
-    except Exception as e:
-        logger.warning("Extended-lag Granger failed for %s: %s", subject_id, e)
+    # Very short runs cannot support stable Granger estimation; build safe
+    # fallback views from the already-validated base graph.
+    if T < 12:
+        logger.warning(
+            "%s: only %d timepoints available for multiview Granger; "
+            "using base-derived fallback views",
+            subject_id,
+            T,
+        )
         adj_extended = adj_base.clone()
+        adj_bootstraps = [adj_base.clone(), adj_base.clone(), adj_base.clone()]
+    else:
+        # Use the same NaN-safe z-score + lobe aggregation path as base graph
+        # construction to prevent NaN propagation into multiview branches.
+        ts_tensor = torch.as_tensor(ts_np, dtype=torch.float32, device=DEVICE)
+        ts_mean = torch.nanmean(ts_tensor, dim=0, keepdim=True)
+        ts_var = torch.nanmean((ts_tensor - ts_mean).pow(2), dim=0, keepdim=True)
+        ts_std = ts_var.sqrt()
+        ts_std = torch.where(torch.isnan(ts_std), ts_std, ts_std.clamp(min=1e-8))
+        ts_z = (ts_tensor - ts_mean) / ts_std
 
-    # 2-4. Bootstrap views (80% timepoint subsample, 3 seeds)
-    adj_bootstraps = []
-    for seed in range(3):
-        rng_seed = np.random.default_rng(seed=seed)
-        n_keep = max(int(T * 0.80), base_lag + 10)
-        idx = rng_seed.choice(T, size=n_keep, replace=False)
-        idx = np.sort(idx)
-        lobe_ts_sub = lobe_ts[idx]
+        ts_lobes, _, _ = aggregate_to_lobes(ts_z)
+        lobe_ts = ts_lobes.detach().cpu().numpy()
+        lobe_ts = np.nan_to_num(lobe_ts, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Clamp lags so Granger has enough samples (requires n_timepoints >= lag + 10).
+        max_supported_lag = max(1, T - 10)
+        base_lag = max(1, round(GRANGER_MAX_LAG_SECONDS / max(tr, 0.1)))
+        base_lag = min(base_lag, max_supported_lag)
+        ext_lag = min(max(1, round(base_lag * 1.5)), max_supported_lag)
+
+        # 1. Extended-lag view
         try:
-            adj_np = compute_granger_causality(lobe_ts_sub, max_lag=base_lag)
-            adj_bootstraps.append(torch.tensor(adj_np, dtype=torch.float32))
+            adj_ext_np = compute_granger_causality(lobe_ts, max_lag=ext_lag)
+            if np.count_nonzero(adj_ext_np) == 0:
+                raise ValueError("extended-lag causality returned all-zero matrix")
+            adj_extended = torch.tensor(adj_ext_np, dtype=torch.float32)
         except Exception as e:
-            logger.warning("Bootstrap %d Granger failed for %s: %s", seed, subject_id, e)
-            adj_bootstraps.append(adj_base.clone())
+            logger.warning("Extended-lag Granger failed for %s: %s", subject_id, e)
+            adj_extended = adj_base.clone()
+
+        # 2-4. Bootstrap views (80% timepoint subsample, 3 seeds)
+        adj_bootstraps = []
+        for seed in range(3):
+            rng_seed = np.random.default_rng(seed=seed)
+            n_keep = max(int(T * 0.80), base_lag + 10)
+            n_keep = min(n_keep, T)
+
+            # If the subsample cannot support Granger for the requested lag,
+            # avoid generating a degenerate all-zero adjacency.
+            if n_keep < base_lag + 10:
+                logger.warning(
+                    "Bootstrap %d skipped for %s: n_keep=%d insufficient for lag=%d; "
+                    "using base adjacency",
+                    seed,
+                    subject_id,
+                    n_keep,
+                    base_lag,
+                )
+                adj_bootstraps.append(adj_base.clone())
+                continue
+
+            idx = rng_seed.choice(T, size=n_keep, replace=False)
+            idx = np.sort(idx)
+            lobe_ts_sub = lobe_ts[idx]
+            try:
+                adj_np = compute_granger_causality(lobe_ts_sub, max_lag=base_lag)
+                if np.count_nonzero(adj_np) == 0:
+                    raise ValueError("bootstrap causality returned all-zero matrix")
+                adj_bootstraps.append(torch.tensor(adj_np, dtype=torch.float32))
+            except Exception as e:
+                logger.warning("Bootstrap %d Granger failed for %s: %s", seed, subject_id, e)
+                adj_bootstraps.append(adj_base.clone())
 
     # 5. High-confidence view: keep top-15% edges from base
     adj_flat = adj_base.flatten()
@@ -765,6 +815,97 @@ def construct_multiview_graphs(
     return True
 
 
+def _assess_multiview_generation_quality(multiview_dir: Path) -> dict:
+    """Compute zero-edge rates per multiview type from generated artifacts."""
+    files = sorted(multiview_dir.glob("*/multiview_graphs.pt"))
+    zero_counts = {view: 0 for view in _MULTIVIEW_VIEW_ORDER}
+    checked = 0
+
+    for fp in files:
+        try:
+            payload = torch.load(fp, map_location="cpu", weights_only=False)
+        except Exception:
+            continue
+
+        if not isinstance(payload, dict):
+            continue
+
+        views = payload.get("views", payload)
+        if not isinstance(views, dict):
+            continue
+
+        checked += 1
+        for view in _MULTIVIEW_VIEW_ORDER:
+            adj = views.get(view)
+            if adj is None:
+                zero_counts[view] += 1
+                continue
+
+            if torch.is_tensor(adj):
+                adj_t = adj.detach().cpu().float()
+            else:
+                adj_t = torch.as_tensor(adj, dtype=torch.float32)
+
+            if adj_t.ndim != 2 or adj_t.shape[0] != adj_t.shape[1]:
+                zero_counts[view] += 1
+                continue
+
+            if int((adj_t != 0).sum().item()) == 0:
+                zero_counts[view] += 1
+
+    rates = {
+        view: (zero_counts[view] / max(checked, 1))
+        for view in _MULTIVIEW_VIEW_ORDER
+    }
+    failing = [
+        view
+        for view in _MULTIVIEW_VIEW_ORDER
+        if view != "base" and rates[view] > MULTIVIEW_GENERATION_MAX_ZERO_EDGE_RATE
+    ]
+
+    return {
+        "checked_packages": checked,
+        "zero_edge_rates": rates,
+        "failing_views": failing,
+    }
+
+
+def _package_has_degenerate_non_base_views(package_path: Path) -> bool:
+    """Return True when an existing multiview package is malformed/degenerate."""
+    try:
+        payload = torch.load(package_path, map_location="cpu", weights_only=False)
+    except Exception:
+        return True
+
+    if not isinstance(payload, dict):
+        return True
+
+    views = payload.get("views", payload)
+    if not isinstance(views, dict):
+        return True
+
+    for view in _MULTIVIEW_VIEW_ORDER:
+        if view == "base":
+            continue
+
+        adj = views.get(view)
+        if adj is None:
+            return True
+
+        if torch.is_tensor(adj):
+            adj_t = adj.detach().cpu().float()
+        else:
+            adj_t = torch.as_tensor(adj, dtype=torch.float32)
+
+        if adj_t.ndim != 2 or adj_t.shape[0] != adj_t.shape[1]:
+            return True
+
+        if int((adj_t != 0).sum().item()) == 0:
+            return True
+
+    return False
+
+
 def main_multiview():
     """
     Task 2 entry point: generate multi-view causal graphs for all subjects.
@@ -793,14 +934,41 @@ def main_multiview():
 
     CAUSAL_GRAPHS_MULTIVIEW_DIR.mkdir(parents=True, exist_ok=True)
 
-    success, skipped, failed = 0, 0, 0
+    success, regenerated, skipped, failed = 0, 0, 0, 0
     for sub_id in tqdm(all_subjects, desc="Multi-view graphs"):
         out_file = CAUSAL_GRAPHS_MULTIVIEW_DIR / sub_id / "multiview_graphs.pt"
-        if out_file.exists():
-            skipped += 1
-            continue
-
         base_path = CAUSAL_GRAPHS_DIR / f"{sub_id}_graph.pt"
+
+        if out_file.exists():
+            if not base_path.exists():
+                logger.warning(
+                    "Removing stale multiview package for %s because base graph is missing.",
+                    sub_id,
+                )
+                try:
+                    out_file.unlink()
+                except Exception as exc:
+                    logger.warning("Failed to remove stale package for %s: %s", sub_id, exc)
+                failed += 1
+                continue
+
+            needs_regen = False
+            if MULTIVIEW_GENERATION_ENFORCE_QUALITY_GATE:
+                needs_regen = _package_has_degenerate_non_base_views(out_file)
+
+            if not needs_regen:
+                skipped += 1
+                continue
+
+            logger.info("Regenerating degenerate multiview package for %s", sub_id)
+            try:
+                out_file.unlink()
+                regenerated += 1
+            except Exception as exc:
+                logger.warning("Failed to remove existing package for %s: %s", sub_id, exc)
+                failed += 1
+                continue
+
         if not base_path.exists():
             failed += 1
             continue
@@ -865,10 +1033,48 @@ def main_multiview():
             failed += 1
 
     logger.info(
-        "Multi-view construction complete: %d success | %d skipped | %d failed",
-        success, skipped, failed,
+        "Multi-view construction complete: %d success | %d regenerated | %d skipped | %d failed",
+        success, regenerated, skipped, failed,
     )
     logger.info("Output directory: %s", CAUSAL_GRAPHS_MULTIVIEW_DIR)
+
+    if MULTIVIEW_GENERATION_ENFORCE_QUALITY_GATE:
+        quality = _assess_multiview_generation_quality(CAUSAL_GRAPHS_MULTIVIEW_DIR)
+        checked = quality["checked_packages"]
+        rates = quality["zero_edge_rates"]
+        logger.info(
+            "Multiview generation quality: checked=%d | base=%.1f%% | ext=%.1f%% | b0=%.1f%% | b1=%.1f%% | b2=%.1f%% | hc=%.1f%%",
+            checked,
+            100.0 * rates.get("base", 1.0),
+            100.0 * rates.get("extended_lag", 1.0),
+            100.0 * rates.get("bootstrap_0", 1.0),
+            100.0 * rates.get("bootstrap_1", 1.0),
+            100.0 * rates.get("bootstrap_2", 1.0),
+            100.0 * rates.get("high_confidence", 1.0),
+        )
+
+        policy = str(MULTIVIEW_GENERATION_POLICY).strip().lower()
+        if policy not in {"fail", "warn"}:
+            logger.warning(
+                "Unknown MULTIVIEW_GENERATION_POLICY=%r; falling back to 'warn'",
+                MULTIVIEW_GENERATION_POLICY,
+            )
+            policy = "warn"
+
+        if checked == 0:
+            msg = "Multiview quality gate found zero readable multiview packages"
+            if policy == "fail":
+                raise RuntimeError(msg)
+            logger.warning(msg)
+        elif quality["failing_views"]:
+            msg = (
+                "Multiview generation quality gate failed: non-base views exceed "
+                f"max zero-edge rate {MULTIVIEW_GENERATION_MAX_ZERO_EDGE_RATE:.2f}; "
+                f"failing views={quality['failing_views']}"
+            )
+            if policy == "fail":
+                raise RuntimeError(msg)
+            logger.warning(msg)
 
 
 if __name__ == "__main__":

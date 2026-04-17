@@ -91,6 +91,7 @@ from src.core.config import (
     FINAL_VAL,
     FINAL_TEST,
     CAUSAL_GRAPHS_DIR,
+    CAUSAL_GRAPHS_MULTIVIEW_DIR,
     NODE_FEATURES_3D,
     NODE_ATTRIBUTES_TEMPORAL,
     NODE_ATTRIBUTES_HARMONIZED,
@@ -289,6 +290,12 @@ def clear_old_state():
         shutil.rmtree(CAUSAL_GRAPHS_DIR)
         CAUSAL_GRAPHS_DIR.mkdir(parents=True)
         logger.info("Reset Causal Graph directory (cleared old 170x170 matrices)")
+
+    # Remove old multiview graphs so Stage 15 doesn't reuse stale degenerate files.
+    if CAUSAL_GRAPHS_MULTIVIEW_DIR.exists():
+        shutil.rmtree(CAUSAL_GRAPHS_MULTIVIEW_DIR)
+        CAUSAL_GRAPHS_MULTIVIEW_DIR.mkdir(parents=True)
+        logger.info("Reset Multi-view Causal Graph directory (cleared stale view artifacts)")
 
 def run_module(module_path, args_list=None, description="", function_name=None):
 

@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     FEATURE_GROUPS,
     HARMONIZED_FOLDS_DIR,
+    HARMONIZATION_UNSEEN_SITE_POLICY,
     K_FOLDS,
     LOBE_MAPPING,
     LOBE_NAMES,
@@ -302,6 +303,63 @@ def _restore_constant_features(
     return result[[c for c in all_cols if c in result.columns]]
 
 
+def _safe_harmonization_apply(
+    apply_features: pd.DataFrame,
+    apply_covariates: pd.DataFrame,
+    model: object,
+    *,
+    seen_sites: Optional[set] = None,
+    context: str = "apply",
+) -> np.ndarray:
+    """Apply ComBat safely when SITE levels in apply data are unseen in train.
+
+    neuroHarmonize can error when categorical levels appear at apply time but
+    were absent during fit. This helper applies harmonization only to rows from
+    seen SITE levels and leaves unseen rows unchanged.
+    """
+    if apply_features.empty:
+        return np.empty((0, apply_features.shape[1]), dtype=np.float64)
+
+    raw_values = apply_features.values
+    harmonized = raw_values.copy()
+
+    if seen_sites is None or "SITE" not in apply_covariates.columns:
+        return harmonizationApply(raw_values, apply_covariates, model)
+
+    site_vals = apply_covariates["SITE"].astype(str).to_numpy()
+    seen_mask = np.isin(site_vals, list(seen_sites))
+
+    if (~seen_mask).any():
+        unseen_sites = sorted(set(site_vals[~seen_mask].tolist()))
+        logger.warning(
+            "%s contains %d/%d rows from unseen SITE levels %s; "
+            "keeping those rows unharmonized",
+            context,
+            int((~seen_mask).sum()),
+            len(site_vals),
+            unseen_sites,
+        )
+
+    if seen_mask.any():
+        seen_idx = np.where(seen_mask)[0]
+        try:
+            seen_harm = harmonizationApply(
+                raw_values[seen_idx],
+                apply_covariates.iloc[seen_idx].reset_index(drop=True),
+                model,
+            )
+            harmonized[seen_idx] = seen_harm
+        except Exception as exc:
+            logger.error(
+                "%s harmonization failed on seen-site subset (%s); "
+                "falling back to unharmonized rows for this subset",
+                context,
+                exc,
+            )
+
+    return harmonized
+
+
 def _harmonize_fold(
     train_features: pd.DataFrame,
     val_features: pd.DataFrame,
@@ -322,7 +380,14 @@ def _harmonize_fold(
         if vf.empty:
             val_harm = np.empty((0, len(train_features.columns)))
         else:
-            val_harm = harmonizationApply(vf.values, val_covariates, model)
+            train_sites = set(train_covariates["SITE"].astype(str).tolist())
+            val_harm = _safe_harmonization_apply(
+                vf,
+                val_covariates,
+                model,
+                seen_sites=train_sites,
+                context="Fold validation apply",
+            )
         return (
             model,
             pd.DataFrame(train_harm, columns=train_features.columns, index=train_features.index),
@@ -568,6 +633,80 @@ def harmonize_cv_safe_fold(
             for f in range(K_FOLDS)
         ]
 
+    unseen_policy = str(HARMONIZATION_UNSEEN_SITE_POLICY).strip().lower()
+    if unseen_policy not in {"passthrough", "fail"}:
+        logger.warning(
+            "Unknown HARMONIZATION_UNSEEN_SITE_POLICY=%r; falling back to 'passthrough'",
+            HARMONIZATION_UNSEEN_SITE_POLICY,
+        )
+        unseen_policy = "passthrough"
+
+    # Audit unseen SITE coverage up-front so policy violations fail before any fold
+    # harmonization runs.
+    fold_site_audit: List[Dict[str, object]] = []
+    for fold, (train_idx, val_idx) in enumerate(cv_splits):
+        fold_train_manifest = train_manifest_all.iloc[train_idx].reset_index(drop=True)
+        fold_val_manifest = train_manifest_all.iloc[val_idx].reset_index(drop=True)
+        train_sites = set(fold_train_manifest["SITE_ID"].astype(str).tolist())
+        val_sites = set(fold_val_manifest["SITE_ID"].astype(str).tolist())
+        unseen_val_sites = sorted(list(val_sites - train_sites))
+        unseen_rows = int(fold_val_manifest["SITE_ID"].astype(str).isin(unseen_val_sites).sum())
+        fold_site_audit.append(
+            {
+                "fold": fold,
+                "train_sites": len(train_sites),
+                "val_sites": len(val_sites),
+                "unseen_sites": unseen_val_sites,
+                "unseen_site_count": len(unseen_val_sites),
+                "unseen_row_count": unseen_rows,
+                "val_rows": int(len(fold_val_manifest)),
+            }
+        )
+
+    folds_with_unseen = [r for r in fold_site_audit if r["unseen_site_count"] > 0]
+    total_unseen_rows = int(sum(r["unseen_row_count"] for r in folds_with_unseen))
+    logger.info(
+        "Fold unseen-site audit: %d/%d folds have unseen validation sites (%d total unseen rows), policy=%s",
+        len(folds_with_unseen),
+        len(fold_site_audit),
+        total_unseen_rows,
+        unseen_policy,
+    )
+    for row in folds_with_unseen:
+        logger.warning(
+            "Fold %d unseen SITE audit: %d/%d val rows from unseen sites %s",
+            row["fold"],
+            row["unseen_row_count"],
+            row["val_rows"],
+            row["unseen_sites"],
+        )
+
+    audit_dir = Path(output_dir) if output_dir is not None else HARMONIZED_FOLDS_DIR
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    audit_path = audit_dir / "fold_unseen_site_audit.csv"
+    audit_df = pd.DataFrame(
+        [
+            {
+                "fold": row["fold"],
+                "train_site_count": row["train_sites"],
+                "val_site_count": row["val_sites"],
+                "unseen_site_count": row["unseen_site_count"],
+                "unseen_row_count": row["unseen_row_count"],
+                "val_row_count": row["val_rows"],
+                "unseen_sites": "|".join(row["unseen_sites"]),
+            }
+            for row in fold_site_audit
+        ]
+    )
+    audit_df.to_csv(audit_path, index=False)
+    logger.info("Saved fold unseen-site audit → %s", audit_path)
+
+    if folds_with_unseen and unseen_policy == "fail":
+        raise RuntimeError(
+            "Fold harmonization aborted by HARMONIZATION_UNSEEN_SITE_POLICY='fail': "
+            f"{len(folds_with_unseen)} fold(s) contain validation-only SITE levels."
+        )
+
     harmonized_folds: List[HarmonizationFold] = []
     train_subject_order = train_data_all["subject_id"].tolist()
 
@@ -585,6 +724,15 @@ def harmonize_cv_safe_fold(
         fold_val_data = train_data_all.iloc[val_idx].reset_index(drop=True)
         fold_train_manifest = train_manifest_all.iloc[train_idx].reset_index(drop=True)
         fold_val_manifest = train_manifest_all.iloc[val_idx].reset_index(drop=True)
+
+        unseen_val_sites = fold_site_audit[fold]["unseen_sites"]
+        if unseen_val_sites:
+            logger.warning(
+                "Fold %d has %d validation-only SITE levels not present in fold-train: %s",
+                fold,
+                len(unseen_val_sites),
+                unseen_val_sites,
+            )
 
         model, train_lobes, val_lobes = _harmonize_train_apply_pair(
             fold_train_data,
@@ -727,7 +875,14 @@ def harmonize_spatial_features(
         train_df[active_cols] = train_harm
 
         if other_feats is not None and not other_df.empty:
-            other_harm = harmonizationApply(other_feats[active_cols].values, other_cov, model)
+            seen_sites = set(train_cov["SITE"].astype(str).tolist())
+            other_harm = _safe_harmonization_apply(
+                other_feats[active_cols],
+                other_cov,
+                model,
+                seen_sites=seen_sites,
+                context="Spatial feature apply",
+            )
             other_df = other_df.copy()
             other_df[active_cols] = other_harm
 

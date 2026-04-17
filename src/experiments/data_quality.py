@@ -63,6 +63,11 @@ from src.core.config import (
     NUM_LOBES,
     NUM_SPATIAL_FEATURES,
     RESULTS_DATA_QUALITY_DIR,
+    SITE_ROBUSTNESS_GATE_ENABLED,
+    SITE_ROBUSTNESS_MIN_SITE_AUC,
+    SITE_ROBUSTNESS_MAX_WEAK_SITE_FRACTION,
+    SITE_ROBUSTNESS_MIN_EVALUABLE_SITES,
+    SITE_ROBUSTNESS_GATE_POLICY,
 )
 from src.models.gnn_model import FocalLoss
 from src.models.factory import build_model
@@ -144,13 +149,22 @@ def experiment_cross_site_auc() -> pd.DataFrame:
         device=DEVICE,
         use_site_embedding=True,
         use_demographics=True,
-        use_grl=True,
-        grl_alpha=1.0,
+        # Cross-site eval uses class logits only; keep GRL head disabled so
+        # checkpoints trained without adversarial site head can load strictly.
+        use_grl=False,
+        grl_alpha=0.0,
         edge_gate=True,
     )
 
     try:
         ckpt_mgr.load(model, fold=0)
+    except RuntimeError as e:
+        # Backward-compatible fallback for optional-head mismatches.
+        logger.warning(
+            "Strict checkpoint load failed for fold0 (%s). Retrying with allow_partial=True.",
+            e,
+        )
+        ckpt_mgr.load(model, fold=0, allow_partial=True)
     except FileNotFoundError:
         logger.error(f"Checkpoint fold0 not found in {CHECKPOINT_DIR}")
         return pd.DataFrame()
@@ -220,6 +234,81 @@ def experiment_cross_site_auc() -> pd.DataFrame:
         )
 
     return df
+
+
+def _apply_site_robustness_gate(site_auc_df: pd.DataFrame) -> Dict[str, object]:
+    """Apply configurable site-robustness gate to cross-site AUC output."""
+    result = {
+        "enabled": bool(SITE_ROBUSTNESS_GATE_ENABLED),
+        "policy": str(SITE_ROBUSTNESS_GATE_POLICY),
+        "min_site_auc": float(SITE_ROBUSTNESS_MIN_SITE_AUC),
+        "max_weak_site_fraction": float(SITE_ROBUSTNESS_MAX_WEAK_SITE_FRACTION),
+        "min_evaluable_sites": int(SITE_ROBUSTNESS_MIN_EVALUABLE_SITES),
+        "evaluable_sites": 0,
+        "weak_sites": 0,
+        "weak_site_fraction": float("nan"),
+        "status": "skipped",
+    }
+
+    if not SITE_ROBUSTNESS_GATE_ENABLED:
+        return result
+
+    policy = str(SITE_ROBUSTNESS_GATE_POLICY).strip().lower()
+    if policy not in {"warn", "fail"}:
+        logger.warning(
+            "Unknown SITE_ROBUSTNESS_GATE_POLICY=%r; falling back to 'warn'",
+            SITE_ROBUSTNESS_GATE_POLICY,
+        )
+        policy = "warn"
+        result["policy"] = policy
+
+    evaluable = site_auc_df.dropna(subset=["auc"]) if not site_auc_df.empty else pd.DataFrame()
+    n_eval = int(len(evaluable))
+    n_weak = int((evaluable["auc"] < SITE_ROBUSTNESS_MIN_SITE_AUC).sum()) if n_eval else 0
+    weak_frac = float(n_weak / max(n_eval, 1))
+
+    result.update(
+        {
+            "evaluable_sites": n_eval,
+            "weak_sites": n_weak,
+            "weak_site_fraction": weak_frac,
+        }
+    )
+
+    logger.info(
+        "Site robustness gate: evaluable_sites=%d, weak_sites=%d (AUC < %.2f), weak_fraction=%.2f, threshold=%.2f",
+        n_eval,
+        n_weak,
+        SITE_ROBUSTNESS_MIN_SITE_AUC,
+        weak_frac,
+        SITE_ROBUSTNESS_MAX_WEAK_SITE_FRACTION,
+    )
+
+    if n_eval < SITE_ROBUSTNESS_MIN_EVALUABLE_SITES:
+        msg = (
+            "Site robustness gate has insufficient evaluable sites: "
+            f"{n_eval} < {SITE_ROBUSTNESS_MIN_EVALUABLE_SITES}"
+        )
+        result["status"] = "insufficient-sites"
+        if policy == "fail":
+            raise RuntimeError(msg)
+        logger.warning(msg)
+        return result
+
+    if weak_frac > SITE_ROBUSTNESS_MAX_WEAK_SITE_FRACTION:
+        msg = (
+            "Site robustness gate failed: weak-site fraction exceeds threshold "
+            f"({weak_frac:.2f} > {SITE_ROBUSTNESS_MAX_WEAK_SITE_FRACTION:.2f})"
+        )
+        result["status"] = "failed"
+        if policy == "fail":
+            raise RuntimeError(msg)
+        logger.warning(msg)
+        return result
+
+    result["status"] = "passed"
+    logger.info("Site robustness gate passed")
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -365,22 +454,51 @@ def _compute_atlas_centroids() -> Optional[np.ndarray]:
     import json
     centroid_path = DATA_METADATA / "roi_centroids.json"
 
+    def _normalize_roi_centroids(payload) -> Dict[int, List[float]]:
+        """Convert list/dict centroid payloads into roi_id -> [x, y, z]."""
+        normalized: Dict[int, List[float]] = {}
+
+        if isinstance(payload, list):
+            for entry in payload:
+                if not isinstance(entry, dict):
+                    continue
+                roi_id = entry.get("roi_id")
+                if roi_id is None:
+                    continue
+                coords = [entry.get("x"), entry.get("y"), entry.get("z")]
+                if all(value is not None for value in coords):
+                    normalized[int(roi_id)] = [float(coords[0]), float(coords[1]), float(coords[2])]
+            return normalized
+
+        if isinstance(payload, dict):
+            for key, entry in payload.items():
+                roi_id = None
+                if isinstance(entry, dict):
+                    roi_id = entry.get("roi_id")
+                    coords = [entry.get("x"), entry.get("y"), entry.get("z")]
+                    if roi_id is None and str(key).isdigit():
+                        roi_id = int(key)
+                    if roi_id is not None and all(value is not None for value in coords):
+                        normalized[int(roi_id)] = [float(coords[0]), float(coords[1]), float(coords[2])]
+                elif isinstance(entry, (list, tuple)) and len(entry) >= 3 and str(key).isdigit():
+                    normalized[int(key)] = [float(entry[0]), float(entry[1]), float(entry[2])]
+            return normalized
+
+        return normalized
+
     if centroid_path.exists():
         logger.info(f"  Using ROI centroids from {centroid_path}")
         with open(centroid_path) as f:
-            roi_cents = json.load(f)
+            roi_cents = _normalize_roi_centroids(json.load(f))
 
         lobe_centroids = np.zeros((NUM_LOBES, NUM_SPATIAL_FEATURES), dtype=np.float32)
         for lobe_id, roi_indices in LOBE_MAPPING.items():
-            # roi_indices are 0-based; keys in roi_centroids may be 1-based strings
+            # roi_indices are 0-based; ROI centroids may be 1-based or 0-based.
             coords = []
             for roi_idx in roi_indices:
-                key_0 = str(roi_idx)
-                key_1 = str(roi_idx + 1)
-                entry = roi_cents.get(key_1, roi_cents.get(key_0, None))
+                entry = roi_cents.get(int(roi_idx + 1), roi_cents.get(int(roi_idx), None))
                 if entry is not None:
-                    xyz = entry if isinstance(entry, (list, tuple)) else list(entry.values())[:3]
-                    coords.append(xyz[:3])
+                    coords.append(entry[:3])
             if coords:
                 arr = np.array(coords, dtype=np.float32)
                 cx, cy, cz = arr.mean(axis=0)
@@ -597,6 +715,7 @@ def main():
 
     if "1" in args.experiments:
         all_results["cross_site"] = experiment_cross_site_auc()
+        all_results["site_robustness_gate"] = _apply_site_robustness_gate(all_results["cross_site"])
 
     if "2" in args.experiments:
         all_results["subject_audit"] = experiment_subject_count_audit()

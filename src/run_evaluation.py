@@ -90,6 +90,7 @@ from src.core.config import (
     MASTER_MANIFEST,
     NUM_LOBES,
     RESULTS_DIR,
+    EVAL_THRESHOLD_POLICY,
 )
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
@@ -405,8 +406,8 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
     weights = weight_arr / weight_arr.sum()
     ens_probs_raw = np.average(np.stack(fold_probs, axis=0), axis=0, weights=weights)
 
-    # Use mean of val-fold thresholds by default.
-    threshold = float(np.mean(fold_thresholds))
+    # Use mean of val-fold thresholds by default (max-F1-style operating point).
+    f1_threshold = float(np.mean(fold_thresholds))
     ens_probs = ens_probs_raw
 
     # Per-site calibration from held-out val fold (never touches test labels).
@@ -419,24 +420,20 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
 
         if calibrators:
             ens_cal_probs = _apply_per_site_calibration(ens_cal_probs_raw, cal_site_ids, calibrators)
-            threshold = _optimal_threshold(ens_cal_probs, cal_labels)
+            f1_threshold = _optimal_threshold(ens_cal_probs, cal_labels)
             test_site_ids = _site_ids_from_graphs(test_graphs)
             ens_probs = _apply_per_site_calibration(ens_probs_raw, test_site_ids, calibrators)
             calibration_applied = True
             logger.info(
                 "  Per-site Platt calibration applied for %d sites (threshold=%.4f)",
                 len(calibrators),
-                threshold,
+                f1_threshold,
             )
         else:
             logger.info("  Per-site calibration skipped: insufficient per-site calibration data")
 
-    metrics = _full_metrics(ens_probs, labels, threshold=threshold)
-    metrics["threshold"] = threshold
-    ci = _bootstrap_ci(ens_probs, labels, threshold=threshold)
-
-    # Also compute Youden's J threshold (maximises sensitivity + specificity)
-    # to give a more balanced operating point than the F1-trained threshold.
+    # Compute both operating points, then select the reporting policy.
+    f1_metrics = _full_metrics(ens_probs, labels, threshold=f1_threshold)
     youden_thr     = _youden_threshold(ens_probs, labels)
     youden_metrics = _full_metrics(ens_probs, labels, threshold=youden_thr)
     logger.info(
@@ -444,6 +441,26 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
         youden_thr, youden_metrics["sensitivity"], youden_metrics["specificity"],
         youden_metrics["f1"],
     )
+
+    policy = str(EVAL_THRESHOLD_POLICY).strip().lower()
+    if policy not in {"f1", "youden"}:
+        logger.warning(
+            "Unknown EVAL_THRESHOLD_POLICY=%r; falling back to 'f1'",
+            EVAL_THRESHOLD_POLICY,
+        )
+        policy = "f1"
+
+    if policy == "youden":
+        threshold = youden_thr
+        metrics = youden_metrics
+    else:
+        threshold = f1_threshold
+        metrics = f1_metrics
+
+    metrics = dict(metrics)
+    metrics["threshold"] = threshold
+    ci = _bootstrap_ci(ens_probs, labels, threshold=threshold)
+    logger.info("  Selected threshold policy: %s (threshold=%.4f)", policy, threshold)
 
     # Per-fold results table using cached predictions
     per_fold = []
@@ -458,11 +475,14 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
     result = {
         "ensemble_metrics":  metrics,
         "ensemble_ci_95":    ci,
+        "threshold_policy": policy,
         "ensemble_threshold": threshold,
         "per_site_calibration": {
             "applied": calibration_applied,
             "num_sites": len(calibrators),
         },
+        "f1_threshold":       f1_threshold,
+        "f1_metrics":         f1_metrics,
         "youden_threshold":   youden_thr,
         "youden_metrics":     youden_metrics,
         "fold_aucs":         fold_aucs,
@@ -490,7 +510,7 @@ def _print_metrics_table(
         )
     logger.info("─" * len(hdr))
     logger.info("  n_total=%d  n_asd=%d  n_control=%d", metrics["n_total"], metrics["n_asd"], metrics["n_control"])
-    logger.info("  Threshold (max-F1): %.4f", metrics.get("threshold", 0.5))
+    logger.info("  Selected threshold: %.4f", metrics.get("threshold", 0.5))
 
     if per_fold:
         logger.info("\n  Per-fold AUC on test set:")

@@ -125,6 +125,36 @@ GNN_ONECYCLE_MAX_LR = 0.002
 GNN_ONECYCLE_PCT_START = 0.2
 GNN_ONECYCLE_WARMUP_FRACTION = 0.15
 
+# Auxiliary regularization defaults (kept conservative by default).
+# These were previously hardcoded in gnn_model.py and can now be tuned safely.
+GNN_STRUCTURAL_DROPOUT_PROB = 0.0
+GNN_EDGE_CONTRASTIVE_WEIGHT = 0.0
+GNN_INVARIANCE_WEIGHT = 0.0
+GNN_SPATIAL_INVARIANCE_WEIGHT = 0.0
+
+# Fold-safe harmonization policy for validation/test rows from sites that are
+# absent in fold-train. Options:
+# - "passthrough": harmonize seen sites, leave unseen rows unchanged.
+# - "fail": abort fold harmonization when unseen sites are detected.
+HARMONIZATION_UNSEEN_SITE_POLICY = "passthrough"
+
+# Multi-view integrity gate: disable invariance training when non-base views are
+# largely degenerate (zero-edge), rather than silently training on broken views.
+GNN_ENFORCE_MULTIVIEW_QUALITY_GATE = True
+GNN_MULTIVIEW_MAX_ZERO_EDGE_RATE = 0.20
+GNN_MULTIVIEW_QUALITY_SAMPLE_SIZE = 512
+
+# Multi-view generation integrity gate (Stage 15): fail/warn immediately after
+# creating multiview artifacts if non-base view types are mostly zero-edge.
+MULTIVIEW_GENERATION_ENFORCE_QUALITY_GATE = True
+MULTIVIEW_GENERATION_MAX_ZERO_EDGE_RATE = 0.20
+MULTIVIEW_GENERATION_POLICY = "fail"  # Options: "fail", "warn"
+
+# Base graph quality gate: prevent training on heavily degenerate graphs.
+GNN_ENFORCE_GRAPH_QUALITY_GATE = True
+GNN_MAX_DEGENERATE_GRAPH_RATE = 0.35
+GNN_MIN_EDGES_FOR_NONDEGENERATE = 12
+
 # --- HARDWARE ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -134,6 +164,19 @@ FOCAL_LOSS_GAMMA = 2.0
 
 DEFAULT_THRESHOLD = 0.5
 OPTIMIZE_THRESHOLD = True
+
+# Evaluation operating-point policy.
+# - "f1": max-F1 threshold on held-out calibration fold
+# - "youden": max(sensitivity + specificity - 1)
+EVAL_THRESHOLD_POLICY = "youden"
+
+# Site robustness gate derived from cross-site experiment output
+# (`results/experiments/data_quality/cross_site_auc.csv`).
+SITE_ROBUSTNESS_GATE_ENABLED = True
+SITE_ROBUSTNESS_MIN_SITE_AUC = 0.55
+SITE_ROBUSTNESS_MAX_WEAK_SITE_FRACTION = 0.40
+SITE_ROBUSTNESS_MIN_EVALUABLE_SITES = 5
+SITE_ROBUSTNESS_GATE_POLICY = "warn"  # Options: "warn", "fail"
 
 USE_FOCAL_LOSS = True
 USE_CLASS_WEIGHTS = False

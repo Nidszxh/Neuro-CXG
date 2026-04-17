@@ -38,6 +38,16 @@ from src.core.config import (
     GNN_ONECYCLE_MAX_LR,
     GNN_ONECYCLE_WARMUP_FRACTION,
     GNN_EARLY_STOPPING_PATIENCE,
+    GNN_STRUCTURAL_DROPOUT_PROB,
+    GNN_EDGE_CONTRASTIVE_WEIGHT,
+    GNN_INVARIANCE_WEIGHT,
+    GNN_SPATIAL_INVARIANCE_WEIGHT,
+    GNN_ENFORCE_MULTIVIEW_QUALITY_GATE,
+    GNN_MULTIVIEW_MAX_ZERO_EDGE_RATE,
+    GNN_MULTIVIEW_QUALITY_SAMPLE_SIZE,
+    GNN_ENFORCE_GRAPH_QUALITY_GATE,
+    GNN_MAX_DEGENERATE_GRAPH_RATE,
+    GNN_MIN_EDGES_FOR_NONDEGENERATE,
     FOCAL_LOSS_ALPHA,
     FOCAL_LOSS_GAMMA,
     GNN_USE_SITE_EMBEDDING,
@@ -397,6 +407,103 @@ def _compute_site_auc_values(
     return site_auc_values
 
 
+def _assess_graph_degeneracy(dataset) -> dict:
+    """Estimate degenerate-graph rate from edge counts in the training dataset."""
+    valid_graphs = 0
+    degenerate_graphs = 0
+    edge_counts = []
+
+    for i in range(len(dataset)):
+        data = dataset.get(i)
+        if data is None:
+            continue
+
+        valid_graphs += 1
+        if getattr(data, "edge_index", None) is None:
+            edge_count = 0
+        else:
+            edge_count = int(data.edge_index.shape[1])
+        edge_counts.append(edge_count)
+
+        if edge_count < GNN_MIN_EDGES_FOR_NONDEGENERATE:
+            degenerate_graphs += 1
+
+    degenerate_rate = degenerate_graphs / max(valid_graphs, 1)
+    mean_edges = float(np.mean(edge_counts)) if edge_counts else 0.0
+
+    return {
+        "valid_graphs": valid_graphs,
+        "degenerate_graphs": degenerate_graphs,
+        "degenerate_rate": degenerate_rate,
+        "mean_edges": mean_edges,
+    }
+
+
+def _assess_multiview_quality(multiview_dir: Path, sample_size: int = 0) -> dict:
+    """Measure zero-edge rates per multiview branch.
+
+    Returns a dict with checked package count, per-view zero-edge rates, and
+    failing views whose zero-edge rate exceeds GNN_MULTIVIEW_MAX_ZERO_EDGE_RATE.
+    """
+    files = sorted(multiview_dir.glob("*/multiview_graphs.pt"))
+    if sample_size > 0 and len(files) > sample_size:
+        sample_idx = np.linspace(0, len(files) - 1, sample_size, dtype=int)
+        files = [files[i] for i in sample_idx]
+
+    view_order = list(CausalInvarianceLoss._VIEW_ORDER)
+    zero_counts = {view: 0 for view in view_order}
+    checked = 0
+
+    for fp in files:
+        try:
+            payload = torch.load(fp, map_location="cpu", weights_only=False)
+        except Exception:
+            continue
+
+        if not isinstance(payload, dict):
+            continue
+
+        views = payload.get("views", payload)
+        if not isinstance(views, dict):
+            continue
+
+        checked += 1
+        for view in view_order:
+            adj = views.get(view)
+            if adj is None:
+                zero_counts[view] += 1
+                continue
+
+            if torch.is_tensor(adj):
+                adj_t = adj.detach().cpu().float()
+            else:
+                adj_t = torch.as_tensor(adj, dtype=torch.float32)
+
+            if adj_t.ndim != 2 or adj_t.shape[0] != adj_t.shape[1]:
+                zero_counts[view] += 1
+                continue
+
+            edge_count = int((adj_t != 0).sum().item())
+            if edge_count == 0:
+                zero_counts[view] += 1
+
+    rates = {
+        view: (zero_counts[view] / max(checked, 1))
+        for view in view_order
+    }
+    failing = [
+        view
+        for view in view_order
+        if view != "base" and rates[view] > GNN_MULTIVIEW_MAX_ZERO_EDGE_RATE
+    ]
+
+    return {
+        "checked_packages": checked,
+        "zero_edge_rates": rates,
+        "failing_views": failing,
+    }
+
+
 def _run_training_once(
     *,
     use_grl: bool,
@@ -445,6 +552,25 @@ def _run_training_once(
     
     # Compute class weights (informational)
     class_weights = compute_class_weights(labels)
+
+    graph_quality = _assess_graph_degeneracy(dataset)
+    logger.info(
+        "Graph quality: degenerate=%d/%d (%.1f%%; edge<threshold=%d), mean_edges=%.2f",
+        graph_quality["degenerate_graphs"],
+        graph_quality["valid_graphs"],
+        100.0 * graph_quality["degenerate_rate"],
+        GNN_MIN_EDGES_FOR_NONDEGENERATE,
+        graph_quality["mean_edges"],
+    )
+    if (
+        GNN_ENFORCE_GRAPH_QUALITY_GATE
+        and graph_quality["degenerate_rate"] > GNN_MAX_DEGENERATE_GRAPH_RATE
+    ):
+        raise RuntimeError(
+            "Graph quality gate failed: degenerate graph rate "
+            f"{graph_quality['degenerate_rate']:.2%} exceeds "
+            f"GNN_MAX_DEGENERATE_GRAPH_RATE={GNN_MAX_DEGENERATE_GRAPH_RATE:.2%}."
+        )
     
     # Initialize tracking
     tracker = TrainingTracker(k_folds=K_FOLDS)
@@ -472,6 +598,14 @@ def _run_training_once(
     logger.info(f"GRL enabled: {use_grl} (alpha_max={grl_alpha:.2f})")
     logger.info(f"Early stopping patience: {GNN_EARLY_STOPPING_PATIENCE}")
     logger.info(f"Focal Loss: α={FOCAL_LOSS_ALPHA}, γ={FOCAL_LOSS_GAMMA}")
+    logger.info(
+        "Aux losses: structural_dropout=%.3f, edge_contrastive=%.3f, "
+        "invariance=%.3f, spatial_invariance=%.3f",
+        GNN_STRUCTURAL_DROPOUT_PROB,
+        GNN_EDGE_CONTRASTIVE_WEIGHT,
+        GNN_INVARIANCE_WEIGHT,
+        GNN_SPATIAL_INVARIANCE_WEIGHT,
+    )
     logger.info(f"{'='*70}\n")
     
     # K-fold cross-validation (strict manifest-only enforcement)
@@ -508,17 +642,57 @@ def _run_training_once(
             "Run fold_safe_harmonization.py before gnn_training."
         )
 
-    multiview_available = (
+    multiview_present = (
         CAUSAL_GRAPHS_MULTIVIEW_DIR.exists()
         and any(CAUSAL_GRAPHS_MULTIVIEW_DIR.glob("*/multiview_graphs.pt"))
     )
-    invariance_criterion = CausalInvarianceLoss(temperature=0.07) if multiview_available else None
-    if multiview_available:
+
+    multiview_available = multiview_present
+    if multiview_present and GNN_ENFORCE_MULTIVIEW_QUALITY_GATE:
+        quality = _assess_multiview_quality(
+            CAUSAL_GRAPHS_MULTIVIEW_DIR,
+            sample_size=GNN_MULTIVIEW_QUALITY_SAMPLE_SIZE,
+        )
+        checked = quality["checked_packages"]
+        rates = quality["zero_edge_rates"]
         logger.info(
-            "Multi-view causal graphs detected — enabling CausalInvarianceLoss (weight=0.15)."
+            "Multiview quality: checked=%d | base=%.1f%% | ext=%.1f%% | b0=%.1f%% | b1=%.1f%% | b2=%.1f%% | hc=%.1f%%",
+            checked,
+            100.0 * rates.get("base", 1.0),
+            100.0 * rates.get("extended_lag", 1.0),
+            100.0 * rates.get("bootstrap_0", 1.0),
+            100.0 * rates.get("bootstrap_1", 1.0),
+            100.0 * rates.get("bootstrap_2", 1.0),
+            100.0 * rates.get("high_confidence", 1.0),
+        )
+        if checked == 0 or quality["failing_views"]:
+            multiview_available = False
+            logger.warning(
+                "Disabling multiview invariance: degenerate views exceed max zero-edge rate %.2f. "
+                "Failing views=%s",
+                GNN_MULTIVIEW_MAX_ZERO_EDGE_RATE,
+                quality["failing_views"],
+            )
+
+    invariance_enabled = multiview_available and GNN_INVARIANCE_WEIGHT > 0.0
+    invariance_criterion = CausalInvarianceLoss(temperature=0.07) if invariance_enabled else None
+    if invariance_enabled:
+        logger.info(
+            "Multi-view causal graphs detected — enabling CausalInvarianceLoss (weight=%.3f).",
+            GNN_INVARIANCE_WEIGHT,
+        )
+    elif multiview_available:
+        logger.info(
+            "Multi-view graphs detected but GNN_INVARIANCE_WEIGHT=%.3f, so invariance loss is disabled.",
+            GNN_INVARIANCE_WEIGHT,
         )
     else:
-        logger.info("No multi-view graphs detected — training falls back to standard single-view objective.")
+        if multiview_present:
+            logger.info(
+                "Multi-view graphs detected but disabled by quality gate — training uses single-view objective."
+            )
+        else:
+            logger.info("No multi-view graphs detected — training falls back to standard single-view objective.")
             
     site_auc_values = []
 
@@ -599,15 +773,15 @@ def _run_training_once(
             pct_start=GNN_ONECYCLE_WARMUP_FRACTION,
             grl_alpha_max=grl_alpha,
             # Task 1: structural learning enforcement (DD-009)
-            structural_dropout_prob=0.30,
-            edge_contrastive_weight=0.05,
+            structural_dropout_prob=GNN_STRUCTURAL_DROPOUT_PROB,
+            edge_contrastive_weight=GNN_EDGE_CONTRASTIVE_WEIGHT,
             # Task 2: multi-view causal invariance (DD-010)
             invariance_loss_fn=invariance_criterion,
-            invariance_weight=0.15 if multiview_available else 0.0,
-            multiview_dir=CAUSAL_GRAPHS_MULTIVIEW_DIR if multiview_available else None,
+            invariance_weight=GNN_INVARIANCE_WEIGHT if invariance_enabled else 0.0,
+            multiview_dir=CAUSAL_GRAPHS_MULTIVIEW_DIR if invariance_enabled else None,
             # Task 4: spatial-channel adversarial invariance (DD-012)
             spatial_invariance_loss_fn=spatial_invariance_criterion,
-            spatial_invariance_weight=0.10,
+            spatial_invariance_weight=GNN_SPATIAL_INVARIANCE_WEIGHT,
         )
 
         for entry in history:
