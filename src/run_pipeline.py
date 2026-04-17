@@ -81,6 +81,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from src.core.config import (
     validate_environment,
+    validate_gnn_training_inputs,
     PROJECT_ROOT,
     DATA_ROOT,
     DATA_PROCESSED,
@@ -858,6 +859,9 @@ Examples:
             if not prompt_user(msg, default=True):
                 logger.info(f"⏭️  User skipped: {stage['name']}")
                 continue
+
+        if stage_key == "gnn_training":
+            validate_gnn_training_inputs()
         
         # Execute with function name if specified
         function_name = stage.get("function", None)

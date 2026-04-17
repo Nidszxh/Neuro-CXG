@@ -142,6 +142,15 @@ class CausalInvarianceLoss(nn.Module):
     Temperature τ = 0.07 (tight, following SimCLR convention for small batches).
     """
 
+    _VIEW_ORDER = (
+        "base",
+        "extended_lag",
+        "bootstrap_0",
+        "bootstrap_1",
+        "bootstrap_2",
+        "high_confidence",
+    )
+
     def __init__(self, temperature: float = 0.07):
         super().__init__()
         self.temperature = temperature
@@ -522,8 +531,14 @@ def _run_training_once(
     - CheckpointManager: Save/load best models
     """
     from src.features.graph_factory import ABIDECausalDataset
+    from src.features.graph_factory import _load_csv_cached
 
     _set_global_seed(42)
+
+    # Prime CSV/Feather caches before the dataset constructor reads them.
+    _load_csv_cached(MASTER_MANIFEST)
+    _load_csv_cached(NODE_ATTRIBUTES_HARMONIZED, index_col='subject_id')
+    _load_csv_cached(DATA_METADATA / 'node_features_3d.csv', index_col='subject_id')
 
     # Load dataset
     dataset = ABIDECausalDataset(split='train')

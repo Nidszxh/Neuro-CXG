@@ -6,6 +6,13 @@ Run all missing stages:
 python src/run_pipeline.py --auto
 ```
 
+If you have already regenerated the split for site-stratified CV, the canonical re-run is:
+```bash
+python src/data/split.py --site-stratified-cv
+python -m src.features.fold_safe_harmonization
+python src/run_pipeline.py --auto --skip-download --skip-split
+```
+
 Useful variants:
 ```bash
 # Reuse existing downloaded/split data
@@ -21,6 +28,8 @@ python src/run_pipeline.py --force-reset
 python src/run_pipeline.py --analysis-only
 ```
 
+The pipeline now checks for harmonized fold files before GNN training begins, so missing fold artifacts fail fast instead of surfacing deep inside the training loop.
+
 ## Stage-Level Commands
 ```bash
 # ROI detection training
@@ -34,6 +43,9 @@ python -m src.features.extract_temporal
 
 # Fold-safe harmonization
 python -m src.features.fold_safe_harmonization
+
+# Optional: regenerate CV folds so validation sites are separated from training sites
+python src/data/split.py --site-stratified-cv
 
 # Causal graph construction
 python -m src.features.construct_causal
@@ -91,6 +103,10 @@ python src/run_pipeline.py --force-reset --auto --skip-download --skip-split
 ```bash
 python -m src.features.fold_safe_harmonization
 ```
+
+4. GNN training aborts before the first epoch
+- Check that `data/metadata/harmonized_folds_cv/harmonized_fold_<k>.csv` exists for every fold.
+- If you regenerated the split, rerun harmonization before training.
 
 ## Common Failure Patterns
 1. Metric collapse near random

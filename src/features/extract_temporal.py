@@ -50,6 +50,16 @@ def _get_zero_features(bands: Dict[str, Tuple[float, float]]) -> Dict[str, float
     return features
 
 
+def _get_unreliable_bands(fs: float) -> set[str]:
+    """Return bands that should be zeroed for the given sampling rate."""
+    nyquist = fs / 2.0
+    unreliable = set(UNRELIABLE_FREQ_BANDS_AT_NYQUIST)
+    for band_name, (_, high) in ACTIVE_FREQ_BANDS.items():
+        if high >= nyquist:
+            unreliable.add(band_name)
+    return unreliable
+
+
 def extract_band_power(
     ts: np.ndarray, fs: float = 0.5, bands: Dict[str, Tuple[float, float]] = None
 ) -> Dict[str, float]:
@@ -83,9 +93,10 @@ def extract_band_power(
     global _NYQUIST_NOTE_EMITTED
     nyquist = fs / 2.0
     nyquist_eps = nyquist - NYQUIST_EPS
+    unreliable_bands = _get_unreliable_bands(fs)
     safe_bands = {}
     for band_name, (low, high) in bands.items():
-        if band_name in UNRELIABLE_FREQ_BANDS_AT_NYQUIST and high >= nyquist:
+        if band_name in unreliable_bands and high >= nyquist:
             safe_bands[band_name] = (0.0, 0.0)
             continue
         safe_low = max(0.0, low)
@@ -95,7 +106,7 @@ def extract_band_power(
         else:
             safe_bands[band_name] = (safe_low, safe_high)
 
-    if not _NYQUIST_NOTE_EMITTED and "gamma" in bands and bands["gamma"][1] >= nyquist:
+    if not _NYQUIST_NOTE_EMITTED and "gamma" in bands and "gamma" in unreliable_bands:
         tr = 1.0 / fs
         logger.warning(
             "Gamma band marked unreliable at Nyquist for TR=%.1fs; gamma features are zeroed.",

@@ -31,6 +31,8 @@ Latest on-disk evaluation snapshot (results/evaluation/comprehensive_results.jso
 - AUPRC: 0.6689
 - F1: 0.6849
 
+Current evaluation policy uses a Youden J threshold by default, and the training runner now validates that fold harmonization artifacts exist before GNN training starts.
+
 For details and caveats, see docs/results.md.
 
 ## Documentation Map

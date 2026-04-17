@@ -1,0 +1,6 @@
+fold,train_site_count,val_site_count,unseen_site_count,unseen_row_count,val_row_count,unseen_sites
+0,16,4,4,220,220,LEUVEN_1|MAX_MUN|NYU|YALE
+1,16,4,4,150,150,CALTECH|SBL|TRINITY|UM_1
+2,16,4,4,148,148,KKI|LEUVEN_2|PITT|UCLA_1
+3,16,4,4,117,117,CMU|SDSU|UM_2|USM
+4,16,4,4,86,86,OHSU|OLIN|STANFORD|UCLA_2

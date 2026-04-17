@@ -15,6 +15,7 @@ from src.core.hyperparams import (
     F1_GOOD_THRESHOLD,
     F1_WEAK_THRESHOLD,
     LOSS_RANDOM_THRESHOLD,
+    K_FOLDS,
     YOLO_DEGREES,
     YOLO_FLIPLR,
 )
@@ -26,6 +27,7 @@ from src.core.paths import (
     DATA_METADATA,
     DATA_ROOT,
     MASTER_MANIFEST,
+    HARMONIZED_FOLDS_DIR,
     NODE_ATTRIBUTES_HARMONIZED,
     NODE_FEATURES_3D,
 )
@@ -233,6 +235,17 @@ def validate_gnn_training_inputs() -> bool:
 
     if not NODE_ATTRIBUTES_HARMONIZED.exists():
         errors.append(f"Missing features: {NODE_ATTRIBUTES_HARMONIZED}")
+
+    missing_harmonized_folds = [
+        fold
+        for fold in range(K_FOLDS)
+        if not (HARMONIZED_FOLDS_DIR / f"harmonized_fold_{fold}.csv").exists()
+    ]
+    if missing_harmonized_folds:
+        errors.append(
+            "Missing harmonized fold files for folds "
+            f"{missing_harmonized_folds}: {HARMONIZED_FOLDS_DIR}"
+        )
 
     if errors:
         logger.error("GNN training validation FAILED:")

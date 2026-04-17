@@ -10,6 +10,8 @@ Track experiments, configurations, and outcomes in a consistent format.
 - Explainability summaries: results/explainability/summary.json
 - Optional run tracker outputs (new): results/experiments/runs/<run_id>/run.json
 
+You can compare completed runs programmatically with `src.core.experiment_tracker.ExperimentTracker.compare_runs()`.
+
 ## Experiment Log
 
 | Experiment ID | Scope | Key Config | Main Outcome | Notes |
@@ -38,3 +40,4 @@ For each new run, capture:
 - Compare held-out test AUC with CI overlap.
 - Compare subgroup and site variance.
 - Check if specificity and calibration improved.
+- If you are comparing multiple training runs, include the run ID, config hash, and threshold policy in the notes so the results are interpretable.

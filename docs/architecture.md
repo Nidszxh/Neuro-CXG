@@ -86,7 +86,7 @@ Graph files in data/processed/causal_graphs are dictionary payloads, then conver
 
 ## Model Architecture Notes
 - Backbone: GATv2-based graph classifier with skip connections.
-- Pooling: attention pooling by default.
+- Pooling: anatomical hierarchical pooling by default.
 - Optional conditioning: site embedding and demographics.
 - Optional adversarial head: GRL-based site classifier.
 - Convenience API: forward_batch(batch) for direct PyG batch forwarding.
@@ -105,6 +105,7 @@ Graph files in data/processed/causal_graphs are dictionary payloads, then conver
 ## Runtime Orchestration
 - src/run_pipeline.py executes stages in declarative order from src/pipeline/registry.py.
 - Each stage has module metadata and optional sentinel completion checks.
+- GNN training now performs an explicit input preflight so missing harmonized fold artifacts are caught before training begins.
 
 ## Why This Architecture
 - Supports reproducibility and modular debugging.
