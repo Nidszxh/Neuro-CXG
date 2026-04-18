@@ -1,1 +1,0 @@
-Lets push these to the repo, Im thinking 3 to 4 commits. I need the commit -m `git commit -m <message>` and the respective files to add `git add <files>`
