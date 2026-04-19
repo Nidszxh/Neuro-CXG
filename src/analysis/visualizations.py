@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     CAUSAL_GRAPHS_DIR,
-    CHECKPOINT_DIR,
     ALL_FEATURE_NAMES,
     GNN_IN_CHANNELS,
     GNN_HIDDEN_CHANNELS,
@@ -37,10 +36,11 @@ from src.core.config import (
     NUM_SPATIAL_FEATURES,
     NUM_TEMPORAL_FEATURES,
     RESULTS_DIR,
+    get_active_checkpoint_dir,
 )
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.factory import build_model
-from src.models.training_utils import make_loader
+from src.models.training_utils import make_loader, attach_feature_scaler_from_checkpoint
 
 # Import analysis modules
 try:
@@ -275,9 +275,8 @@ def generate_simple_feature_importance(output_dir: Path):
         test_loader = make_loader([d for d in test_dataset if d is not None], batch_size=32)
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = build_model(device=device, use_grl=GNN_USE_GRL, grl_alpha=GNN_GRL_ALPHA)
 
-        checkpoint_path = CHECKPOINT_DIR / "best_model_fold0.pt"
+        checkpoint_path = get_active_checkpoint_dir() / "best_model_fold0.pt"
         if not checkpoint_path.exists():
             logger.warning(f"Checkpoint not found: {checkpoint_path}")
             return
@@ -285,10 +284,23 @@ def generate_simple_feature_importance(output_dir: Path):
         checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
         state_dict = checkpoint["model_state"] if isinstance(checkpoint, dict) and "model_state" in checkpoint else checkpoint
+
+        site_dim = 16 if GNN_USE_SITE_EMBEDDING else 0
+        saved_in_features = state_dict["lin_in.weight"].shape[1]
+        node_emb_dim = saved_in_features - GNN_IN_CHANNELS - site_dim
+        model = build_model(
+            device=device,
+            use_grl=GNN_USE_GRL,
+            grl_alpha=GNN_GRL_ALPHA,
+            node_emb_dim=node_emb_dim,
+        )
+
         missing, unexpected = model.load_state_dict(state_dict, strict=False)
         if missing or unexpected:
             logger.warning(f"Checkpoint load had missing keys: {missing}")
             logger.warning(f"Checkpoint load had unexpected keys: {unexpected}")
+
+        attach_feature_scaler_from_checkpoint(model, checkpoint, expected_dim=GNN_IN_CHANNELS)
 
         model.eval()
 
@@ -362,34 +374,49 @@ def run_visualization_pipeline(output_dir: Path):
             logger.info("Running advanced feature importance analysis...")
 
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            model = build_model(device=device, use_grl=GNN_USE_GRL, grl_alpha=GNN_GRL_ALPHA)
+            checkpoint_path = get_active_checkpoint_dir() / "best_model_fold0.pt"
+            if not checkpoint_path.exists():
+                logger.warning("Checkpoint not found: %s", checkpoint_path)
+            else:
+                checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+                state_dict = checkpoint["model_state"] if isinstance(checkpoint, dict) and "model_state" in checkpoint else checkpoint
 
-            checkpoint = torch.load(CHECKPOINT_DIR / "best_model_fold0.pt", map_location=device, weights_only=False)
-            missing, unexpected = model.load_state_dict(checkpoint["model_state"], strict=False)
-            if missing or unexpected:
-                logger.warning(f"Checkpoint load had missing keys: {missing}")
-                logger.warning(f"Checkpoint load had unexpected keys: {unexpected}")
-            model.eval()
+                site_dim = 16 if GNN_USE_SITE_EMBEDDING else 0
+                saved_in_features = state_dict["lin_in.weight"].shape[1]
+                node_emb_dim = saved_in_features - GNN_IN_CHANNELS - site_dim
+                model = build_model(
+                    device=device,
+                    use_grl=GNN_USE_GRL,
+                    grl_alpha=GNN_GRL_ALPHA,
+                    node_emb_dim=node_emb_dim,
+                )
 
-            test_dataset = ABIDECausalDataset(split="test")
-            test_loader = make_loader([d for d in test_dataset if d is not None], batch_size=32)
+                missing, unexpected = model.load_state_dict(state_dict, strict=False)
+                if missing or unexpected:
+                    logger.warning(f"Checkpoint load had missing keys: {missing}")
+                    logger.warning(f"Checkpoint load had unexpected keys: {unexpected}")
+                attach_feature_scaler_from_checkpoint(model, checkpoint, expected_dim=GNN_IN_CHANNELS)
+                model.eval()
 
-            feature_names = create_feature_names()
+                test_dataset = ABIDECausalDataset(split="test")
+                test_loader = make_loader([d for d in test_dataset if d is not None], batch_size=32)
 
-            analyzer = FeatureAttributionAnalyzer(
-                model=model,
-                test_loader=test_loader,
-                feature_names=feature_names,
-                device=device,
-            )
+                feature_names = create_feature_names()
 
-            try:
-                attributions = analyzer.compute_attributions()
-                analyzer.visualize_feature_importance(attributions, output_dir / "feature_importance_ig.png")
-                analyzer.visualize_per_class(output_dir / "feature_importance_per_class.png")
-                logger.info("Advanced feature importance completed")
-            except (RuntimeError, IndexError) as shape_error:
-                logger.warning(f"Feature attribution skipped due to architecture mismatch: {str(shape_error)[:80]}…")
+                analyzer = FeatureAttributionAnalyzer(
+                    model=model,
+                    test_loader=test_loader,
+                    feature_names=feature_names,
+                    device=device,
+                )
+
+                try:
+                    attributions = analyzer.compute_attributions()
+                    analyzer.visualize_feature_importance(attributions, output_dir / "feature_importance_ig.png")
+                    analyzer.visualize_per_class(output_dir / "feature_importance_per_class.png")
+                    logger.info("Advanced feature importance completed")
+                except (RuntimeError, IndexError) as shape_error:
+                    logger.warning(f"Feature attribution skipped due to architecture mismatch: {str(shape_error)[:80]}…")
         except Exception as e:
             logger.error(f"Advanced feature importance failed: {e}")
             import traceback

@@ -13,7 +13,7 @@ from torch.nn import Linear, Sequential, GELU, Dropout, LayerNorm
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src.core.atlas_config import LOBE_TO_NETWORK, NETWORK_TO_LOBES, NUM_NETWORKS, NUM_LOBES
+from src.core.config import LOBE_TO_NETWORK, NETWORK_TO_LOBES, NUM_NETWORKS, NUM_LOBES
 
 
 class GradientReversal(torch.autograd.Function):
@@ -76,6 +76,31 @@ class AnatomicalHierarchyPool(nn.Module):
         # Level-2 attention gate: scores each network embedding
         self.network_gate = Linear(hidden_dim, 1)
 
+        expected_network_ids = set(range(self.num_networks))
+        actual_network_ids = set(self.network_to_lobes.keys())
+        if actual_network_ids != expected_network_ids:
+            raise ValueError(
+                f"network_to_lobes keys {sorted(actual_network_ids)} do not match expected "
+                f"network ids {sorted(expected_network_ids)}"
+            )
+
+        # Precompute and pad per-network lobe indices to avoid rebuilding tensors
+        # in every forward pass.
+        max_lobes_per_network = max(len(v) for v in self.network_to_lobes.values())
+        lobe_idx_padded = torch.full(
+            (self.num_networks, max_lobes_per_network),
+            fill_value=-1,
+            dtype=torch.long,
+        )
+        lobe_counts = torch.zeros(self.num_networks, dtype=torch.long)
+        for net_idx, lobe_list in self.network_to_lobes.items():
+            lobe_tensor = torch.as_tensor(lobe_list, dtype=torch.long)
+            lobe_idx_padded[net_idx, : lobe_tensor.numel()] = lobe_tensor
+            lobe_counts[net_idx] = int(lobe_tensor.numel())
+
+        self.register_buffer("lobe_idx_padded", lobe_idx_padded)
+        self.register_buffer("lobe_counts", lobe_counts)
+
         # Stored during forward for explainability access
         self.last_network_embeddings: torch.Tensor = None
 
@@ -96,34 +121,27 @@ class AnatomicalHierarchyPool(nn.Module):
         Returns:
             graph_emb: shape (num_graphs, hidden_dim)
         """
-        device = h.device
+        expected_nodes = num_graphs * NUM_LOBES
+        if h.size(0) != expected_nodes:
+            raise ValueError(
+                "AnatomicalHierarchyPool expects fixed-size graphs with "
+                f"{NUM_LOBES} lobes each: expected {expected_nodes} nodes, got {h.size(0)}"
+            )
+
+        h_3d = h.reshape(num_graphs, NUM_LOBES, self.hidden_dim)
 
         # Build network embeddings: (num_graphs, num_networks, hidden_dim)
         network_embs = torch.zeros(
-            num_graphs, self.num_networks, self.hidden_dim, device=device
+            num_graphs, self.num_networks, self.hidden_dim, device=h.device
         )
 
-        for net_idx, lobe_list in self.network_to_lobes.items():
-            # For each graph, gather lobe embeddings belonging to this network.
-            # node global index = graph_idx * NUM_LOBES + lobe_local_idx
-            lobe_tensor = torch.tensor(lobe_list, device=device)  # (L,)
+        for net_idx in range(self.num_networks):
+            lobe_count = int(self.lobe_counts[net_idx].item())
+            if lobe_count <= 0:
+                continue
 
-            # Get global node indices for all graphs × lobes in this network
-            # Shape: (num_graphs, L)
-            global_ids = (
-                torch.arange(num_graphs, device=device).unsqueeze(1) * NUM_LOBES
-                + lobe_tensor.unsqueeze(0)
-            )  # (num_graphs, L)
-
-            flat_ids = global_ids.view(-1)  # (num_graphs * L,)
-
-            # Guard against out-of-range (should not happen with fixed 12-node graphs)
-            valid_mask = flat_ids < h.size(0)
-            if not valid_mask.all():
-                flat_ids = flat_ids[valid_mask]
-
-            lobe_embs_flat = h[flat_ids]  # (num_graphs * L, hidden_dim)
-            lobe_embs = lobe_embs_flat.view(num_graphs, len(lobe_list), self.hidden_dim)
+            lobe_indices = self.lobe_idx_padded[net_idx, :lobe_count]
+            lobe_embs = h_3d[:, lobe_indices, :]
 
             # Level-1 attention: (num_graphs, L, 1) → softmax over L
             gates = self.lobe_gate(lobe_embs)  # (num_graphs, L, 1)
@@ -166,7 +184,7 @@ class CausalBrainGNN(torch.nn.Module):
         dropout=0.4,
         num_heads=4,
         num_layers=2,
-        pooling="anatomical",   # changed default from "mean_max_sum" to "anatomical" (Task 3)
+        pooling="mean_max_sum",
         num_sites=20,
         use_site_embedding=True,
         use_demographics=True,
@@ -361,6 +379,20 @@ class CausalBrainGNN(torch.nn.Module):
 
     def _encode(self, x, edge_index, edge_attr, batch, site_id, age, sex, fiq):
         """Shared encoder body used by both forward() and _forward_with_embedding()."""
+        # Optional fold-wise feature scaling loaded from checkpoint.
+        # Keeps inference-time preprocessing consistent with train-fold scaling.
+        feature_mean = getattr(self, "_feature_mean", None)
+        feature_std = getattr(self, "_feature_std", None)
+        if feature_mean is not None and feature_std is not None:
+            try:
+                mean_t = torch.as_tensor(feature_mean, dtype=x.dtype, device=x.device).view(1, -1)
+                std_t = torch.as_tensor(feature_std, dtype=x.dtype, device=x.device).view(1, -1).clamp_min(1e-6)
+                if mean_t.shape[1] == x.shape[1] and std_t.shape[1] == x.shape[1]:
+                    x = (x - mean_t) / std_t
+            except Exception:
+                # Never fail the forward pass because scaler metadata is malformed.
+                pass
+
         # 1. Optionally add site embeddings
         if self.use_site_embedding:
             if site_id is not None:

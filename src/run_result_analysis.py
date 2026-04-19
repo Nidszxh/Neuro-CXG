@@ -47,7 +47,15 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.metrics import roc_auc_score, f1_score, accuracy_score, confusion_matrix
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    roc_auc_score,
+    f1_score,
+    accuracy_score,
+    confusion_matrix,
+    precision_recall_curve,
+    roc_curve,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.core.config import (
@@ -71,11 +79,12 @@ from src.core.config import (
     MASTER_MANIFEST,
     NUM_LOBES,
     RESULTS_DIR,
+    EVAL_THRESHOLD_POLICY,
 )
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
 from src.models.factory import build_model
-from src.models.training_utils import make_loader
+from src.models.training_utils import make_loader, attach_feature_scaler_from_checkpoint
 
 logging.basicConfig(
     level=logging.INFO,
@@ -88,76 +97,283 @@ OUTPUT_DIR  = RESULTS_DIR / "analysis"
 LOBE_LABELS = {v: k for k, v in LOBE_NAMES.items()} if isinstance(LOBE_NAMES, dict) else {}
 
 
+def _json_safe(value):
+    """Recursively convert values into JSON-safe finite primitives."""
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+
+    if isinstance(value, np.ndarray):
+        return _json_safe(value.tolist())
+
+    if isinstance(value, (np.floating, float)):
+        val = float(value)
+        return val if np.isfinite(val) else None
+
+    if isinstance(value, (np.integer, int)):
+        return int(value)
+
+    if isinstance(value, (np.bool_, bool)):
+        return bool(value)
+
+    if torch.is_tensor(value):
+        return _json_safe(value.detach().cpu().tolist())
+
+    return value
+
+
+def _safe_roc_auc(labels: np.ndarray, probs: np.ndarray) -> Optional[float]:
+    """Return ROC-AUC when both classes are present; else None."""
+    if labels is None or probs is None:
+        return None
+    if len(labels) == 0 or len(probs) == 0:
+        return None
+    if len(np.unique(labels)) < 2:
+        return None
+    try:
+        val = float(roc_auc_score(labels, probs))
+    except Exception:
+        return None
+    return val if np.isfinite(val) else None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _load_model(fold_id: int) -> CausalBrainGNN:
+    ckpt_path = get_active_checkpoint_dir() / f"best_model_fold{fold_id}.pt"
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+
+    ckpt = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
+    state = ckpt.get("model_state", ckpt)
+
+    site_dim = 16 if GNN_USE_SITE_EMBEDDING else 0
+    saved_in_features = state["lin_in.weight"].shape[1]
+    node_emb_dim = saved_in_features - GNN_IN_CHANNELS - site_dim
+
     model = build_model(
         device=DEVICE,
         use_grl=GNN_USE_GRL,
         grl_alpha=GNN_GRL_ALPHA,
+        node_emb_dim=node_emb_dim,
     )
-    ckpt_path = get_active_checkpoint_dir() / f"best_model_fold{fold_id}.pt"
-    if not ckpt_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-    ckpt  = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
-    state = ckpt.get("model_state", ckpt)
+
     model.load_state_dict(state, strict=False)
+    attach_feature_scaler_from_checkpoint(model, ckpt, expected_dim=GNN_IN_CHANNELS)
     model.eval()
     return model
 
 
+def _optimal_threshold(probs: np.ndarray, labels: np.ndarray) -> float:
+    """Find threshold that maximises F1 on the given probabilities."""
+    precision, recall, thresholds = precision_recall_curve(labels, probs)
+    f1 = 2 * precision * recall / (precision + recall + 1e-10)
+    best = np.argmax(f1)
+    return float(thresholds[best]) if best < len(thresholds) else 0.5
+
+
+def _youden_threshold(probs: np.ndarray, labels: np.ndarray) -> float:
+    """Find threshold that maximises Youden's J = sensitivity + specificity − 1."""
+    if len(np.unique(labels)) < 2:
+        return 0.5
+    fpr, tpr, thresholds = roc_curve(labels, probs)
+    j = tpr - fpr
+    best = int(np.argmax(j))
+    return float(thresholds[best]) if len(thresholds) > 0 else 0.5
+
+
+def _site_ids_from_graphs(graphs: List) -> np.ndarray:
+    """Extract integer site_id vector aligned to graph order."""
+    return np.array([
+        int(g.site_id.item())
+        if hasattr(g, "site_id") and g.site_id is not None and g.site_id.numel() > 0
+        else -1
+        for g in graphs
+    ])
+
+
+def _fit_per_site_calibrators(
+    probs: np.ndarray,
+    labels: np.ndarray,
+    site_ids: np.ndarray,
+    min_samples: int = 10,
+) -> Dict[int, LogisticRegression]:
+    """Fit one-dimensional Platt calibrators per site using held-out val data."""
+    calibrators: Dict[int, LogisticRegression] = {}
+    for site in np.unique(site_ids):
+        if site < 0:
+            continue
+        mask = site_ids == site
+        if mask.sum() < min_samples:
+            continue
+        if np.unique(labels[mask]).size < 2:
+            continue
+        lr = LogisticRegression(C=1.0, solver="lbfgs")
+        lr.fit(probs[mask].reshape(-1, 1), labels[mask])
+        calibrators[int(site)] = lr
+    return calibrators
+
+
+def _apply_per_site_calibration(
+    probs: np.ndarray,
+    site_ids: np.ndarray,
+    calibrators: Dict[int, LogisticRegression],
+) -> np.ndarray:
+    """Apply per-site logistic calibration when calibrator exists."""
+    calibrated = probs.copy()
+    for site, calibrator in calibrators.items():
+        mask = site_ids == site
+        if not np.any(mask):
+            continue
+        calibrated[mask] = calibrator.predict_proba(probs[mask].reshape(-1, 1))[:, 1]
+    return calibrated
+
+
+def _load_last_fold_val_graphs() -> List:
+    """Use last fold validation partition from train split as calibration set."""
+    train_dataset = ABIDECausalDataset(split="train")
+    train_dataset.augment_graphs = False
+    if "cv_fold" not in train_dataset.manifest.columns:
+        logger.warning("Manifest has no cv_fold column; skipping per-site calibration")
+        return []
+
+    fold_id = K_FOLDS - 1
+    val_indices = np.where(train_dataset.manifest["cv_fold"].values == fold_id)[0]
+    return [train_dataset[i] for i in val_indices if train_dataset[i] is not None]
+
+
+@torch.no_grad()
+def _predict_probs(model: CausalBrainGNN, graphs: List) -> Tuple[np.ndarray, np.ndarray]:
+    """Return (probs, labels) arrays — probs are ASD probability (class 1)."""
+    loader = make_loader(graphs, batch_size=1, shuffle=False)
+    all_probs, all_labels = [], []
+    for batch in loader:
+        if batch is None:
+            continue
+        batch = batch.to(DEVICE)
+        out = model.forward_batch(batch) if hasattr(model, "forward_batch") else model(
+            batch.x,
+            batch.edge_index,
+            batch.edge_attr,
+            batch.batch,
+            site_id=getattr(batch, "site_id", None),
+            age=batch.age if hasattr(batch, "age") else None,
+            sex=batch.sex if hasattr(batch, "sex") else None,
+            fiq=batch.fiq if hasattr(batch, "fiq") else None,
+        )
+        probs = torch.softmax(out, dim=1)[:, 1].cpu().numpy()
+        all_probs.append(probs)
+        all_labels.append(batch.y.cpu().numpy())
+
+    if not all_probs:
+        return np.array([]), np.array([])
+    return np.concatenate(all_probs), np.concatenate(all_labels)
+
+
 @torch.no_grad()
 def _collect_per_subject(
-    graphs: List, fold_aucs: List[float]
-) -> pd.DataFrame:
+    graphs: List,
+    fold_aucs: List[float],
+    threshold: float,
+    per_site_calibration: Optional[Dict] = None,
+) -> Tuple[pd.DataFrame, Dict[str, object]]:
     """
     Build a per-subject DataFrame with columns:
     subject_id, true_label, pred_label, prob_asd, confidence,
     site_id, age_years, sex_code, fiq, correct
     """
-    records, fold_probs_list = [], []
+    records, fold_probs_list, loaded_fold_ids = [], [], []
+    calibration_requested = bool((per_site_calibration or {}).get("applied", False))
 
     for fold_id in range(K_FOLDS):
         try:
             model = _load_model(fold_id)
         except FileNotFoundError:
             continue
-        loader = make_loader(graphs, batch_size=1, shuffle=False)
-        probs  = []
-        for batch in loader:
-            if batch is None:
-                continue
-            batch = batch.to(DEVICE)
-            out = model.forward_batch(batch) if hasattr(model, "forward_batch") else model(
-                batch.x,
-                batch.edge_index,
-                batch.edge_attr,
-                batch.batch,
-                site_id=getattr(batch, "site_id", None),
-                age=batch.age if hasattr(batch, "age") else None,
-                sex=batch.sex if hasattr(batch, "sex") else None,
-                fiq=batch.fiq if hasattr(batch, "fiq") else None,
-            )
-            p = torch.softmax(out, dim=1)[:, 1].cpu().item()
-            probs.append(p)
-        fold_probs_list.append(np.array(probs))
+        probs, _ = _predict_probs(model, graphs)
+        if probs.size == 0:
+            del model
+            continue
+        fold_probs_list.append(probs)
+        loaded_fold_ids.append(fold_id)
         del model
 
     if not fold_probs_list:
         raise RuntimeError("No fold checkpoints found — run training first.")
 
-    weights = np.array(fold_aucs[:len(fold_probs_list)])
+    weights = np.array([fold_aucs[fid] for fid in loaded_fold_ids], dtype=float)
+    if len(loaded_fold_ids) != len(fold_aucs):
+        logger.info(
+            "  Loaded %d/%d fold checkpoints for analysis ensemble",
+            len(loaded_fold_ids),
+            K_FOLDS,
+        )
+    if weights.sum() <= 0:
+        weights = np.ones_like(weights)
     weights = weights / weights.sum()
     ens_probs = np.average(np.stack(fold_probs_list, axis=0), axis=0, weights=weights)
+
+    # Mirror evaluation calibration path when metadata is available.
+    calibration_applied = False
+    calibration_sites = 0
+    if calibration_requested:
+        calibration_graphs = _load_last_fold_val_graphs()
+        if calibration_graphs:
+            calibration_fold_probs = []
+            calibration_fold_ids = []
+            calibration_labels = None
+            for fold_id in loaded_fold_ids:
+                try:
+                    model = _load_model(fold_id)
+                except FileNotFoundError:
+                    continue
+                c_probs, c_labels = _predict_probs(model, calibration_graphs)
+                del model
+                if c_probs.size == 0:
+                    continue
+                calibration_fold_probs.append(c_probs)
+                calibration_fold_ids.append(fold_id)
+                if calibration_labels is None:
+                    calibration_labels = c_labels
+
+            if calibration_fold_probs and calibration_labels is not None and calibration_labels.size > 0:
+                cal_weights = np.array([
+                    fold_aucs[fid]
+                    for fid in calibration_fold_ids
+                ], dtype=float)
+                if cal_weights.sum() <= 0:
+                    cal_weights = np.ones_like(cal_weights)
+                cal_weights = cal_weights / cal_weights.sum()
+
+                ens_cal_probs = np.average(
+                    np.stack(calibration_fold_probs, axis=0),
+                    axis=0,
+                    weights=cal_weights,
+                )
+                cal_site_ids = _site_ids_from_graphs(calibration_graphs)
+                calibrators = _fit_per_site_calibrators(ens_cal_probs, calibration_labels, cal_site_ids)
+                if calibrators:
+                    test_site_ids = _site_ids_from_graphs(graphs)
+                    ens_probs = _apply_per_site_calibration(ens_probs, test_site_ids, calibrators)
+                    calibration_applied = True
+                    calibration_sites = len(calibrators)
+
+    logger.info(
+        "  Inference operating point: threshold=%.4f, per-site calibration=%s",
+        float(threshold),
+        "on" if calibration_applied else "off",
+    )
 
     for idx, g in enumerate(graphs):
         if g is None:
             continue
         prob    = float(ens_probs[idx])
         label   = int(g.y.item())
-        pred    = int(prob >= 0.5)
+        pred    = int(prob >= float(threshold))
         conf    = max(prob, 1 - prob)
         age_raw = float(g.age.item()) if hasattr(g, "age") and g.age is not None else 0.0
         sex_raw = float(g.sex.item()) if hasattr(g, "sex") and g.sex is not None else 0.0
@@ -170,8 +386,9 @@ def _collect_per_subject(
             "true_class":   "ASD" if label == 1 else "Control",
             "pred_label":   pred,
             "pred_class":   "ASD" if pred == 1 else "Control",
-            "prob_asd":     round(prob, 4),
-            "confidence":   round(conf, 4),
+            "prob_asd":     prob,
+            "confidence":   conf,
+            "decision_threshold": float(threshold),
             "correct":      int(pred == label),
             "error_type":   _error_type(label, pred),
             "site_id":      site_id,
@@ -180,7 +397,15 @@ def _collect_per_subject(
             "fiq":          round(fiq_raw * 30.0 + 100.0, 1),
         })
 
-    return pd.DataFrame(records)
+    inference_meta = {
+        "threshold": float(threshold),
+        "per_site_calibration": {
+            "requested": calibration_requested,
+            "applied": calibration_applied,
+            "num_sites": int(calibration_sites),
+        },
+    }
+    return pd.DataFrame(records), inference_meta
 
 
 def _error_type(label: int, pred: int) -> str:
@@ -190,15 +415,177 @@ def _error_type(label: int, pred: int) -> str:
 
 
 def _ensemble_fold_aucs() -> List[float]:
-    """Load fold AUCs from the JSON summary if available, else return uniform weights."""
+    """Load fold validation AUCs from checkpoints (same weighting as evaluation)."""
+    active_dir = get_active_checkpoint_dir()
+    aucs: List[float] = []
+    for fold_id in range(K_FOLDS):
+        ckpt_path = active_dir / f"best_model_fold{fold_id}.pt"
+        if not ckpt_path.exists():
+            aucs.append(0.5)
+            continue
+        try:
+            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            v = float(ckpt.get("auc", 0.5))
+            aucs.append(v if np.isfinite(v) else 0.5)
+        except Exception:
+            aucs.append(0.5)
+    return aucs if aucs else [0.5] * K_FOLDS
+
+
+def _ensemble_fold_thresholds() -> List[float]:
+    """Load fold decision thresholds from checkpoints."""
+    active_dir = get_active_checkpoint_dir()
+    thresholds: List[float] = []
+    for fold_id in range(K_FOLDS):
+        ckpt_path = active_dir / f"best_model_fold{fold_id}.pt"
+        if not ckpt_path.exists():
+            thresholds.append(0.5)
+            continue
+        try:
+            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            v = float(ckpt.get("threshold", 0.5))
+            if not np.isfinite(v):
+                v = 0.5
+            thresholds.append(float(np.clip(v, 0.0, 1.0)))
+        except Exception:
+            thresholds.append(0.5)
+    return thresholds if thresholds else [0.5] * K_FOLDS
+
+
+def _load_evaluation_metadata() -> Dict:
+    """Load evaluation metadata for threshold/calibration policy alignment."""
     json_path = RESULTS_DIR / "evaluation" / "comprehensive_results.json"
-    if json_path.exists():
+    if not json_path.exists():
+        return {}
+    try:
         with open(json_path) as f:
             data = json.load(f)
-        aucs = data.get("per_fold_metrics", [])
-        if aucs:
-            return [m.get("auc", 0.5) for m in aucs]
-    return [1.0 / K_FOLDS] * K_FOLDS
+        return data if isinstance(data, dict) else {}
+    except Exception as exc:
+        logger.warning("Failed to load evaluation metadata from %s: %s", json_path, exc)
+        return {}
+
+
+def _resolve_analysis_threshold(
+    fold_aucs: List[float],
+    fold_thresholds: List[float],
+    eval_meta: Dict,
+    threshold_policy: str,
+) -> float:
+    """Resolve analysis threshold to match evaluation policy whenever possible."""
+    if isinstance(eval_meta, dict):
+        stored = eval_meta.get("ensemble_metrics", {}).get("threshold", None)
+        if stored is None:
+            stored = eval_meta.get("ensemble_threshold", None)
+        if stored is not None:
+            try:
+                thr = float(stored)
+                if np.isfinite(thr):
+                    logger.info("  Using evaluation threshold from comprehensive_results.json: %.4f", thr)
+                    return thr
+            except Exception:
+                pass
+
+    policy = str(threshold_policy).strip().lower()
+    if policy not in {"f1", "youden"}:
+        policy = "f1"
+
+    fallback_threshold = float(np.mean(fold_thresholds)) if fold_thresholds else 0.5
+
+    calibration_graphs = _load_last_fold_val_graphs()
+    if not calibration_graphs:
+        logger.warning(
+            "  No calibration split available; falling back to mean fold threshold=%.4f",
+            fallback_threshold,
+        )
+        return fallback_threshold
+
+    fold_probs = []
+    loaded_fold_ids = []
+    labels_ref = None
+    for fold_id in range(K_FOLDS):
+        try:
+            model = _load_model(fold_id)
+        except FileNotFoundError:
+            continue
+        probs, labels = _predict_probs(model, calibration_graphs)
+        del model
+        if probs.size == 0:
+            continue
+        fold_probs.append(probs)
+        loaded_fold_ids.append(fold_id)
+        if labels_ref is None:
+            labels_ref = labels
+
+    if not fold_probs or labels_ref is None or labels_ref.size == 0:
+        logger.warning(
+            "  Failed to recompute threshold from calibration split; using mean fold threshold=%.4f",
+            fallback_threshold,
+        )
+        return fallback_threshold
+
+    weights = np.array([
+        fold_aucs[fid] if fid < len(fold_aucs) else 0.5
+        for fid in loaded_fold_ids
+    ], dtype=float)
+    if weights.sum() <= 0:
+        weights = np.ones_like(weights)
+    weights = weights / weights.sum()
+    ens_probs_raw = np.average(np.stack(fold_probs, axis=0), axis=0, weights=weights)
+
+    per_site_requested = True
+    if isinstance(eval_meta, dict) and eval_meta:
+        per_site_cal_meta = eval_meta.get("per_site_calibration", {})
+        if isinstance(per_site_cal_meta, dict):
+            per_site_requested = bool(per_site_cal_meta.get("applied", False))
+
+    ens_probs_effective = ens_probs_raw
+    f1_threshold = float(fallback_threshold)
+    if per_site_requested:
+        cal_site_ids = _site_ids_from_graphs(calibration_graphs)
+        calibrators = _fit_per_site_calibrators(ens_probs_raw, labels_ref, cal_site_ids)
+        if calibrators:
+            ens_probs_effective = _apply_per_site_calibration(ens_probs_raw, cal_site_ids, calibrators)
+            f1_threshold = _optimal_threshold(ens_probs_effective, labels_ref)
+            logger.info(
+                "  Recomputed calibrated F1 threshold from calibration split: %.4f",
+                float(f1_threshold),
+            )
+        else:
+            logger.info(
+                "  Per-site calibration unavailable on calibration split; using mean fold threshold=%.4f",
+                f1_threshold,
+            )
+    else:
+        logger.info(
+            "  Per-site calibration not requested by evaluation metadata; using mean fold threshold=%.4f",
+            f1_threshold,
+        )
+
+    if policy == "youden":
+        thr = _youden_threshold(ens_probs_effective, labels_ref)
+        logger.info("  Recomputed Youden threshold from calibration split: %.4f", float(thr))
+    else:
+        thr = f1_threshold
+    if not np.isfinite(thr):
+        logger.warning(
+            "  Recomputed threshold is non-finite; using mean fold threshold=%.4f",
+            fallback_threshold,
+        )
+        return fallback_threshold
+    return float(thr)
+
+
+def _format_prediction_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Format probability/confidence columns to stable CSV precision."""
+    formatted = df.copy()
+    if "prob_asd" in formatted.columns:
+        formatted["prob_asd"] = formatted["prob_asd"].astype(float).round(4)
+    if "confidence" in formatted.columns:
+        formatted["confidence"] = formatted["confidence"].astype(float).round(4)
+    if "decision_threshold" in formatted.columns:
+        formatted["decision_threshold"] = formatted["decision_threshold"].astype(float).round(4)
+    return formatted
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -206,28 +593,54 @@ def _ensemble_fold_aucs() -> List[float]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run_per_subject_analysis(
-    test_graphs: List, output_dir: Path
-) -> pd.DataFrame:
+    test_graphs: List,
+    output_dir: Path,
+    threshold: float,
+    per_site_calibration: Optional[Dict] = None,
+) -> Tuple[pd.DataFrame, Dict[str, object]]:
     logger.info("=" * 60)
     logger.info("SECTION 1 — PER-SUBJECT PREDICTIONS")
     logger.info("=" * 60)
+    logger.info(
+        "  Analysis uses threshold=%.4f; per-site calibration requested=%s",
+        float(threshold),
+        bool((per_site_calibration or {}).get("applied", False)),
+    )
 
     fold_aucs = _ensemble_fold_aucs()
-    df = _collect_per_subject(test_graphs, fold_aucs)
+    df, inference_meta = _collect_per_subject(
+        test_graphs,
+        fold_aucs,
+        threshold=threshold,
+        per_site_calibration=per_site_calibration,
+    )
 
     acc  = df["correct"].mean()
-    auc  = roc_auc_score(df["true_label"], df["prob_asd"])
+    auc_opt = _safe_roc_auc(df["true_label"].to_numpy(), df["prob_asd"].to_numpy())
+    auc_log = auc_opt if auc_opt is not None else float("nan")
     n_fp = (df["error_type"] == "FP").sum()
     n_fn = (df["error_type"] == "FN").sum()
 
-    logger.info("  Subjects: %d  Accuracy: %.3f  AUC: %.4f", len(df), acc, auc)
+    logger.info("  Subjects: %d  Accuracy: %.3f  AUC: %.4f", len(df), acc, auc_log)
+    logger.info("  Decision threshold: %.4f", float(threshold))
     logger.info("  False Positives: %d  False Negatives: %d", n_fp, n_fn)
+    if "decision_threshold" in df.columns:
+        logger.info("  Predicted ASD rate: %.1f%%", float((df["pred_label"] == 1).mean() * 100.0))
 
+    df = _format_prediction_columns(df)
     csv_path = output_dir / "per_subject_predictions.csv"
     df.to_csv(csv_path, index=False)
     logger.info("  Saved → %s", csv_path)
 
-    return df
+    eff_cal = inference_meta.get("per_site_calibration", {})
+    logger.info(
+        "  Effective per-site calibration: requested=%s applied=%s (sites=%s)",
+        bool(eff_cal.get("requested", False)),
+        bool(eff_cal.get("applied", False)),
+        int(eff_cal.get("num_sites", 0)),
+    )
+
+    return df, inference_meta
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -340,26 +753,33 @@ def run_site_effects(
     logger.info("=" * 60)
 
     def _safe_auc(sub_df):
-        if len(sub_df) < 5 or sub_df["true_label"].nunique() < 2:
-            return float("nan")
-        return float(roc_auc_score(sub_df["true_label"], sub_df["prob_asd"]))
+        if len(sub_df) < 5:
+            return None, "too_few_samples"
+        if sub_df["true_label"].nunique() < 2:
+            return None, "single_class"
+        return float(roc_auc_score(sub_df["true_label"], sub_df["prob_asd"])), "ok"
 
     sites = df[df["site_id"] >= 0]["site_id"].unique()
     site_stats = []
 
     for site in sorted(sites):
         sdf      = df[df["site_id"] == site]
-        auc      = _safe_auc(sdf)
+        auc, auc_status = _safe_auc(sdf)
         n_asd    = int((sdf["true_label"] == 1).sum())
         n_ctrl   = int((sdf["true_label"] == 0).sum())
         acc      = float(sdf["correct"].mean())
         site_stats.append({
             "site_id": int(site), "n_total": len(sdf),
             "n_asd": n_asd, "n_control": n_ctrl,
-            "auc": round(auc, 4), "accuracy": round(acc, 3),
+            "auc": round(auc, 4) if auc is not None else None,
+            "auc_status": auc_status,
+            "accuracy": round(acc, 3),
         })
-        logger.info("  Site %-3d  n=%-4d  ASD=%-3d  Ctrl=%-3d  AUC=%.4f  Acc=%.3f",
-                    site, len(sdf), n_asd, n_ctrl, auc, acc)
+        auc_log = f"{auc:.4f}" if auc is not None else "N/A"
+        logger.info(
+            "  Site %-3d  n=%-4d  ASD=%-3d  Ctrl=%-3d  AUC=%s  Acc=%.3f  (%s)",
+            site, len(sdf), n_asd, n_ctrl, auc_log, acc, auc_status,
+        )
 
     # ── Per-site AUC bar chart ─────────────────────────────────────────────────
     _plot_site_auc(site_stats, output_dir / "site_effects.png")
@@ -375,7 +795,7 @@ def _plot_site_auc(site_stats: List[Dict], save_path: Path) -> None:
     try:
         import matplotlib.pyplot as plt
 
-        valid = [s for s in site_stats if not np.isnan(s["auc"])]
+        valid = [s for s in site_stats if s.get("auc") is not None]
         valid.sort(key=lambda x: -x["auc"])
         x_labels = [f"Site {s['site_id']}" for s in valid]
         aucs     = [s["auc"] for s in valid]
@@ -686,11 +1106,22 @@ def save_summary(
     severity_result: Dict,
     case_studies: List[Dict],
     output_dir: Path,
+    threshold: float,
+    threshold_policy: str,
+    per_site_calibration: Optional[Dict],
+    requested_per_site_calibration: Optional[Dict],
 ) -> None:
+    overall_auc = _safe_roc_auc(df["true_label"].to_numpy(), df["prob_asd"].to_numpy())
+    effective_calibration = per_site_calibration or {"applied": False, "num_sites": 0}
+    requested_calibration = requested_per_site_calibration or effective_calibration
     summary = {
         "n_subjects":            len(df),
         "overall_accuracy":      float(df["correct"].mean()),
-        "overall_auc":           float(roc_auc_score(df["true_label"], df["prob_asd"])),
+        "overall_auc":           overall_auc,
+        "decision_threshold":    float(threshold),
+        "threshold_policy":      str(threshold_policy),
+        "per_site_calibration":  effective_calibration,
+        "per_site_calibration_requested": requested_calibration,
         "misclassification":     misclass_result.get("demographics", {}),
         "site_effects":          site_result,
         "calibration":           calib_result,
@@ -699,14 +1130,16 @@ def save_summary(
     }
     json_path = output_dir / "result_analysis_summary.json"
     with open(json_path, "w") as f:
-        json.dump(summary, f, indent=2, default=str)
+        json.dump(_json_safe(summary), f, indent=2, default=str, allow_nan=False)
     logger.info("Summary JSON saved → %s", json_path)
 
     logger.info("\n" + "═" * 60)
     logger.info("RESULT ANALYSIS COMPLETE")
     logger.info("═" * 60)
+    auc_log = summary["overall_auc"] if summary["overall_auc"] is not None else float("nan")
     logger.info("  Subjects: %d  |  Accuracy: %.3f  |  AUC: %.4f",
-                summary["n_subjects"], summary["overall_accuracy"], summary["overall_auc"])
+                summary["n_subjects"], summary["overall_accuracy"], auc_log)
+    logger.info("  Threshold policy: %s  |  threshold=%.4f", threshold_policy, float(threshold))
     logger.info("  Output → %s", output_dir)
 
 
@@ -743,8 +1176,46 @@ def main() -> None:
         import sys
         sys.exit(1)
 
+    eval_meta = _load_evaluation_metadata()
+    if eval_meta:
+        logger.info("Loaded evaluation metadata from results/evaluation/comprehensive_results.json")
+    else:
+        logger.warning("Evaluation metadata not found; analysis will recompute threshold/calibration metadata")
+    threshold_policy = str(
+        eval_meta.get("threshold_policy", str(EVAL_THRESHOLD_POLICY).strip().lower())
+    ).strip().lower()
+    if threshold_policy not in {"f1", "youden"}:
+        threshold_policy = str(EVAL_THRESHOLD_POLICY).strip().lower()
+        if threshold_policy not in {"f1", "youden"}:
+            threshold_policy = "f1"
+
+    fold_aucs = _ensemble_fold_aucs()
+    fold_thresholds = _ensemble_fold_thresholds()
+
+    threshold = _resolve_analysis_threshold(
+        fold_aucs=fold_aucs,
+        fold_thresholds=fold_thresholds,
+        eval_meta=eval_meta,
+        threshold_policy=threshold_policy,
+    )
+    logger.info("Using threshold policy '%s' with threshold=%.4f", threshold_policy, float(threshold))
+    requested_per_site_calibration = (
+        eval_meta.get("per_site_calibration", {"applied": False, "num_sites": 0})
+        if eval_meta
+        else {"applied": True, "num_sites": 0}
+    )
+
     # ── Section 1: Per-subject predictions ────────────────────────────────────
-    df = run_per_subject_analysis(test_graphs, args.output_dir)
+    df, inference_meta = run_per_subject_analysis(
+        test_graphs,
+        args.output_dir,
+        threshold=threshold,
+        per_site_calibration=requested_per_site_calibration,
+    )
+    effective_per_site_calibration = inference_meta.get(
+        "per_site_calibration",
+        requested_per_site_calibration,
+    )
 
     # ── Section 2: Misclassification analysis ─────────────────────────────────
     misclass_result = run_misclassification_analysis(df, test_graphs, args.output_dir)
@@ -764,7 +1235,19 @@ def main() -> None:
     case_studies = run_case_studies(df, test_graphs, args.n_cases, args.output_dir)
 
     # ── Section 7: Summary JSON ───────────────────────────────────────────────
-    save_summary(df, misclass_result, site_result, calib_result, severity_result, case_studies, args.output_dir)
+    save_summary(
+        df,
+        misclass_result,
+        site_result,
+        calib_result,
+        severity_result,
+        case_studies,
+        args.output_dir,
+        threshold=threshold,
+        threshold_policy=threshold_policy,
+        per_site_calibration=effective_per_site_calibration,
+        requested_per_site_calibration=requested_per_site_calibration,
+    )
 
 
 if __name__ == "__main__":

@@ -249,14 +249,17 @@ class TestABIDECausalDataset:
 
     def test_edge_attr_non_negative(self, dataset):
         """
-        Edge weights are -log10(p-value) for Granger or positive correlation values.
-        They must be ≥ 0.  Training augmentation may zero individual weights (edge
-        dropout), so strictly > 0 is not guaranteed on the train split.
+        Edge attributes are normalized in graph_factory via z-score + tanh,
+        so they are expected to be bounded to [-1, 1] and can be signed.
+        (Raw causal graph weights are checked separately in construct_causal tests.)
         """
         sample = dataset.get(0)
         assert sample is not None
-        assert (sample.edge_attr >= 0).all(), (
-            f"Some edge weights are negative: {sample.edge_attr[sample.edge_attr < 0]}"
+        assert (sample.edge_attr >= -1.0 - 1e-6).all(), (
+            f"Edge attrs below -1 detected: {sample.edge_attr[sample.edge_attr < -1.0]}"
+        )
+        assert (sample.edge_attr <= 1.0 + 1e-6).all(), (
+            f"Edge attrs above 1 detected: {sample.edge_attr[sample.edge_attr > 1.0]}"
         )
 
     def test_pos_shape(self, dataset):

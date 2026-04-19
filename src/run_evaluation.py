@@ -95,7 +95,7 @@ from src.core.config import (
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
 from src.models.factory import build_model
-from src.models.training_utils import make_loader
+from src.models.training_utils import make_loader, attach_feature_scaler_from_checkpoint
 
 logging.basicConfig(
     level=logging.INFO,
@@ -121,22 +121,67 @@ def _load_model(fold_id: int) -> CausalBrainGNN:
     ckpt = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
     state = ckpt.get("model_state", ckpt)
 
-    # Auto-detect node_emb_dim from the saved lin_in weight shape so that
-    # checkpoints trained before this feature was added load correctly.
-    site_dim = 16 if GNN_USE_SITE_EMBEDDING else 0
-    saved_in_features = state["lin_in.weight"].shape[1]
-    node_emb_dim = saved_in_features - GNN_IN_CHANNELS - site_dim
+    # Infer architecture knobs from checkpoint tensors so evaluation stays
+    # compatible when config defaults drift between training and evaluation.
+    has_site_embedding = any(k.startswith("site_embedding.") for k in state)
+    site_dim = 16 if has_site_embedding else 0
+
+    saved_lin_in = state.get("lin_in.weight")
+    if saved_lin_in is None:
+        raise KeyError(f"Checkpoint missing required key: lin_in.weight ({ckpt_path})")
+
+    saved_hidden_channels = int(saved_lin_in.shape[0])
+    saved_in_features = int(saved_lin_in.shape[1])
+    node_emb_dim = max(saved_in_features - GNN_IN_CHANNELS - site_dim, 0)
+
+    saved_classifier_in = int(state["classifier.0.weight"].shape[1])
+    if GNN_POOLING == "mean_max_sum":
+        base_pool_dim = saved_hidden_channels * 3
+    else:
+        base_pool_dim = saved_hidden_channels
+    use_demographics = (saved_classifier_in - base_pool_dim) == 3
 
     model = build_model(
         device=DEVICE,
         use_grl=GNN_USE_GRL,
         grl_alpha=GNN_GRL_ALPHA,
+        hidden_channels=saved_hidden_channels,
+        use_site_embedding=has_site_embedding,
+        use_demographics=use_demographics,
         node_emb_dim=node_emb_dim,
     )
 
     model.load_state_dict(state, strict=False)
+    attach_feature_scaler_from_checkpoint(model, ckpt, expected_dim=GNN_IN_CHANNELS)
     model.eval()
     return model
+
+
+def _json_safe(value):
+    """Recursively convert values into JSON-safe finite primitives."""
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+
+    if isinstance(value, np.ndarray):
+        return _json_safe(value.tolist())
+
+    if isinstance(value, (np.floating, float)):
+        val = float(value)
+        return val if np.isfinite(val) else None
+
+    if isinstance(value, (np.integer, int)):
+        return int(value)
+
+    if isinstance(value, (np.bool_, bool)):
+        return bool(value)
+
+    if torch.is_tensor(value):
+        return _json_safe(value.detach().cpu().tolist())
+
+    return value
 
 
 def _build_loader(graphs: List, batch_size: int = GNN_BATCH_SIZE) -> DataLoader:
@@ -1008,7 +1053,7 @@ def save_comprehensive_results(
     }
     json_path = output_dir / "comprehensive_results.json"
     with open(json_path, "w") as f:
-        json.dump(full_results, f, indent=2, default=str)
+        json.dump(_json_safe(full_results), f, indent=2, default=str, allow_nan=False)
     logger.info("  JSON saved → %s", json_path)
 
     # ── Console summary ───────────────────────────────────────────────────────

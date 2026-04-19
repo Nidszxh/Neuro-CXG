@@ -5,7 +5,7 @@ import random
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import (
     roc_auc_score, f1_score, confusion_matrix,
-    accuracy_score
+    accuracy_score, roc_curve
 )
 import numpy as np
 import pandas as pd
@@ -50,6 +50,9 @@ from src.core.config import (
     GNN_MIN_EDGES_FOR_NONDEGENERATE,
     FOCAL_LOSS_ALPHA,
     FOCAL_LOSS_GAMMA,
+    USE_FOCAL_LOSS,
+    USE_CLASS_WEIGHTS,
+    EVAL_THRESHOLD_POLICY,
     GNN_USE_SITE_EMBEDDING,
     GNN_USE_DEMOGRAPHICS,
     GNN_NODE_EMB_DIM,
@@ -57,10 +60,14 @@ from src.core.config import (
     NUM_SPATIAL_FEATURES,
     CAUSAL_GRAPHS_DIR,
     CAUSAL_GRAPHS_MULTIVIEW_DIR,
+    MASTER_MANIFEST,
+    NODE_ATTRIBUTES_HARMONIZED,
+    NODE_FEATURES_3D,
     DATA_METADATA,
     RESULTS_TRAINING_DIR,
     HARMONIZED_FOLDS_DIR,
 )
+from src.core.validators import summarize_graph_degeneracy_from_edge_index
 from src.models.training_utils import (
     TrainingTracker,
     CheckpointManager,
@@ -70,6 +77,7 @@ from src.models.training_utils import (
 from src.core.experiment_tracker import ExperimentTracker
 from src.models.evaluation import evaluate_loader, optimal_threshold
 from src.models.factory import build_model
+from src.models.losses import FocalLoss
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
@@ -82,47 +90,6 @@ try:
 except ImportError:
     FEATURE_ANALYSIS_AVAILABLE = False
     logger.warning("FeatureAttributionAnalyzer unavailable (requires Captum)")
-
-
-# FOCAL LOSS (Keep - not in training_utils)
-
-class FocalLoss(nn.Module):
-    """
-    Focal Loss for class imbalance.
-    
-    Automatically focuses on hard-to-classify examples.
-    Args:
-        alpha: Weight for positive class (ASD)
-        gamma: Focusing parameter (higher = more focus on hard examples)
-        pos_weight: Additional weight for positive class (multiplicative with alpha)
-    """
-    def __init__(self, alpha=0.75, gamma=3.0, pos_weight=None):
-        super().__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-        self.pos_weight = pos_weight
-    
-    def forward(self, inputs, targets):
-        """
-        Args:
-            inputs: Raw logits (batch_size, num_classes)
-            targets: Ground truth labels (batch_size,)
-        """
-        probs = F.softmax(inputs, dim=1)
-        targets_one_hot = F.one_hot(targets, num_classes=2).float()
-        pt = (probs * targets_one_hot).sum(dim=1)
-
-        focal_weight = (1 - pt) ** self.gamma
-        alpha_weight = targets_one_hot[:, 1] * self.alpha + targets_one_hot[:, 0] * (1 - self.alpha)
-
-        if self.pos_weight is not None:
-            weight = targets_one_hot[:, 1] * self.pos_weight + targets_one_hot[:, 0]
-            ce_loss = F.cross_entropy(inputs, targets, reduction='none') * weight
-        else:
-            ce_loss = F.cross_entropy(inputs, targets, reduction='none')
-        focal_loss = alpha_weight * focal_weight * ce_loss
-
-        return focal_loss.mean()
 
 
 # ── TASK 2: Causal Invariance Loss (DD-010) ──────────────────────────────────────
@@ -260,7 +227,22 @@ def compute_class_weights(labels):
 
 
 def find_optimal_threshold(y_true, y_probs):
-    """Compatibility wrapper around the shared threshold utility."""
+    """Compatibility wrapper around the shared threshold utility.
+
+    Uses EVAL_THRESHOLD_POLICY so training/evaluation report the same operating
+    point family ("f1" or "youden").
+    """
+    policy = str(EVAL_THRESHOLD_POLICY).strip().lower()
+    if policy == "youden":
+        if len(np.unique(y_true)) < 2:
+            return 0.5, 0.0
+        fpr, tpr, thresholds = roc_curve(y_true, y_probs)
+        if thresholds.size == 0:
+            return 0.5, 0.0
+        j = tpr - fpr
+        best_idx = int(np.argmax(j))
+        thr = float(thresholds[best_idx]) if np.isfinite(thresholds[best_idx]) else 0.5
+        return thr, float(j[best_idx])
     return optimal_threshold(y_probs, y_true)
 
 
@@ -417,10 +399,11 @@ def _compute_site_auc_values(
 
 
 def _assess_graph_degeneracy(dataset) -> dict:
-    """Estimate degenerate-graph rate from edge counts in the training dataset."""
+    """Estimate degenerate-graph rate using unified edge/dead-lobe criterion."""
     valid_graphs = 0
     degenerate_graphs = 0
     edge_counts = []
+    dead_lobe_counts = []
 
     for i in range(len(dataset)):
         data = dataset.get(i)
@@ -428,13 +411,15 @@ def _assess_graph_degeneracy(dataset) -> dict:
             continue
 
         valid_graphs += 1
-        if getattr(data, "edge_index", None) is None:
-            edge_count = 0
-        else:
-            edge_count = int(data.edge_index.shape[1])
-        edge_counts.append(edge_count)
+        stats = summarize_graph_degeneracy_from_edge_index(
+            getattr(data, "edge_index", None),
+            num_nodes=getattr(data, "num_nodes", NUM_LOBES),
+            min_edges=GNN_MIN_EDGES_FOR_NONDEGENERATE,
+        )
+        edge_counts.append(int(stats["edge_count"]))
+        dead_lobe_counts.append(int(stats["dead_lobes"]))
 
-        if edge_count < GNN_MIN_EDGES_FOR_NONDEGENERATE:
+        if bool(stats["is_degenerate"]):
             degenerate_graphs += 1
 
     degenerate_rate = degenerate_graphs / max(valid_graphs, 1)
@@ -445,6 +430,7 @@ def _assess_graph_degeneracy(dataset) -> dict:
         "degenerate_graphs": degenerate_graphs,
         "degenerate_rate": degenerate_rate,
         "mean_edges": mean_edges,
+        "mean_dead_lobes": float(np.mean(dead_lobe_counts)) if dead_lobe_counts else 0.0,
     }
 
 
@@ -461,6 +447,7 @@ def _assess_multiview_quality(multiview_dir: Path, sample_size: int = 0) -> dict
 
     view_order = list(CausalInvarianceLoss._VIEW_ORDER)
     zero_counts = {view: 0 for view in view_order}
+    fallback_counts = {view: 0 for view in view_order if view != "base"}
     checked = 0
 
     for fp in files:
@@ -473,6 +460,7 @@ def _assess_multiview_quality(multiview_dir: Path, sample_size: int = 0) -> dict
             continue
 
         views = payload.get("views", payload)
+        fallback_flags = payload.get("fallback_views", {}) if isinstance(payload, dict) else {}
         if not isinstance(views, dict):
             continue
 
@@ -496,9 +484,16 @@ def _assess_multiview_quality(multiview_dir: Path, sample_size: int = 0) -> dict
             if edge_count == 0:
                 zero_counts[view] += 1
 
+            if view != "base" and bool(fallback_flags.get(view, False)):
+                fallback_counts[view] += 1
+
     rates = {
         view: (zero_counts[view] / max(checked, 1))
         for view in view_order
+    }
+    fallback_rates = {
+        view: (fallback_counts[view] / max(checked, 1))
+        for view in fallback_counts
     }
     failing = [
         view
@@ -509,6 +504,7 @@ def _assess_multiview_quality(multiview_dir: Path, sample_size: int = 0) -> dict
     return {
         "checked_packages": checked,
         "zero_edge_rates": rates,
+        "fallback_rates": fallback_rates,
         "failing_views": failing,
     }
 
@@ -538,7 +534,7 @@ def _run_training_once(
     # Prime CSV/Feather caches before the dataset constructor reads them.
     _load_csv_cached(MASTER_MANIFEST)
     _load_csv_cached(NODE_ATTRIBUTES_HARMONIZED, index_col='subject_id')
-    _load_csv_cached(DATA_METADATA / 'node_features_3d.csv', index_col='subject_id')
+    _load_csv_cached(NODE_FEATURES_3D, index_col='subject_id')
 
     # Load dataset
     dataset = ABIDECausalDataset(split='train')
@@ -570,12 +566,13 @@ def _run_training_once(
 
     graph_quality = _assess_graph_degeneracy(dataset)
     logger.info(
-        "Graph quality: degenerate=%d/%d (%.1f%%; edge<threshold=%d), mean_edges=%.2f",
+        "Graph quality: degenerate=%d/%d (%.1f%%; edge<threshold or dead-lobe), threshold=%d, mean_edges=%.2f, mean_dead_lobes=%.2f",
         graph_quality["degenerate_graphs"],
         graph_quality["valid_graphs"],
         100.0 * graph_quality["degenerate_rate"],
         GNN_MIN_EDGES_FOR_NONDEGENERATE,
         graph_quality["mean_edges"],
+        graph_quality.get("mean_dead_lobes", 0.0),
     )
     if (
         GNN_ENFORCE_GRAPH_QUALITY_GATE
@@ -612,7 +609,11 @@ def _run_training_once(
     logger.info(f"Demographics: {GNN_USE_DEMOGRAPHICS}")
     logger.info(f"GRL enabled: {use_grl} (alpha_max={grl_alpha:.2f})")
     logger.info(f"Early stopping patience: {GNN_EARLY_STOPPING_PATIENCE}")
-    logger.info(f"Focal Loss: α={FOCAL_LOSS_ALPHA}, γ={FOCAL_LOSS_GAMMA}")
+    if USE_FOCAL_LOSS:
+        logger.info(f"Loss: FocalLoss (α={FOCAL_LOSS_ALPHA}, γ={FOCAL_LOSS_GAMMA}, class_weights={USE_CLASS_WEIGHTS})")
+    else:
+        logger.info(f"Loss: CrossEntropy (class_weights={USE_CLASS_WEIGHTS})")
+    logger.info(f"Threshold policy: {EVAL_THRESHOLD_POLICY}")
     logger.info(
         "Aux losses: structural_dropout=%.3f, edge_contrastive=%.3f, "
         "invariance=%.3f, spatial_invariance=%.3f",
@@ -652,8 +653,12 @@ def _run_training_once(
         if not (HARMONIZED_FOLDS_DIR / f"harmonized_fold_{f}.csv").exists()
     ]
     if missing_fold_files:
+        missing_details = ", ".join(
+            f"fold {fold} (harmonized_fold_{fold}.csv)" for fold in missing_fold_files
+        )
         raise FileNotFoundError(
-            f"Missing fold-specific harmonized files for folds {missing_fold_files} in {HARMONIZED_FOLDS_DIR}. "
+            "Missing fold-specific harmonized files: "
+            f"{missing_details}. Directory: {HARMONIZED_FOLDS_DIR}. "
             "Run fold_safe_harmonization.py before gnn_training."
         )
 
@@ -680,6 +685,16 @@ def _run_training_once(
             100.0 * rates.get("bootstrap_2", 1.0),
             100.0 * rates.get("high_confidence", 1.0),
         )
+        fallback_rates = quality.get("fallback_rates", {})
+        if fallback_rates:
+            logger.info(
+                "Multiview fallback rates: ext=%.1f%% | b0=%.1f%% | b1=%.1f%% | b2=%.1f%% | hc=%.1f%%",
+                100.0 * fallback_rates.get("extended_lag", 0.0),
+                100.0 * fallback_rates.get("bootstrap_0", 0.0),
+                100.0 * fallback_rates.get("bootstrap_1", 0.0),
+                100.0 * fallback_rates.get("bootstrap_2", 0.0),
+                100.0 * fallback_rates.get("high_confidence", 0.0),
+            )
         if checked == 0 or quality["failing_views"]:
             multiview_available = False
             logger.warning(
@@ -710,6 +725,13 @@ def _run_training_once(
             logger.info("No multi-view graphs detected — training falls back to standard single-view objective.")
             
     site_auc_values = []
+    unique_sites = sorted({s for s in site_labels if s >= 0})
+    num_sites_detected = max((max(unique_sites) + 1) if unique_sites else 1, 1)
+    logger.info(
+        "Detected %d unique site IDs in training split (classifier size=%d)",
+        len(unique_sites),
+        num_sites_detected,
+    )
 
     for fold, (train_idx, val_idx) in enumerate(cv_splits):
         logger.info(f"\n{'='*70}")
@@ -734,9 +756,18 @@ def _run_training_once(
         fold_dataset = candidate_dataset
         logger.info("Using fold-specific harmonized features: %s", fold_temporal_path)
         
-        # Create data loaders
-        train_data = [fold_dataset[i] for i in train_idx if fold_dataset[i] is not None]
-        val_data = [fold_dataset[i] for i in val_idx if fold_dataset[i] is not None]
+        # Create fold-local data copies (avoid in-place mutation leaking across folds)
+        train_data = []
+        for i in train_idx:
+            sample = fold_dataset[i]
+            if sample is not None:
+                train_data.append(sample.clone())
+
+        val_data = []
+        for i in val_idx:
+            sample = fold_dataset[i]
+            if sample is not None:
+                val_data.append(sample.clone())
         
         train_labels = [d.y.item() for d in train_data]
         val_labels = [d.y.item() for d in val_data]
@@ -747,6 +778,20 @@ def _run_training_once(
         
         logger.info(f"Train: Control={train_labels.count(0)}, ASD={train_labels.count(1)}")
         logger.info(f"Val: Control={val_labels.count(0)}, ASD={val_labels.count(1)}")
+
+        # Fold-wise feature standardization (fit on train fold only, apply to train+val).
+        if train_data:
+            train_x = torch.cat([d.x for d in train_data], dim=0)
+            feat_mean = train_x.mean(dim=0, keepdim=True)
+            feat_std = train_x.std(dim=0, keepdim=True).clamp_min(1e-6)
+            for d in train_data:
+                d.x = (d.x - feat_mean) / feat_std
+            for d in val_data:
+                d.x = (d.x - feat_mean) / feat_std
+            logger.info("Applied fold-wise node feature standardization (train-fit only)")
+        else:
+            feat_mean = torch.zeros((1, GNN_IN_CHANNELS), dtype=torch.float32)
+            feat_std = torch.ones((1, GNN_IN_CHANNELS), dtype=torch.float32)
         
         train_loader = make_loader(train_data, batch_size=GNN_BATCH_SIZE, shuffle=True)
         val_loader = make_loader(val_data, batch_size=GNN_BATCH_SIZE)
@@ -761,14 +806,25 @@ def _run_training_once(
         # Loss function
         n_control = max((np.array(train_labels) == 0).sum(), 1)
         n_asd = max((np.array(train_labels) == 1).sum(), 1)
-        pos_weight = float(n_control / n_asd)
-        criterion = FocalLoss(alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA, pos_weight=pos_weight)
+        class_weight_tensor = None
+        if USE_CLASS_WEIGHTS:
+            class_weight_tensor = compute_class_weights(train_labels).to(DEVICE)
+
+        if USE_FOCAL_LOSS:
+            pos_weight = float(n_control / n_asd) if USE_CLASS_WEIGHTS else None
+            criterion = FocalLoss(
+                alpha=FOCAL_LOSS_ALPHA,
+                gamma=FOCAL_LOSS_GAMMA,
+                pos_weight=pos_weight,
+            )
+        else:
+            criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
         checkpoint_manager.reset()
 
         # Task 4: residual site signal adversarial regularization on spatial channels.
         spatial_invariance_criterion = SpatialInvarianceLoss(
             spatial_start_idx=GNN_IN_CHANNELS - NUM_SPATIAL_FEATURES,
-            num_sites=20,
+            num_sites=num_sites_detected,
             reversal_weight=1.0,
         )
 
@@ -827,7 +883,10 @@ def _run_training_once(
             'auc': best_metrics['auc'],
             'auprc': best_metrics['auprc'],
             'f1': best_metrics['f1'],
-            'threshold': best_metrics['threshold']
+            'threshold': best_metrics['threshold'],
+            # Persist fold-wise scaling stats for inference-time parity.
+            'feature_mean': feat_mean.squeeze(0).cpu().numpy().tolist(),
+            'feature_std': feat_std.squeeze(0).cpu().numpy().tolist(),
         }
         checkpoint_manager.save(model, None, best_metrics['best_epoch'], checkpoint_metrics, fold=fold)
 
@@ -837,6 +896,8 @@ def _run_training_once(
         )
         
         # Final evaluation with best checkpoint
+        model._feature_mean = feat_mean.squeeze(0).detach().cpu()
+        model._feature_std = feat_std.squeeze(0).detach().cpu()
         final_threshold = best_metrics['threshold']
         final_metrics = evaluate(model, val_loader, threshold=final_threshold)
         site_auc_values.extend(

@@ -31,10 +31,12 @@ from src.core.config import (
     DATA_FINAL,
     LOBE_NAMES,
     MASTER_MANIFEST,
+    MIN_EDGES_PER_GRAPH,
     NODE_ATTRIBUTES_HARMONIZED,
     NUM_LOBES,
     RESULTS_DIR,
 )
+from src.core.validators import summarize_graph_degeneracy_from_adj
 
 logging.basicConfig(
     level=logging.INFO,
@@ -107,6 +109,8 @@ def _analyze_graph(graph_path: Path) -> Dict[str, object]:
     off_diag_mask = ~torch.eye(adj.shape[0], dtype=torch.bool)
     edge_count = int((nonzero_mask & off_diag_mask).sum().item())
 
+    deg_summary = summarize_graph_degeneracy_from_adj(adj, min_edges=MIN_EDGES_PER_GRAPH)
+
     nonzero_vals = adj[nonzero_mask & off_diag_mask]
     mean_weight = float(nonzero_vals.abs().mean().item()) if nonzero_vals.numel() > 0 else 0.0
     max_weight = float(nonzero_vals.abs().max().item()) if nonzero_vals.numel() > 0 else 0.0
@@ -125,7 +129,7 @@ def _analyze_graph(graph_path: Path) -> Dict[str, object]:
 
     out["graph_dead_lobes"] = len(dead_ids)
     out["graph_dead_lobe_names"] = "|".join(dead_names)
-    out["graph_is_degenerate"] = bool(dead_ids)
+    out["graph_is_degenerate"] = bool(deg_summary["is_degenerate"])
 
     zero_lobe_mask = data.get("zero_lobe_mask")
     if isinstance(zero_lobe_mask, torch.Tensor) and zero_lobe_mask.numel() == NUM_LOBES:
@@ -335,7 +339,11 @@ def build_report(df: pd.DataFrame) -> str:
 
     if "graph_is_degenerate" in df.columns:
         degenerate = int((df["graph_is_degenerate"] == True).sum())
-        lines.append(f"  Degenerate graphs:   {degenerate} ({100 * degenerate / max(graph_exists, 1):.1f}% of existing)")
+    lines.append(
+        "  Degenerate graphs:   "
+        f"{degenerate} ({100 * degenerate / max(graph_exists, 1):.1f}% of existing) "
+        "[criterion: edge_count < MIN_EDGES_PER_GRAPH OR dead lobe present]"
+    )
 
     if "graph_dead_lobe_names" in df.columns:
         exploded = (

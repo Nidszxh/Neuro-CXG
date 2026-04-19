@@ -14,20 +14,89 @@ while keeping PyTorch raw (no pytorch-lightning dependency).
 """
 
 import hashlib
+import os
 import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import logging
+from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from torch_geometric.loader import DataLoader
-from src.core.config import GNN_ONECYCLE_PCT_START, GNN_GRL_ALPHA_MAX
+from sklearn.metrics import roc_curve
+from src.core.config import GNN_ONECYCLE_PCT_START, GNN_GRL_ALPHA_MAX, EVAL_THRESHOLD_POLICY
 from src.models.evaluation import evaluate_loader, optimal_threshold
 
 logger = logging.getLogger(__name__)
+
+
+def attach_feature_scaler_from_checkpoint(
+    model: torch.nn.Module,
+    checkpoint: Dict[str, Any],
+    expected_dim: Optional[int] = None,
+) -> bool:
+    """Attach fold-wise feature scaling stats from checkpoint to a model.
+
+    Training stores ``feature_mean`` and ``feature_std`` (fit on fold-train only)
+    inside each fold checkpoint. Attaching them to the model enables inference-time
+    scaling parity via ``CausalBrainGNN._encode``.
+
+    Returns True when scaler stats were found and attached.
+    """
+    if not isinstance(checkpoint, dict):
+        return False
+
+    feature_mean = checkpoint.get("feature_mean")
+    feature_std = checkpoint.get("feature_std")
+    if feature_mean is None or feature_std is None:
+        return False
+
+    try:
+        mean_t = torch.as_tensor(feature_mean, dtype=torch.float32).view(-1)
+        std_t = torch.as_tensor(feature_std, dtype=torch.float32).view(-1)
+    except Exception:
+        return False
+
+    if mean_t.numel() == 0 or std_t.numel() == 0 or mean_t.numel() != std_t.numel():
+        return False
+
+    if expected_dim is not None and mean_t.numel() != int(expected_dim):
+        logger.warning(
+            "Checkpoint feature scaler dimension mismatch: expected %d, got %d. Ignoring scaler.",
+            int(expected_dim),
+            int(mean_t.numel()),
+        )
+        return False
+
+    std_t = std_t.clamp_min(1e-6)
+    setattr(model, "_feature_mean", mean_t)
+    setattr(model, "_feature_std", std_t)
+    return True
+
+
+class _LRUCache:
+    """Lightweight in-memory LRU cache for multiview graph packages."""
+
+    def __init__(self, maxsize: int = 512):
+        self._maxsize = max(1, int(maxsize))
+        self._cache: OrderedDict[str, Dict[str, torch.Tensor]] = OrderedDict()
+
+    def get(self, key: str) -> Optional[Dict[str, torch.Tensor]]:
+        value = self._cache.get(key)
+        if value is not None:
+            self._cache.move_to_end(key)
+        return value
+
+    def set(self, key: str, value: Dict[str, torch.Tensor]) -> None:
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        self._cache[key] = value
+        if len(self._cache) > self._maxsize:
+            self._cache.popitem(last=False)
+
 
 _MULTIVIEW_VIEW_ORDER = (
     "base",
@@ -37,7 +106,7 @@ _MULTIVIEW_VIEW_ORDER = (
     "bootstrap_2",
     "high_confidence",
 )
-_MULTIVIEW_CACHE: Dict[str, Dict[str, torch.Tensor]] = {}
+_MULTIVIEW_CACHE = _LRUCache(maxsize=512)
 
 
 def make_loader(
@@ -47,9 +116,10 @@ def make_loader(
     num_workers: int = 4,
 ) -> DataLoader:
     """Create a tuned torch_geometric DataLoader for small-graph workloads."""
-    effective_workers = num_workers
-    if len(dataset) < 800:
-        effective_workers = min(num_workers, 2)
+    cpu_count = os.cpu_count() or 4
+    effective_workers = min(num_workers, cpu_count)
+    if len(dataset) < 800 and not torch.cuda.is_available():
+        effective_workers = min(effective_workers, 2)
 
     kwargs = {
         "batch_size": batch_size,
@@ -344,6 +414,10 @@ class CheckpointManager:
         if optimizer is not None and 'optimizer_state' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer_state'])
 
+        scaler_attached = attach_feature_scaler_from_checkpoint(model, checkpoint)
+        if scaler_attached:
+            logger.info("Loaded fold feature scaler from %s", filename)
+
         logger.info(f"Loaded checkpoint: {filename} (epoch {checkpoint.get('epoch', 'unknown')})")
         return checkpoint
 
@@ -510,8 +584,9 @@ def _extract_batch_subject_ids(batch, num_graphs: int) -> Optional[List[str]]:
 def _load_multiview_package(file_path: Path) -> Optional[Dict[str, torch.Tensor]]:
     """Load and normalize one subject's multiview adjacency package."""
     cache_key = str(file_path)
-    if cache_key in _MULTIVIEW_CACHE:
-        return _MULTIVIEW_CACHE[cache_key]
+    cached = _MULTIVIEW_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
 
     try:
         payload = torch.load(file_path, map_location="cpu", weights_only=False)
@@ -536,7 +611,7 @@ def _load_multiview_package(file_path: Path) -> Optional[Dict[str, torch.Tensor]
     if "base" not in normalized:
         return None
 
-    _MULTIVIEW_CACHE[cache_key] = normalized
+    _MULTIVIEW_CACHE.set(cache_key, normalized)
     return normalized
 
 
@@ -790,6 +865,17 @@ def train_one_epoch_with_accumulation(
 
 
 def _find_optimal_threshold(y_true: np.ndarray, y_probs: np.ndarray) -> tuple:
+    policy = str(EVAL_THRESHOLD_POLICY).strip().lower()
+    if policy == "youden":
+        if y_true.size == 0 or y_probs.size == 0 or np.unique(y_true).size < 2:
+            return 0.5, 0.0
+        fpr, tpr, thresholds = roc_curve(y_true, y_probs)
+        if thresholds.size == 0:
+            return 0.5, 0.0
+        j = tpr - fpr
+        best_idx = int(np.argmax(j))
+        best_threshold = float(thresholds[best_idx]) if np.isfinite(thresholds[best_idx]) else 0.5
+        return best_threshold, float(j[best_idx])
     return optimal_threshold(y_probs, y_true)
 
 
