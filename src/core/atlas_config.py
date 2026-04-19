@@ -9,7 +9,7 @@ ROI_CENTROIDS_PATH = DATA_METADATA / "roi_centroids.json"  # ROI 3D centroids fo
 
 # --- ANATOMICAL MAPPING (12-Region Neuroanatomical Subdivision) ---
 # Note: AAL ROI IDs are 1-indexed; convert to 0-indexed for array access.
-# Updated January 2026: Expanded from 5 lobes to 12 functionally-distinct brain regions
+# Updated January 2026: Expanded from legacy five-region grouping to 12 functionally-distinct brain regions
 
 def _idx(ids):
     return [i - 1 for i in ids]

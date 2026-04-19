@@ -50,6 +50,8 @@ from src.core.config import (
     FEATURE_GROUPS,
     FOCAL_LOSS_ALPHA,
     FOCAL_LOSS_GAMMA,
+    USE_FOCAL_LOSS,
+    USE_CLASS_WEIGHTS,
     GNN_BATCH_SIZE,
     GNN_DROPOUT,
     GNN_EPOCHS,
@@ -65,7 +67,7 @@ from src.core.config import (
     NUM_LOBES,
     RESULTS_ABLATIONS_DIR,
 )
-from src.models.gnn_model import FocalLoss
+from src.models.losses import FocalLoss
 from src.models.factory import build_model
 from src.models.training_utils import make_loader, train_fold_with_onecycle
 
@@ -266,7 +268,28 @@ def run_kfold(
     fold_aucs: List[float] = []
     fold_f1s: List[float] = []
 
-    criterion = FocalLoss(alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA)
+    class_weight_tensor = None
+    if USE_CLASS_WEIGHTS:
+        labels_arr = np.array(labels)
+        n_control = max(int((labels_arr == 0).sum()), 1)
+        n_asd = max(int((labels_arr == 1).sum()), 1)
+        total = max(len(labels_arr), 1)
+        class_weight_tensor = torch.tensor(
+            [total / (2 * n_control), total / (2 * n_asd)],
+            dtype=torch.float32,
+            device=DEVICE,
+        )
+
+    if USE_FOCAL_LOSS:
+        pos_weight = None
+        if USE_CLASS_WEIGHTS:
+            labels_arr = np.array(labels)
+            n_control = max(int((labels_arr == 0).sum()), 1)
+            n_asd = max(int((labels_arr == 1).sum()), 1)
+            pos_weight = float(n_control / n_asd)
+        criterion = FocalLoss(alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA, pos_weight=pos_weight)
+    else:
+        criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
 
     for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(labels)), labels)):
         t0 = time.time()

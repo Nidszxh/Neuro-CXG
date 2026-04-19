@@ -28,13 +28,13 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.model_selection import StratifiedKFold
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     CAUSAL_GRAPHS_DIR,
-    CHECKPOINT_DIR,
     DATA_FINAL,
     DATA_METADATA,
     DATA_PROCESSED,
@@ -49,6 +49,11 @@ from src.core.config import (
     GNN_IN_CHANNELS,
     GNN_NUM_LAYERS,
     GNN_NUM_HEADS,
+    GNN_USE_SITE_EMBEDDING,
+    GNN_USE_DEMOGRAPHICS,
+    GNN_USE_GRL,
+    GNN_GRL_ALPHA,
+    GNN_EDGE_GATE,
     GNN_ONECYCLE_MAX_LR,
     GNN_EARLY_STOPPING_PATIENCE,
     GNN_POOLING,
@@ -68,10 +73,17 @@ from src.core.config import (
     SITE_ROBUSTNESS_MAX_WEAK_SITE_FRACTION,
     SITE_ROBUSTNESS_MIN_EVALUABLE_SITES,
     SITE_ROBUSTNESS_GATE_POLICY,
+    USE_FOCAL_LOSS,
+    USE_CLASS_WEIGHTS,
+    get_active_checkpoint_dir,
 )
-from src.models.gnn_model import FocalLoss
+from src.models.losses import FocalLoss
 from src.models.factory import build_model
-from src.models.training_utils import CheckpointManager, make_loader, train_fold_with_onecycle
+from src.models.training_utils import (
+    make_loader,
+    train_fold_with_onecycle,
+    attach_feature_scaler_from_checkpoint,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -144,30 +156,36 @@ def experiment_cross_site_auc() -> pd.DataFrame:
     test_loader = make_loader(test_data, batch_size=GNN_BATCH_SIZE)
 
     # ── Load checkpoint (fold 0, representative) ──────────────────────────────
-    ckpt_mgr = CheckpointManager(CHECKPOINT_DIR, monitor="auc", mode="max")
+    checkpoint_path = get_active_checkpoint_dir() / "best_model_fold0.pt"
+    if not checkpoint_path.exists():
+        logger.error(f"Checkpoint fold0 not found: {checkpoint_path}")
+        return pd.DataFrame()
+
+    checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
+    state_dict = checkpoint.get("model_state", checkpoint) if isinstance(checkpoint, dict) else checkpoint
+    site_dim = 16 if GNN_USE_SITE_EMBEDDING else 0
+    saved_in_features = state_dict["lin_in.weight"].shape[1]
+    node_emb_dim = saved_in_features - GNN_IN_CHANNELS - site_dim
+
     model = build_model(
         device=DEVICE,
-        use_site_embedding=True,
-        use_demographics=True,
-        # Cross-site eval uses class logits only; keep GRL head disabled so
-        # checkpoints trained without adversarial site head can load strictly.
-        use_grl=False,
-        grl_alpha=0.0,
-        edge_gate=True,
+        use_site_embedding=GNN_USE_SITE_EMBEDDING,
+        use_demographics=GNN_USE_DEMOGRAPHICS,
+        use_grl=GNN_USE_GRL,
+        grl_alpha=GNN_GRL_ALPHA,
+        edge_gate=GNN_EDGE_GATE,
+        node_emb_dim=node_emb_dim,
     )
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if missing:
+        logger.warning("Checkpoint missing keys: %s", missing)
+    if unexpected:
+        logger.warning("Checkpoint unexpected keys: %s", unexpected)
 
-    try:
-        ckpt_mgr.load(model, fold=0)
-    except RuntimeError as e:
-        # Backward-compatible fallback for optional-head mismatches.
-        logger.warning(
-            "Strict checkpoint load failed for fold0 (%s). Retrying with allow_partial=True.",
-            e,
-        )
-        ckpt_mgr.load(model, fold=0, allow_partial=True)
-    except FileNotFoundError:
-        logger.error(f"Checkpoint fold0 not found in {CHECKPOINT_DIR}")
-        return pd.DataFrame()
+    attach_feature_scaler_from_checkpoint(model, checkpoint, expected_dim=GNN_IN_CHANNELS)
+    decision_threshold = float(checkpoint.get("threshold", 0.5)) if isinstance(checkpoint, dict) else 0.5
+    if not np.isfinite(decision_threshold):
+        decision_threshold = 0.5
 
     # ── Collect predictions ───────────────────────────────────────────────────
     probs, labels, site_ids = _collect_predictions(model, test_loader)
@@ -184,7 +202,11 @@ def experiment_cross_site_auc() -> pd.DataFrame:
     # Overall AUC
     overall_auc = roc_auc_score(labels, probs)
     logger.info(f"\n  Overall test AUC  : {overall_auc:.4f}  (n={len(labels)})")
-    logger.info(f"  Overall test F1   : {f1_score(labels, (probs>0.5).astype(int), zero_division=0):.4f}")
+    logger.info(
+        "  Overall test F1   : %.4f  (threshold=%.3f)",
+        f1_score(labels, (probs >= decision_threshold).astype(int), zero_division=0),
+        decision_threshold,
+    )
 
     # ── Per-site breakdown ────────────────────────────────────────────────────
     rows = []
@@ -246,7 +268,7 @@ def _apply_site_robustness_gate(site_auc_df: pd.DataFrame) -> Dict[str, object]:
         "min_evaluable_sites": int(SITE_ROBUSTNESS_MIN_EVALUABLE_SITES),
         "evaluable_sites": 0,
         "weak_sites": 0,
-        "weak_site_fraction": float("nan"),
+        "weak_site_fraction": None,
         "status": "skipped",
     }
 
@@ -619,11 +641,11 @@ def experiment_atlas_centroid_baseline() -> Dict:
     def gnn_factory():
         return build_model(
             device=DEVICE,
-            use_site_embedding=True,
-            use_demographics=True,
-            use_grl=True,
-            grl_alpha=1.0,
-            edge_gate=True,
+            use_site_embedding=GNN_USE_SITE_EMBEDDING,
+            use_demographics=GNN_USE_DEMOGRAPHICS,
+            use_grl=GNN_USE_GRL,
+            grl_alpha=GNN_GRL_ALPHA,
+            edge_gate=GNN_EDGE_GATE,
         )
 
     # Collect labels
@@ -637,7 +659,28 @@ def experiment_atlas_centroid_baseline() -> Dict:
         logger.error("  No valid data for atlas baseline experiment")
         return {}
 
-    criterion = FocalLoss(alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA)
+    class_weight_tensor = None
+    if USE_CLASS_WEIGHTS:
+        labels_arr = np.array(labels)
+        n_control = max(int((labels_arr == 0).sum()), 1)
+        n_asd = max(int((labels_arr == 1).sum()), 1)
+        total = max(len(labels_arr), 1)
+        class_weight_tensor = torch.tensor(
+            [total / (2 * n_control), total / (2 * n_asd)],
+            dtype=torch.float32,
+            device=DEVICE,
+        )
+
+    if USE_FOCAL_LOSS:
+        pos_weight = None
+        if USE_CLASS_WEIGHTS:
+            labels_arr = np.array(labels)
+            n_control = max(int((labels_arr == 0).sum()), 1)
+            n_asd = max(int((labels_arr == 1).sum()), 1)
+            pos_weight = float(n_control / n_asd)
+        criterion = FocalLoss(alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA, pos_weight=pos_weight)
+    else:
+        criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
     skf = StratifiedKFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
     fold_aucs: List[float] = []
 

@@ -1,14 +1,16 @@
 import argparse
 import logging
 import sys
+import os
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional, List
 
 import numpy as np
 import pandas as pd
 from scipy.stats import skew, kurtosis, entropy
 from scipy.signal import welch, hilbert
 from tqdm import tqdm
+from joblib import Parallel, delayed
 
 # Setup paths and config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -212,9 +214,11 @@ def extract_frequency_features_batch(ts_matrix: np.ndarray, fs: float = 0.5) -> 
 def calculate_psd(ts: np.ndarray, tr: float) -> float:
     """
     Calculates the mean Power Spectral Density in the 0.01-0.1Hz band.
-    
-    Bounds PSD to [0, 1e4] to prevent extreme outliers from noise-padded ROIs.
-    fMRI signals typically have modest PSD; values > 1e4 indicate numerical issues.
+
+    Uses log-compression on the raw band power to avoid hard saturation.
+    A fixed hard clip can collapse informative between-subject differences when
+    many subjects hit the cap (observed in forensic audit for several *_psd
+    channels). log1p preserves ordering while keeping scale bounded.
     """
     if len(ts) < 10 or np.all(ts == 0):
         return 0.0
@@ -224,10 +228,13 @@ def calculate_psd(ts: np.ndarray, tr: float) -> float:
     mask = (freqs > 0.01) & (freqs < 0.1)
     if not np.any(mask):
         return 0.0
-    
+
     psd_mean = float(np.mean(psd[mask]))
-    # Clip to [0, 1e4] — reasonable range for fMRI PSD
-    return np.clip(psd_mean, 0.0, 1e4)
+    if not np.isfinite(psd_mean) or psd_mean <= 0:
+        return 0.0
+
+    # Soft-compress heavy-tailed PSD values while preserving rank information.
+    return float(np.log1p(psd_mean))
 
 
 def calculate_autocorr(ts: np.ndarray, lag: int = 1) -> float:
@@ -325,7 +332,252 @@ def extract_single_roi_features(ts: np.ndarray, tr: float, include_frequency: bo
     return base_features
 
 
-def main(add_frequency: bool = True) -> None:
+def _extract_temporal_vectorized(
+    ts_data: np.ndarray,
+    tr: float,
+    add_frequency: bool = True,
+) -> np.ndarray:
+    """
+    Fully vectorized temporal feature extraction for all ROIs at once.
+    Processes all 170 ROIs in parallel using NumPy/SciPy vectorized operations.
+
+    Args:
+        ts_data: Time series array of shape (time_points, n_rois)
+        tr: Repetition time
+        add_frequency: Whether to include frequency features
+
+    Returns:
+        Array of shape (n_rois, features_per_roi) with temporal + frequency features
+    """
+    n_timepoints, n_rois = ts_data.shape
+
+    temporal_feature_names = list(FEATURE_GROUPS["temporal"])
+    freq_feature_names = list(FEATURE_GROUPS["frequency"]) if add_frequency else []
+    n_temporal = len(temporal_feature_names)
+    n_freq = len(freq_feature_names)
+    features_per_roi = n_temporal + n_freq
+
+    ts_clean = ts_data.copy()
+    std_vals = np.std(ts_clean, axis=0, keepdims=True)
+
+    bad_rois = (std_vals < 1e-6).flatten() | ~np.all(np.isfinite(ts_clean), axis=0)
+    ts_clean[:, bad_rois] = 0.0
+
+    clip_bounds = 1e3
+    mean_vals = np.mean(ts_clean, axis=0)
+    std_vals = np.std(ts_clean, axis=0)
+    skew_vals = np.clip(skew(ts_clean, bias=False, axis=0), -clip_bounds, clip_bounds)
+    kurt_vals = np.clip(kurtosis(ts_clean, bias=False, axis=0), -clip_bounds, clip_bounds)
+
+    ts_centered = ts_clean - mean_vals
+    psd_vals = _compute_psd_vectorized(ts_centered, tr)
+    psd_vals = np.log1p(psd_vals)
+
+    mssd_vals = np.mean(np.diff(ts_clean, axis=0) ** 2, axis=0)
+    range_vals = np.ptp(ts_clean, axis=0)
+    autocorr_vals = _compute_autocorr_vectorized(ts_clean)
+
+    base_features = np.stack([
+        mean_vals,
+        std_vals,
+        skew_vals,
+        kurt_vals,
+        psd_vals,
+        mssd_vals,
+        range_vals,
+        autocorr_vals,
+    ], axis=1)
+
+    output_features = base_features.copy()
+
+    if add_frequency:
+        fs = 1.0 / tr
+        safe_bands = {}
+        nyquist = fs / 2.0
+        nyquist_eps = nyquist - NYQUIST_EPS
+
+        for band_name, (low, high) in ACTIVE_FREQ_BANDS.items():
+            if high >= nyquist:
+                safe_bands[band_name] = (low, high)
+            else:
+                safe_low = max(0.0, low)
+                safe_high = min(high, nyquist_eps)
+                if safe_low >= safe_high:
+                    safe_bands[band_name] = (0.0, 0.0)
+                else:
+                    safe_bands[band_name] = (safe_low, safe_high)
+
+        n_bands = len(ACTIVE_FREQ_BANDS)
+        freq_feature_arr = np.zeros((n_rois, n_freq))
+
+        try:
+            nperseg = min(256, n_timepoints)
+            freqs_full, psd_full = welch(
+                ts_clean, fs=fs, nperseg=nperseg, noverlap=nperseg // 2,
+                window="hann", scaling="density", axis=0
+            )
+        except Exception:
+            return np.zeros((n_rois, features_per_roi))
+
+        total_power = np.trapz(psd_full, freqs_full, axis=0)
+        total_power = np.where(total_power > 0, total_power, 1.0)
+
+        ordered_bands = ["delta", "theta", "alpha", "beta", "gamma"]
+        for idx, band_name in enumerate(ordered_bands):
+            if band_name not in safe_bands:
+                continue
+            low, high = safe_bands[band_name]
+            if low >= high:
+                continue
+            band_mask = (freqs_full >= low) & (freqs_full < high)
+            band_power = np.trapz(psd_full[band_mask, :], freqs_full[band_mask], axis=0)
+            freq_feature_arr[:, idx] = band_power / total_power
+
+            freq_feature_arr[:, idx + n_bands] = _compute_peak_freqs_vectorized(psd_full, freqs_full, band_mask)
+
+        freq_feature_arr[:, 2 * n_bands] = _compute_spectral_entropy_vectorized(psd_full, total_power)
+        freq_feature_arr[:, 2 * n_bands + 1] = _compute_phase_std_vectorized(ts_clean)
+
+        output_features = np.concatenate([base_features, freq_feature_arr], axis=1)
+
+    output_features[:, bad_rois] = 0.0
+
+    return output_features
+
+
+def _compute_psd_vectorized(ts_centered: np.ndarray, tr: float) -> np.ndarray:
+    """Vectorized PSD: mean power in 0.01-0.1 Hz band via FFT."""
+    n_timepoints, n_rois = ts_centered.shape
+    freqs = np.fft.fftfreq(n_timepoints, d=tr)
+    mask = (freqs > 0.01) & (freqs < 0.1)
+    if not np.any(mask):
+        return np.zeros(n_rois)
+
+    fft_vals = np.fft.fft(ts_centered, axis=0)
+    psd = np.abs(fft_vals) ** 2
+    psd_mean = np.mean(psd[mask, :], axis=0)
+    psd_mean = np.where(np.isfinite(psd_mean) & (psd_mean > 0), psd_mean, 0.0)
+    return psd_mean
+
+
+def _compute_autocorr_vectorized(ts: np.ndarray, lag: int = 1) -> np.ndarray:
+    """Vectorized autocorrelation at lag-1 across all ROIs."""
+    n_timepoints, n_rois = ts.shape
+    if n_timepoints <= lag:
+        return np.zeros(n_rois)
+
+    ts_centered = ts - np.mean(ts, axis=0, keepdims=True)
+    c0 = np.sum(ts_centered ** 2, axis=0) / n_timepoints
+    c_lag = np.sum(ts_centered[:-lag, :] * ts_centered[lag:, :], axis=0) / n_timepoints
+
+    c0 = np.where(c0 > 0, c0, 1.0)
+    return c_lag / c0
+
+
+def _compute_peak_freqs_vectorized(
+    psd_full: np.ndarray,
+    freqs_full: np.ndarray,
+    band_mask: np.ndarray,
+) -> np.ndarray:
+    """Vectorized peak frequency extraction within band."""
+    if not np.any(band_mask):
+        return np.zeros(psd_full.shape[1])
+
+    psd_band = psd_full[band_mask, :]
+    freqs_band = freqs_full[band_mask]
+    peak_indices = np.argmax(psd_band, axis=0)
+    peak_freqs = freqs_band[peak_indices]
+    peak_freqs = np.where(np.isfinite(peak_freqs), peak_freqs, 0.0)
+    return peak_freqs
+
+
+def _compute_spectral_entropy_vectorized(
+    psd_full: np.ndarray,
+    total_power: np.ndarray,
+) -> np.ndarray:
+    """Vectorized spectral entropy across all ROIs."""
+    psd_norm = psd_full / total_power
+    psd_norm = np.where(psd_norm > 0, psd_norm, np.nan)
+    spectral_entropy = -np.nansum(psd_norm * np.log(psd_norm + 1e-10), axis=0)
+    spectral_entropy = np.where(np.isfinite(spectral_entropy), spectral_entropy, 0.0)
+    return spectral_entropy
+
+
+def _compute_phase_std_vectorized(ts: np.ndarray) -> np.ndarray:
+    """Vectorized instantaneous phase std via Hilbert transform."""
+    n_timepoints, n_rois = ts.shape
+    analytic = hilbert(ts, axis=0)
+    instantaneous_phase = np.angle(analytic)
+    phase_std = np.std(instantaneous_phase, axis=0)
+    phase_std = np.where(np.isfinite(phase_std), phase_std, 0.0)
+    return phase_std
+
+
+def _process_single_subject(
+    sub_id: str,
+    split: str,
+    tr: float,
+    ts_path: Path,
+    features_per_roi: int,
+    add_frequency: bool,
+    max_rois: int = MAX_ROIS,
+) -> Optional[List]:
+    """
+    Process a single subject's time series to extract temporal features.
+    Uses vectorized extraction when possible, falls back to per-ROI loop on error.
+
+    Args:
+        sub_id: Subject ID
+        split: Data split (train/val/test)
+        tr: Repetition time
+        ts_path: Path to time series .npy file
+        features_per_roi: Number of features per ROI
+        add_frequency: Whether to include frequency features
+        max_rois: Maximum number of ROIs
+
+    Returns:
+        List of [sub_id, feat1, feat2, ...] or None if failed
+    """
+    try:
+        ts_data = np.load(ts_path)
+        if ts_data.size == 0:
+            return None
+
+        original_num_rois = ts_data.shape[1]
+        if original_num_rois != max_rois:
+            return None
+
+        try:
+            roi_features = _extract_temporal_vectorized(ts_data, tr, add_frequency=add_frequency)
+            if roi_features.shape[0] != max_rois or roi_features.shape[1] != features_per_roi:
+                raise ValueError(f"Shape mismatch: {roi_features.shape}")
+        except Exception:
+            roi_features = np.zeros((max_rois, features_per_roi))
+            for i in range(max_rois):
+                roi_signal = ts_data[:, i]
+                try:
+                    roi_feats = extract_single_roi_features(roi_signal, tr, include_frequency=add_frequency)
+                    roi_features[i] = roi_feats
+                except Exception:
+                    roi_features[i] = [0.0] * features_per_roi
+
+        subject_features = [sub_id]
+        for i in range(max_rois):
+            subject_features.extend(roi_features[i].tolist())
+
+        return subject_features
+
+    except Exception:
+        return None
+
+
+def main(add_frequency: bool = True, n_jobs: int = -1) -> None:
+    """Extract temporal features for all subjects.
+
+    Args:
+        add_frequency: Include frequency features (20 vs 8 per ROI)
+        n_jobs: Number of parallel workers (-1 = all cores, default: -1)
+    """
     if not MASTER_MANIFEST.exists():
         logger.error("Master manifest missing. Run manifestor.py first.")
         return
@@ -342,21 +594,16 @@ def main(add_frequency: bool = True) -> None:
         logger.error(f"Failed to load manifest: {e}")
         raise
 
-    all_subject_data = []
-    failed_subjects = []
-
     features_per_roi = len(FEATURE_GROUPS["temporal"]) + (
         len(FEATURE_GROUPS["frequency"]) if add_frequency else 0
     )
-    logger.info(f"Extracting temporal features for {len(manifest)} subjects...")
+    logger.info(f"Extracting temporal features for {len(manifest)} subjects (n_jobs={n_jobs})...")
     logger.info(
         f"Features per ROI: {features_per_roi} ({'with' if add_frequency else 'without'} frequency features)"
     )
 
-    for _, row in tqdm(
-        manifest.iterrows(), total=len(manifest), desc="Subjects",
-        miniters=max(1, len(manifest) // 20), mininterval=10.0
-    ):
+    subject_tasks = []
+    for _, row in manifest.iterrows():
         sub_id = str(row["subject_id"])
         split = row["split"]
         tr = row.get("TR", DEFAULT_TR)
@@ -364,53 +611,23 @@ def main(add_frequency: bool = True) -> None:
             tr = DEFAULT_TR
 
         ts_path = DATA_FINAL / split / "time_series" / f"{sub_id}_ts.npy"
-        if not ts_path.exists():
-            logger.debug(f"Time series not found for {sub_id}")
-            continue
+        if ts_path.exists():
+            subject_tasks.append((sub_id, split, tr, ts_path))
 
-        try:
-            ts_data = np.load(ts_path)
-            if ts_data.size == 0:
-                logger.warning(f"{sub_id}: Empty time series array")
-                failed_subjects.append(sub_id)
-                continue
+    logger.info(f"Found {len(subject_tasks)} valid subjects to process")
 
-            original_num_rois = ts_data.shape[1]
+    results = Parallel(n_jobs=n_jobs, prefer="threads", verbose=0)(
+        delayed(_process_single_subject)(
+            sub_id, split, tr, ts_path, features_per_roi, add_frequency
+        )
+        for sub_id, split, tr, ts_path in tqdm(subject_tasks, desc="Processing", mininterval=10.0)
+    )
 
-            # abide_download.py now saves fixed 170-column arrays
-            if original_num_rois != MAX_ROIS:
-                logger.error(
-                    f"{sub_id}: Expected {MAX_ROIS} ROIs but got {original_num_rois}. "
-                    f"Re-run abide_download.py to regenerate standardized time series."
-                )
-                failed_subjects.append(sub_id)
-                continue
+    all_subject_data = [r for r in results if r is not None]
+    failed_count = len(results) - len(all_subject_data)
 
-            subject_features = [sub_id]
-
-            for i in range(MAX_ROIS):
-                roi_signal = ts_data[:, i]
-                try:
-                    roi_feats = extract_single_roi_features(roi_signal, tr, include_frequency=add_frequency)
-                    subject_features.extend(roi_feats)
-                except Exception as e:
-                    logger.warning(f"{sub_id} ROI {i}: Feature extraction failed: {e}")
-                    subject_features.extend([0.0] * features_per_roi)
-
-            all_subject_data.append(subject_features)
-
-        except FileNotFoundError:
-            logger.error(f"Time series file not found: {ts_path}")
-            failed_subjects.append(sub_id)
-        except ValueError as e:
-            logger.error(f"{sub_id}: Invalid array format: {e}")
-            failed_subjects.append(sub_id)
-        except Exception as e:
-            logger.error(f"Error processing {sub_id}: {e}")
-            failed_subjects.append(sub_id)
-
-    if failed_subjects:
-        logger.warning(f"Failed to process {len(failed_subjects)} subjects: {failed_subjects[:5]}...")
+    if failed_count > 0:
+        logger.warning(f"Failed to process {failed_count} subjects")
 
     if not all_subject_data:
         logger.error("No valid subjects processed!")
@@ -436,10 +653,22 @@ def main(add_frequency: bool = True) -> None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Temporal feature extraction")
-    parser.add_argument("--add-frequency", action="store_true", help="Include frequency features")
+    parser.add_argument(
+        "--add-frequency",
+        action="store_true",
+        default=False,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--no-frequency",
+        action="store_true",
+        default=False,
+        help="Disable frequency features (default keeps frequency features enabled)",
+    )
+    parser.add_argument("--n-jobs", type=int, default=-1, help="Number of parallel workers (-1=all cores)")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    main(add_frequency=args.add_frequency)
+    main(add_frequency=not args.no_frequency, n_jobs=args.n_jobs)

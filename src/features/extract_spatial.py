@@ -2,6 +2,7 @@ import logging
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from ultralytics import YOLO
 from tqdm import tqdm
@@ -11,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     DATA_FINAL,
     MASTER_MANIFEST,
+    LOBE_MAPPING,
     LOBE_NAMES,
     YOLO_WEIGHTS_PATH,
     NODE_FEATURES_3D,
@@ -31,6 +33,125 @@ MODEL_PATH = YOLO_WEIGHTS_PATH
 SPLIT_ROOT = DATA_FINAL
 MANIFEST_PATH = MASTER_MANIFEST
 OUTPUT_PATH = NODE_FEATURES_3D
+
+
+def _load_atlas_lobe_fallbacks() -> dict:
+    """Load atlas-derived lobe centroids/sizes (native atlas coordinate space)."""
+    try:
+        from src.features.extract_spatial_atlas import load_centroids, compute_roi_sizes
+        centroids = load_centroids()
+        roi_sizes = compute_roi_sizes()
+    except Exception as exc:
+        logger.warning(
+            "Atlas fallback unavailable for missing YOLO regions (%s); using zeros.",
+            exc,
+        )
+        return {i: (0.0, 0.0, 0.0, 0.0) for i in range(NUM_LOBES)}
+
+    fallback = {}
+    warned_missing = False
+    for lobe_id in range(NUM_LOBES):
+        coords = []
+        sizes = []
+        for roi_idx_0 in LOBE_MAPPING.get(lobe_id, []):
+            roi_id = int(roi_idx_0) + 1
+            c = centroids.get(roi_id)
+            if c is None:
+                c = centroids.get(int(roi_idx_0))
+            if c is None:
+                if not warned_missing:
+                    logger.warning(
+                        "Atlas centroids use unexpected ROI indexing; falling back to zeros for unmatched ROI ids."
+                    )
+                    warned_missing = True
+                continue
+            coords.append((float(c.get("x", 0.0)), float(c.get("y", 0.0)), float(c.get("z", 0.0))))
+            sizes.append(float(roi_sizes.get(roi_id, 1.0)))
+
+        if coords:
+            arr = np.array(coords, dtype=float)
+            fallback[lobe_id] = (
+                float(arr[:, 0].mean()),
+                float(arr[:, 1].mean()),
+                float(arr[:, 2].mean()),
+                float(np.mean(sizes)) if sizes else 0.0,
+            )
+        else:
+            fallback[lobe_id] = (0.0, 0.0, 0.0, 0.0)
+
+    return fallback
+
+
+def _compute_missing_lobe_fallbacks(raw_df: pd.DataFrame) -> dict:
+    """Compute scale-matched fallback features for missing YOLO lobes.
+
+    Primary source: empirical per-lobe medians from detected ROIs (same coordinate
+    space as model inputs). Backup source: atlas centroids mapped onto observed
+    coordinate ranges when a lobe has zero detections globally.
+    """
+    fallback = {}
+
+    raw_size = raw_df["w"] * raw_df["h"]
+    global_defaults = (
+        float(raw_df["x"].median()),
+        float(raw_df["y"].median()),
+        float(raw_df["z"].median()),
+        float(raw_size.median()),
+    )
+
+    for lobe_id in range(NUM_LOBES):
+        lobe_data = raw_df[raw_df["roi_class"] == lobe_id]
+        if not lobe_data.empty:
+            lobe_size = lobe_data["w"] * lobe_data["h"]
+            fallback[lobe_id] = (
+                float(lobe_data["x"].median()),
+                float(lobe_data["y"].median()),
+                float(lobe_data["z"].median()),
+                float(lobe_size.median()),
+            )
+        else:
+            fallback[lobe_id] = None
+
+    missing_lobes = [lid for lid, vals in fallback.items() if vals is None]
+    if not missing_lobes:
+        return fallback
+
+    atlas_fallback = _load_atlas_lobe_fallbacks()
+    logger.warning(
+        "Global YOLO detections missing for lobe ids %s; using mapped atlas priors.",
+        missing_lobes,
+    )
+
+    atlas_vals = np.array([atlas_fallback[lid] for lid in range(NUM_LOBES)], dtype=float)
+    obs_mins = np.array([
+        float(raw_df["x"].min()),
+        float(raw_df["y"].min()),
+        float(raw_df["z"].min()),
+        float(raw_size.min()),
+    ])
+    obs_maxs = np.array([
+        float(raw_df["x"].max()),
+        float(raw_df["y"].max()),
+        float(raw_df["z"].max()),
+        float(raw_size.max()),
+    ])
+
+    atlas_mins = atlas_vals.min(axis=0)
+    atlas_maxs = atlas_vals.max(axis=0)
+    atlas_ranges = np.where((atlas_maxs - atlas_mins) > 1e-8, atlas_maxs - atlas_mins, 1.0)
+    obs_ranges = np.where((obs_maxs - obs_mins) > 1e-8, obs_maxs - obs_mins, 1.0)
+
+    for lobe_id in missing_lobes:
+        a = np.array(atlas_fallback.get(lobe_id, global_defaults), dtype=float)
+        mapped = ((a - atlas_mins) / atlas_ranges) * obs_ranges + obs_mins
+        mapped = np.where(np.isfinite(mapped), mapped, np.array(global_defaults, dtype=float))
+        fallback[lobe_id] = tuple(float(v) for v in mapped.tolist())
+
+    for lobe_id in range(NUM_LOBES):
+        if fallback[lobe_id] is None:
+            fallback[lobe_id] = global_defaults
+
+    return fallback
 
 
 def extract_spatial():
@@ -106,6 +227,8 @@ def extract_spatial():
     partial_count = 0
     subject_ids = raw_df["subject_id"].unique()
 
+    fallback_by_lobe = _compute_missing_lobe_fallbacks(raw_df)
+
     for sub_id in tqdm(
         subject_ids, desc="Building Subject Nodes",
         miniters=max(1, len(subject_ids) // 20), mininterval=10.0
@@ -133,13 +256,19 @@ def extract_spatial():
             lobe_name = LOBE_NAMES[lobe_id]
             lobe_data = sub_group[sub_group["roi_class"] == lobe_id]
 
-            # LENIENT: If region not detected, fill with zeros (YOLO sometimes misses regions like Frontal_Orbital)
+            # If region not detected, use atlas-derived lobe fallback instead of
+            # hard zeros to avoid encoding missingness as artificial anatomy.
             if len(lobe_data) == 0:
-                logger.debug(f"Subject {sub_id}: Region {lobe_name} not detected, filling with zeros")
-                subject_row[f"{lobe_name}_x"] = 0.0
-                subject_row[f"{lobe_name}_y"] = 0.0
-                subject_row[f"{lobe_name}_z_depth"] = 0.0
-                subject_row[f"{lobe_name}_size"] = 0.0
+                fb_x, fb_y, fb_z, fb_size = fallback_by_lobe.get(lobe_id, (0.0, 0.0, 0.0, 0.0))
+                logger.debug(
+                    "Subject %s: Region %s not detected, using atlas fallback",
+                    sub_id,
+                    lobe_name,
+                )
+                subject_row[f"{lobe_name}_x"] = float(fb_x)
+                subject_row[f"{lobe_name}_y"] = float(fb_y)
+                subject_row[f"{lobe_name}_z_depth"] = float(fb_z)
+                subject_row[f"{lobe_name}_size"] = float(fb_size)
             else:
                 subject_row[f"{lobe_name}_x"] = lobe_data["x"].mean()
                 subject_row[f"{lobe_name}_y"] = lobe_data["y"].mean()
@@ -155,6 +284,7 @@ def extract_spatial():
     logger.info(f"Subjects with partial detection (9-11 regions): {partial_count}")
     logger.info(f"Subjects with complete detection (all {NUM_LOBES} regions): {len(processed_subjects) - partial_count}")
     logger.info(f"Subjects kept (>= {MIN_REQUIRED_REGIONS} regions): {len(processed_subjects)}")
+    logger.info("Missing YOLO regions are imputed with scale-matched lobe priors (not zeros).")
     logger.warning(f"RELAXED FILTER: Subjects with >= {MIN_REQUIRED_REGIONS} regions kept. Final filtering to complete {NUM_LOBES}-region subjects happens in variance ranking stage.")
     
     final_df = pd.DataFrame(processed_subjects)

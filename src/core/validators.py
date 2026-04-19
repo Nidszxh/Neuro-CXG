@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Dict
+
+import torch
 
 from src.core.atlas_config import LOBE_MAPPING, NUM_LOBES
 from src.core.hyperparams import (
@@ -36,6 +39,64 @@ from src.core.feature_registry import GNN_IN_CHANNELS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def summarize_graph_degeneracy_from_adj(
+    adj: torch.Tensor,
+    min_edges: int,
+) -> Dict[str, int | bool]:
+    """Summarize edge/dead-lobe degeneracy from an adjacency matrix."""
+    adj_t = torch.as_tensor(adj, dtype=torch.float32)
+    if adj_t.ndim != 2 or adj_t.shape[0] != adj_t.shape[1]:
+        raise ValueError(f"Expected square adjacency matrix, got shape={tuple(adj_t.shape)}")
+
+    n = int(adj_t.shape[0])
+    offdiag = ~torch.eye(n, dtype=torch.bool, device=adj_t.device)
+    edge_mask = (adj_t != 0) & offdiag
+    edge_count = int(edge_mask.sum().item())
+
+    in_deg = edge_mask.sum(dim=0)
+    out_deg = edge_mask.sum(dim=1)
+    dead_lobes = int(((in_deg == 0) & (out_deg == 0)).sum().item())
+
+    return {
+        "edge_count": edge_count,
+        "dead_lobes": dead_lobes,
+        "is_degenerate": bool(edge_count < int(min_edges) or dead_lobes > 0),
+    }
+
+
+def summarize_graph_degeneracy_from_edge_index(
+    edge_index: torch.Tensor,
+    num_nodes: int,
+    min_edges: int,
+) -> Dict[str, int | bool]:
+    """Summarize edge/dead-lobe degeneracy from COO edge indices."""
+    n = int(num_nodes)
+    if edge_index is None or not torch.is_tensor(edge_index) or edge_index.numel() == 0:
+        return {
+            "edge_count": 0,
+            "dead_lobes": n,
+            "is_degenerate": True,
+        }
+
+    if edge_index.ndim != 2 or edge_index.shape[0] != 2:
+        raise ValueError(f"Expected edge_index shape (2, E), got {tuple(edge_index.shape)}")
+
+    e = int(edge_index.shape[1])
+    device = edge_index.device
+    out_deg = torch.zeros(n, dtype=torch.long, device=device)
+    in_deg = torch.zeros(n, dtype=torch.long, device=device)
+    ones = torch.ones(e, dtype=torch.long, device=device)
+    out_deg.scatter_add_(0, edge_index[0].long(), ones)
+    in_deg.scatter_add_(0, edge_index[1].long(), ones)
+    dead_lobes = int(((in_deg == 0) & (out_deg == 0)).sum().item())
+
+    return {
+        "edge_count": e,
+        "dead_lobes": dead_lobes,
+        "is_degenerate": bool(e < int(min_edges) or dead_lobes > 0),
+    }
 
 
 def validate_training_health(metrics: dict) -> str:
@@ -242,9 +303,13 @@ def validate_gnn_training_inputs() -> bool:
         if not (HARMONIZED_FOLDS_DIR / f"harmonized_fold_{fold}.csv").exists()
     ]
     if missing_harmonized_folds:
+        missing_details = ", ".join(
+            f"fold {fold} (harmonized_fold_{fold}.csv)"
+            for fold in missing_harmonized_folds
+        )
         errors.append(
-            "Missing harmonized fold files for folds "
-            f"{missing_harmonized_folds}: {HARMONIZED_FOLDS_DIR}"
+            "Missing harmonized fold files: "
+            f"{missing_details}. Directory: {HARMONIZED_FOLDS_DIR}"
         )
 
     if errors:

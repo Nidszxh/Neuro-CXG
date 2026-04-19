@@ -17,6 +17,7 @@ from src.core.config import (
     NUM_TEMPORAL_FEATURES, NUM_SPATIAL_FEATURES, GNN_IN_CHANNELS,
     EXCLUDED_SUBJECTS, MAX_NAN_ROIS,
 )
+from src.core.hyperparams import GNN_MAX_DEGENERATE_GRAPH_RATE
 
 # Setup logging
 logging.basicConfig(
@@ -157,6 +158,7 @@ class ABIDECausalDataset(Dataset):
 
         valid_subs = []
         invalid_count = 0
+        missing_graph_count = 0
         self._subject_edge_counts = {}
         self._graph_cache = {}
         self._graph_stats = {}
@@ -187,9 +189,35 @@ class ABIDECausalDataset(Dataset):
                 except Exception as e:
                     logger.warning(f"Subject {sub}: Failed to validate graph: {e}")
                     invalid_count += 1
+            else:
+                missing_graph_count += 1
         
         if invalid_count > 0:
             logger.warning(f"Excluded {invalid_count} subjects due to invalid graphs")
+        if missing_graph_count > 0:
+            logger.warning(
+                "Excluded %d subjects because graph artifacts are missing in %s",
+                missing_graph_count,
+                self.adj_dir,
+            )
+
+        total_available = len(available_subs)
+        dropped_subjects = total_available - len(valid_subs)
+        dropped_rate = (dropped_subjects / total_available) if total_available else 0.0
+        logger.info(
+            "Subject alignment summary: available=%d, valid=%d, dropped=%d (%.1f%%)",
+            total_available,
+            len(valid_subs),
+            dropped_subjects,
+            dropped_rate * 100.0,
+        )
+
+        if dropped_rate > GNN_MAX_DEGENERATE_GRAPH_RATE:
+            raise ValueError(
+                "Subject drop rate exceeds quality gate: "
+                f"{dropped_rate:.1%} > {GNN_MAX_DEGENERATE_GRAPH_RATE:.1%}. "
+                "Investigate graph construction outputs before training."
+            )
         
         self.manifest = self.manifest_raw[
             (self.manifest_raw['subject_id'].astype(str).isin(valid_subs)) & 
@@ -335,6 +363,17 @@ class ABIDECausalDataset(Dataset):
                 return None
             
             edge_attr = adj[edge_index[0], edge_index[1]].unsqueeze(1).to(torch.float32)
+            
+            # Normalize edge weights for stable GAT attention.
+            # Raw graph edges can be either:
+            # - positive Granger-like strengths, or
+            # - signed lagged-Pearson values.
+            # Use standardization + tanh to preserve relative ordering while bounding.
+            # This avoids sigmoid collapse when values are high (5-10 -> ~1.0)
+            edge_mean = edge_attr.mean()
+            edge_std = edge_attr.std() + 1e-8
+            edge_attr = (edge_attr - edge_mean) / edge_std
+            edge_attr = torch.tanh(edge_attr)  # Bound to [-1, 1] range
             
             if torch.isnan(edge_attr).any() or torch.isinf(edge_attr).any():
                 logger.error(f"Subject {sub_id}: Edge attributes contain NaN/Inf")

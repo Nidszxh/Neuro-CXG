@@ -494,7 +494,7 @@ Examples:
     parser.add_argument("--skip-yolo", action="store_true",
                         help="Skip YOLO training (use existing weights)")
     parser.add_argument("--use-yolo-spatial", action="store_true",
-                        help="Use YOLO-derived spatial features. Default uses atlas-centroid spatial features.")
+                        help="Use YOLO-derived spatial features (default).")
     parser.add_argument("--use-atlas-spatial", action="store_true",
                         help=argparse.SUPPRESS)
     parser.add_argument("--multiview", action="store_true",
@@ -557,11 +557,14 @@ Examples:
     
     args = parser.parse_args()
 
-    # Backward-compatible alias: --use-atlas-spatial is now the default behavior.
+    # Backward-compatible alias: --use-atlas-spatial forces atlas-centroid features.
     if args.use_yolo_spatial and args.use_atlas_spatial:
         parser.error("Use only one of --use-yolo-spatial or --use-atlas-spatial")
     if args.use_atlas_spatial:
         args.use_yolo_spatial = False
+    elif not args.use_yolo_spatial:
+        # Default behavior: use YOLO-derived spatial features unless atlas is requested.
+        args.use_yolo_spatial = True
 
     if args.full_src:
         args.skip_audit_check = False
@@ -687,7 +690,7 @@ Examples:
         "annotate": "Generate YOLO training labels from AAL3 atlas (Stage 7)",
         "site_stratified_cv": "Regenerate cv_fold with site-stratified GroupKFold by site-cluster",
         "yolo": "Train YOLO26n for 12-region detection (Stage 8)" if not yolo_weights.exists() else "Force retrain",
-        "spatial_features": "Atlas-centroid 3D spatial coords aggregation (Stage 9)",
+        "spatial_features": "YOLO inference -> 3D spatial coords aggregation (Stage 9)",
         "temporal_features": "20 features per ROI: 8 time-domain + 12 frequency (Stage 11)",
         "harmonization": "Fold-safe neuroHarmonize, protects DX_GROUP (Stage 12)",
         "pre_gnn_integrity": "Validate dataset completeness per split (Stage 13)",
@@ -861,7 +864,13 @@ Examples:
                 continue
 
         if stage_key == "gnn_training":
-            validate_gnn_training_inputs()
+            try:
+                validate_gnn_training_inputs()
+            except FileNotFoundError as exc:
+                raise FileNotFoundError(
+                    "Pre-training validation failed for gnn_training stage. "
+                    f"{exc}"
+                ) from exc
         
         # Execute with function name if specified
         function_name = stage.get("function", None)

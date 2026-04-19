@@ -35,6 +35,7 @@ from src.core.config import (
     ATLAS_PATH, PHENO_PATH, ROI_CENTROIDS_PATH, AAL3_VALID_ROI_RANGE,
     SITE_TR_MAP, ALFF_SLICE_PERCENTILES,
     BANDPASS_LOW, BANDPASS_HIGH,
+    EXCLUDED_SUBJECTS,
 )
 PNG_OUTPUT   = DATA_IMAGES
 # Prefer dedicated time-series directory when available, keep legacy fallback.
@@ -316,8 +317,17 @@ if __name__ == "__main__":
     df['TR'] = df['SITE_ID'].map(SITE_TR_MAP).fillna(2.0)
     logger.info("Assigned site-specific TRs: %s", df.groupby('SITE_ID')['TR'].first().to_dict())
     
-    # Filter valid subjects
+    # Filter valid subjects and enforce curated 1035->1015 exclusion policy.
     subjects_df = df[df["FILE_ID"] != "no_filename"].dropna(subset=["FILE_ID"])
+    excluded_upper = {s.upper() for s in EXCLUDED_SUBJECTS}
+    subjects_df = subjects_df[
+        ~subjects_df["FILE_ID"].astype(str).str.upper().isin(excluded_upper)
+    ]
+    logger.info(
+        "Applied EXCLUDED_SUBJECTS filter: %d subject(s) excluded, %d remaining",
+        len(EXCLUDED_SUBJECTS),
+        len(subjects_df["FILE_ID"].drop_duplicates()),
+    )
     tasks = subjects_df[["FILE_ID", "TR"]].drop_duplicates().values
     limit = int(os.environ.get("ABIDE_SUBJECT_LIMIT", "0"))
     if limit > 0:

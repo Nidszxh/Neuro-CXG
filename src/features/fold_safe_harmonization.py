@@ -56,6 +56,8 @@ OUTLIER_STD_THRESHOLD = 5     # cap outliers beyond ±5 σ
 VARIANCE_WARNING_THRESHOLD = 30.0  # warn when >30 % features lose/gain variance
 VARIANCE_RETENTION_LOW = 0.7     # flag features retaining <70 % of original variance
 VARIANCE_RETENTION_HIGH = 1.3    # flag features gaining  >30 % of original variance
+COMBAT_MIN_VARIANCE = 1e-8       # treat near-constant channels as constant for ComBat stability
+QUALITY_MIN_REFERENCE_VARIANCE = 1e-8  # avoid unstable retention ratios from tiny denominators
 
 
 @dataclass
@@ -268,15 +270,16 @@ def _prepare_covariates(manifest: pd.DataFrame, features_df: pd.DataFrame) -> pd
 def _remove_constant_features(
     features: pd.DataFrame,
 ) -> Tuple[pd.DataFrame, List[str], List[str]]:
-    """Drop zero-variance columns that would cause ComBat to fail."""
+    """Drop (near-)constant columns that would destabilize ComBat."""
     variances = features.var()
-    constant_cols = variances[variances == 0].index.tolist()
+    constant_cols = variances[variances <= COMBAT_MIN_VARIANCE].index.tolist()
     kept_cols = [c for c in features.columns if c not in constant_cols]
     if constant_cols:
         logger.info(
-            "Dropping %d constant features before harmonization "
-            "(expected: gamma-band zeroed + dead lobes; restored by _restore_constant_features).",
+            "Dropping %d near-constant features before harmonization (var <= %.1e); "
+            "restored unchanged by _restore_constant_features.",
             len(constant_cols),
+            COMBAT_MIN_VARIANCE,
         )
     return features[kept_cols], kept_cols, constant_cols
 
@@ -513,18 +516,37 @@ def _check_harmonization_quality(
         logger.warning("No overlapping feature columns — skipping variance retention check")
         return {"variance_retention": np.nan, "nans_introduced": 0, "quality": "check_warnings"}
 
-    orig_var = original_df[common].var().mean()
-    harm_var = all_harmonized[common].var().mean()
+    # Match the preprocessing scale used before ComBat so retention ratios are
+    # numerically meaningful (raw-vs-log comparisons otherwise overstate loss).
+    original_for_quality = original_df[common].copy()
+    spectral = ("delta_power", "theta_power", "alpha_power", "beta_power", "gamma_power")
+    spectral_cols = [c for c in common if any(s in c for s in spectral)]
+    for col in spectral_cols:
+        mask = original_for_quality[col] > 0
+        original_for_quality.loc[mask, col] = np.log1p(original_for_quality.loc[mask, col])
+
+    orig_var_series = original_for_quality.var()
+    harm_var_series = all_harmonized[common].var()
+    orig_var = orig_var_series.mean()
+    harm_var = harm_var_series.mean()
     var_retention = harm_var / orig_var if orig_var != 0 else 0.0
 
     with np.errstate(divide="ignore", invalid="ignore"):
-        per_feat_ret = (
-            all_harmonized[common].var() / original_df[common].var()
-        ).replace([np.inf, -np.inf], np.nan).dropna()
+        per_feat_ret = (harm_var_series / orig_var_series).replace([np.inf, -np.inf], np.nan)
 
-    n_total = len(per_feat_ret)
-    n_low = int((per_feat_ret < VARIANCE_RETENTION_LOW).sum())
-    n_high = int((per_feat_ret > VARIANCE_RETENTION_HIGH).sum())
+    stable_mask = orig_var_series > QUALITY_MIN_REFERENCE_VARIANCE
+    stable_ret = per_feat_ret[stable_mask].dropna()
+    if stable_ret.empty:
+        # Fallback: if all channels are tiny-variance, report on whatever is finite.
+        stable_ret = per_feat_ret.dropna()
+        logger.warning(
+            "No channels above reference variance %.1e; using all finite retention ratios",
+            QUALITY_MIN_REFERENCE_VARIANCE,
+        )
+
+    n_total = len(stable_ret)
+    n_low = int((stable_ret < VARIANCE_RETENTION_LOW).sum())
+    n_high = int((stable_ret > VARIANCE_RETENTION_HIGH).sum())
     n_within = n_total - n_low - n_high
 
     orig_nans = int(original_df[orig_cols].isna().sum().sum())
@@ -534,6 +556,12 @@ def _check_harmonization_quality(
     logger.info("  Original variance  : %.4f", orig_var)
     logger.info("  Harmonized variance: %.4f", harm_var)
     logger.info("  Variance retention : %.2f%%", var_retention * 100)
+    logger.info(
+        "  Stable-channel denominator mask: %d/%d channels (var > %.1e)",
+        int(stable_mask.sum()),
+        len(common),
+        QUALITY_MIN_REFERENCE_VARIANCE,
+    )
     if n_total:
         logger.info(
             "  Per-feature: %.1f%% within, %.1f%% low, %.1f%% high",

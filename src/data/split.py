@@ -14,7 +14,7 @@ from sklearn.model_selection import StratifiedKFold, GroupKFold, train_test_spli
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     DATA_ROOT, DATA_PROCESSED, DATA_TIME_SERIES, DATA_FINAL,
-    MASTER_MANIFEST, PHENO_PATH,
+    MASTER_MANIFEST, PHENO_PATH, EXCLUDED_SUBJECTS,
 )
 
 # Setup logging
@@ -276,6 +276,16 @@ def run_stratified_split():
     all_images = [f for f in os.listdir(SOURCE_IMG) if f.endswith('.png')]
     valid_ids = set([f.rsplit('_z', 1)[0] for f in all_images])
     df = df[df['FILE_ID'].isin(valid_ids)]
+
+    # Enforce curated subject exclusion policy (1035 -> 1015 cohort).
+    excluded_upper = {s.upper() for s in EXCLUDED_SUBJECTS}
+    before_exclusion = len(df)
+    df = df[~df['FILE_ID'].astype(str).str.upper().isin(excluded_upper)]
+    logger.info(
+        "Applied EXCLUDED_SUBJECTS in split: removed %d row(s), remaining %d",
+        before_exclusion - len(df),
+        len(df),
+    )
 
     # Check for pre-assigned splits in master_manifest
     manifest_has_splits = False

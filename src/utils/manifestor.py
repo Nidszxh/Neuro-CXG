@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     DATA_PROCESSED, DATA_FINAL, DATA_METADATA, MASTER_MANIFEST,
-    PHENO_PATH, SITE_TR_MAP
+    PHENO_PATH, SITE_TR_MAP, EXCLUDED_SUBJECTS
 )
 
 # Setup logging
@@ -25,6 +25,16 @@ def create_manifest():
     df.columns = df.columns.str.strip()
     # Strip whitespace from FILE_ID to prevent match failures
     df['FILE_ID'] = df['FILE_ID'].astype(str).str.strip() 
+
+    # Enforce curated subject exclusion policy (1035 -> 1015 cohort).
+    excluded_upper = {s.upper() for s in EXCLUDED_SUBJECTS}
+    before_exclusion = len(df)
+    df = df[~df['FILE_ID'].astype(str).str.upper().isin(excluded_upper)]
+    logger.info(
+        "Applied EXCLUDED_SUBJECTS in manifestor phenotypes: removed %d row(s), remaining %d",
+        before_exclusion - len(df),
+        len(df),
+    )
     
     # 2. Map processed files to their specific splits (Phase 2.2)
     manifest_data = []
@@ -37,6 +47,7 @@ def create_manifest():
         if ts_path.exists():
             # Extract subject IDs from time series files only (not roi_labels)
             subjects = [f.replace('_ts.npy', '') for f in os.listdir(ts_path) if f.endswith('_ts.npy')]
+            subjects = [s for s in subjects if s.upper() not in excluded_upper]
             for s in subjects:
                 manifest_data.append({'subject_id': s, 'split': split})
     
@@ -94,6 +105,9 @@ def create_manifest():
 
     # Final safety: guarantee unique subject IDs in manifest output.
     final_df = final_df.drop_duplicates(subset=['subject_id'], keep='first')
+
+    # Final safety: exclude curated subjects even if stale split files are present.
+    final_df = final_df[~final_df['subject_id'].astype(str).str.upper().isin(excluded_upper)]
 
     pheno_unique = df['FILE_ID'].nunique()
     manifest_unique = final_df['subject_id'].nunique()

@@ -1,5 +1,3 @@
-"""Model, training, and experiment hyperparameters for Neuro-CXG."""
-
 import torch
 
 from src.core.paths import RESULTS_DIR
@@ -7,7 +5,7 @@ from src.core.paths import RESULTS_DIR
 # --- YOLO DETECTION PARAMETERS (Fixed for Medical Integrity) ---
 YOLO_MODEL_SIZE = "yolo26n.pt"
 YOLO_PROJECT_NAME = "ROI_Detection_v30"  # Output directory name from training
-YOLO_WEIGHTS_PATH = RESULTS_DIR / "experiments" / "detection" / "ROI_Detection_v29" / "weights" / "best.pt"
+YOLO_WEIGHTS_PATH = RESULTS_DIR / "experiments" / "detection" / "ROI_Detection_v30" / "weights" / "best.pt"
 YOLO_IMGSZ = 640
 YOLO_BATCH_SIZE = 32
 YOLO_EPOCHS = 100
@@ -63,36 +61,67 @@ SPARSITY_QUANTILE = 0.70  # Keep top 30% edges (high selectivity - Phase 3)
 # The fixed sparsification method quantiles over off-diagonal values only.
 GRAPH_DENSITY_TARGET = 0.30  # Keep top 30% of directional edges (~40/132 for 12-node graphs)
 
-# Phase 1 enhancements (Feb 2026)
-CAUSALITY_METHOD = "granger"  # Options: 'granger', 'transfer_entropy', 'lagged_pearson'
+# Phase 1/2 enhancements (Apr 2026)
+# Default to ridge-regularized Granger edges for stronger statistical signal.
+CAUSALITY_METHOD = "ridge_granger"  # Options: 'granger', 'ridge_granger', 'ridge_granger_hybrid', 'lagged_pearson'
 GRANGER_MAX_LAG = 5  # Test lags 1-5 TRs (legacy, kept for backward compatibility)
 GRANGER_MAX_LAG_SECONDS = 10.0  # Test causality up to 10s of history; adjusted by subject TR
 GRANGER_SIGNIFICANCE_LEVEL = 0.05  # Statistical significance threshold
+GRANGER_USE_GPU = True  # Use GPU-accelerated Granger causality (auto-detects CUDA availability)
+
+# Ridge-regularized pairwise VAR Granger controls.
+RIDGE_GRANGER_LAGS = (1, 2, 3, 4, 5)
+RIDGE_GRANGER_LAMBDA = 1.0
+RIDGE_GRANGER_CONFIDENCE_ALPHA = 0.75  # w = effect * sigmoid(alpha * confidence)
+RIDGE_GRANGER_HIGH_CONF_P_THRESHOLD = 0.10
+RIDGE_GRANGER_P_PRUNE_THRESHOLD = 0.20
+
+# Optional hybrid graph: beta * ridge_granger + (1-beta) * lagged_pearson.
+RIDGE_GRANGER_HYBRID_BETA = 0.70
+
+# Lagged-Pearson edge construction controls (signal recovery pass)
+LAGGED_PEARSON_LAGS = (1, 2, 3, 4)  # Multi-lag candidates evaluated per directed edge
+LAGGED_PEARSON_P_SELECT_THRESHOLD = 0.10  # Prefer lag with max |z| among p < threshold
+LAGGED_PEARSON_P_PRUNE_THRESHOLD = 0.20  # Zero weak edges before top-k candidate selection
+LAGGED_PEARSON_CONFIDENCE_ALPHA = 0.75  # w = z * sigmoid(alpha * confidence)
 
 # --- GRAPH CONSTRUCTION PARAMETERS ---
-SPARSITY_METHOD = "adaptive_statistical"  # Options: adaptive_proportional/adaptive_statistical/fixed
+# Default policy: keep strongest edges per node (outgoing + incoming) so each
+# lobe remains represented before any fallback repair logic.
+SPARSITY_METHOD = "topk_per_node"  # Options: topk_per_node/adaptive_proportional/adaptive_statistical/fixed
+SPARSITY_TOPK_PER_NODE = 3  # Strongest outgoing/incoming edges retained per node
 MIN_EDGES_PER_GRAPH = 12  # Ensure minimum connectivity for 12-region graphs
 
 # --- DATA QUALITY FILTERS ---
-# Subjects confirmed to have near-complete NaN coverage (>50% empty ROIs).
-# These are permanently excluded and never reach the GNN dataset.
-# Identified by the post-download integrity check.
-EXCLUDED_SUBJECTS: frozenset = frozenset(
+# Curated removal list used to reduce the source ABIDE cohort from 1035 -> 1015.
+# Ordering reflects severity ranking from results/analysis/worst_subjects_ranking_1035.csv.
+CURATED_WORST_SUBJECTS_1015: frozenset = frozenset(
     {
-        # Caltech: near-complete NaN coverage (masker extraction failed)
-        "Caltech_0051486",  # 170/170 NaN — all ROIs empty, completely unusable
-        "Caltech_0051491",  # 168/170 NaN — masker extraction effectively failed
-        "Caltech_0051478",  # 108/170 NaN — >63% coverage loss, beyond recovery
-        "Caltech_0051472",  # 148/170 NaN — >87% coverage loss, beyond recovery
-        # Degenerate causal graphs: dead lobe(s) with zero in+out degree
-        # Identified by subject_analysis.py (2026-03-09).
-        "SDSU_0050209",  # Dead lobe in graph — partial FOV at SDSU scanner (train, fold 2)
-        "SDSU_0050216",  # Dead lobe in graph — partial FOV at SDSU scanner (train, fold 0)
-        "UCLA_1_0051220",  # Dead lobe in graph — partial FOV at UCLA_1 scanner (train, fold 4)
-        "UCLA_1_0051277",  # Dead lobe in graph — partial FOV at UCLA_1 scanner (train, fold 3)
-        "UCLA_2_0051303",  # Dead lobe in graph — partial FOV at UCLA_2 scanner (val)
+        "Caltech_0051486",
+        "Caltech_0051491",
+        "Caltech_0051472",
+        "Caltech_0051478",
+        "SDSU_0050209",
+        "Caltech_0051471",
+        "SDSU_0050216",
+        "SDSU_0050195",
+        "SDSU_0050192",
+        "Caltech_0051469",
+        "Caltech_0051464",
+        "Caltech_0051467",
+        "CMU_b_0050645",
+        "CMU_b_0050658",
+        "Caltech_0051460",
+        "SDSU_0050184",
+        "CMU_b_0050651",
+        "Pitt_0050045",
+        "SBL_0051575",
+        "SDSU_0050204",
     }
 )
+
+# Backward-compatible name used across pipeline modules.
+EXCLUDED_SUBJECTS: frozenset = CURATED_WORST_SUBJECTS_1015
 # Drop subjects where more than this many temporal feature entries are NaN.
 MAX_NAN_ROIS: int = 30
 
@@ -109,17 +138,18 @@ K_FOLDS = 5
 
 GNN_NUM_LAYERS = 2
 GNN_SKIP_CONNECTIONS = True
-GNN_USE_SITE_EMBEDDING = True
+GNN_USE_SITE_EMBEDDING = False
 GNN_NODE_EMB_DIM = 16
-GNN_USE_DEMOGRAPHICS = True
+GNN_USE_DEMOGRAPHICS = False
 GNN_EARLY_STOPPING_PATIENCE = 30
-GNN_POOLING = "anatomical"  # Options: 'anatomical', 'attention', 'mean_max_sum'
-GNN_USE_GRL = False
-GNN_GRL_ALPHA = 0.0
-GNN_GRL_ALPHA_MAX = 0.3
-GRL_ALPHA_CANDIDATES = [0.05, 0.10, 0.20]
-GNN_AUTO_GRL_GRID_SEARCH = False
-GNN_SITE_LOSS_WEIGHT = 0.0
+GNN_POOLING = "mean_max_sum"  # Options: 'anatomical', 'attention', 'mean_max_sum'
+GNN_USE_GRL = True
+GNN_GRL_ALPHA = 0.05
+GNN_GRL_ALPHA_MAX = 0.15
+GRL_ALPHA_CANDIDATES = [0.02, 0.05, 0.10, 0.15]
+GNN_AUTO_GRL_GRID_SEARCH = True
+# Non-zero weight enables actual adversarial site debiasing when GRL is active.
+GNN_SITE_LOSS_WEIGHT = 0.15
 GNN_EDGE_GATE = True
 GNN_ONECYCLE_MAX_LR = 0.002
 GNN_ONECYCLE_PCT_START = 0.2
@@ -127,8 +157,10 @@ GNN_ONECYCLE_WARMUP_FRACTION = 0.15
 
 # Auxiliary regularization defaults (kept conservative by default).
 # These were previously hardcoded in gnn_model.py and can now be tuned safely.
-GNN_STRUCTURAL_DROPOUT_PROB = 0.0
-GNN_EDGE_CONTRASTIVE_WEIGHT = 0.0
+# NOTE: Setting structural_dropout and edge_contrastive to force graph learning
+# (previously disabled due to known issue DD-009 - model ignoring graph structure)
+GNN_STRUCTURAL_DROPOUT_PROB = 0.3  # Force model to use graph edges by zeroing node features
+GNN_EDGE_CONTRASTIVE_WEIGHT = 0.1  # Contrastive learning on edge representations
 GNN_INVARIANCE_WEIGHT = 0.0
 GNN_SPATIAL_INVARIANCE_WEIGHT = 0.0
 
@@ -159,8 +191,8 @@ GNN_MIN_EDGES_FOR_NONDEGENERATE = 12
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # --- CLASS IMBALANCE HANDLING ---
-FOCAL_LOSS_ALPHA = 0.62
-FOCAL_LOSS_GAMMA = 2.0
+FOCAL_LOSS_ALPHA = 0.50
+FOCAL_LOSS_GAMMA = 1.5
 
 DEFAULT_THRESHOLD = 0.5
 OPTIMIZE_THRESHOLD = True
@@ -178,8 +210,8 @@ SITE_ROBUSTNESS_MAX_WEAK_SITE_FRACTION = 0.40
 SITE_ROBUSTNESS_MIN_EVALUABLE_SITES = 5
 SITE_ROBUSTNESS_GATE_POLICY = "warn"  # Options: "warn", "fail"
 
-USE_FOCAL_LOSS = True
-USE_CLASS_WEIGHTS = False
+USE_FOCAL_LOSS = False
+USE_CLASS_WEIGHTS = True
 USE_BALANCED_SAMPLING = False
 
 # EVAL_FREQUENCY removed in Task 6 (DD-014) — was unused throughout the codebase.

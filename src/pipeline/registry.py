@@ -86,7 +86,7 @@ STAGES: List[Stage] = [
         "src.features.extract_temporal",
         NODE_ATTRIBUTES_TEMPORAL,
         dependencies=["split"],
-        args=["--add-frequency"],
+        args=["--n-jobs", "-1"],
     ),
     Stage("harmonization", "Feature Harmonization", "src.features.fold_safe_harmonization", NODE_ATTRIBUTES_HARMONIZED, dependencies=["spatial_features", "temporal_features"]),
     Stage(
@@ -97,7 +97,7 @@ STAGES: List[Stage] = [
         dependencies=["harmonization"],
         function="check_distribution",
     ),
-    Stage("causal_graphs", "Causal Graph Construction", "src.features.construct_causal", CAUSAL_GRAPHS_DIR, dependencies=["harmonization"]),
+    Stage("causal_graphs", "Causal Graph Construction", "src.features.construct_causal", CAUSAL_GRAPHS_DIR, dependencies=["harmonization"], function="main", args=["--n-jobs", "-1"]),
     # Task 2 (DD-010): Opt-in multi-view causal graph construction.
     # Run AFTER causal_graphs.  Activates CausalInvarianceLoss during gnn_training
     # when CAUSAL_GRAPHS_MULTIVIEW_DIR is populated.

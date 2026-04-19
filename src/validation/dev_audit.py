@@ -29,6 +29,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     ALL_FEATURE_NAMES,
+    CAUSALITY_METHOD,
     CAUSAL_GRAPHS_DIR,
     DATA_FINAL,
     DEFAULT_TR,
@@ -101,6 +102,10 @@ class CodeAuditor:
 
     def _check_hardcoded_dimensions(self, filepath: Path, content: str) -> None:
         rel = filepath.relative_to(SRC_DIR)
+        # This scanner file intentionally embeds legacy-shape regex patterns in the
+        # audit rules; do not self-flag those literals as code warnings.
+        if rel.as_posix() == "validation/dev_audit.py":
+            return
         patterns = [
             (r"\(5\s*,\s*8\)", "Shape (5, 8) is legacy 5-lobe; use (NUM_LOBES, NUM_TEMPORAL_FEATURES)"),
             (r"\(5\s*,\s*6\)", "Shape (5, 6) is legacy 5-lobe; use (NUM_LOBES, NUM_SPATIAL_FEATURES)"),
@@ -140,6 +145,9 @@ class CodeAuditor:
 
     def _check_shape_comments(self, filepath: Path, content: str) -> None:
         rel = filepath.relative_to(SRC_DIR)
+        # Skip this audit file itself to avoid self-referential legacy-pattern matches.
+        if rel == Path("validation/dev_audit.py"):
+            return
         patterns = [
             (r"#.*\(5.*8\).*", "5×8 shape in comment"),
             (r"#.*5 lobe", "5-lobe reference in comment"),
@@ -314,7 +322,7 @@ def audit_feature_tensor_via_dataset(n_samples: int = 3) -> bool:
 def validate_granger_edges(subject_id: Optional[str] = None, n_subjects: int = 5) -> None:
     """Print causal matrix stats for sample subjects to verify non-trivial edge weights."""
     logger.info("=" * 70)
-    logger.info("GRANGER CAUSALITY EDGE VALIDATION")
+    logger.info("CAUSAL EDGE VALIDATION (method=%s)", CAUSALITY_METHOD)
     logger.info("=" * 70)
     if not MASTER_MANIFEST.exists():
         logger.error("Manifest not found: %s", MASTER_MANIFEST); return
@@ -344,12 +352,17 @@ def validate_granger_edges(subject_id: Optional[str] = None, n_subjects: int = 5
         logger.info("    non-zero     : %d/%d (%.1f%%)", n_nz, n_total, 100 * n_nz / max(n_total, 1))
         logger.info("    weight range : [%.4f, %.4f]", adj.min().item(), adj.max().item())
         if max_val < 1e-6:
-            logger.error("    ✗ All edge weights are zero — Granger test silent failure!")
+            logger.error("    ✗ All edge weights are zero — causal inference silent failure!")
         elif is_all_same and len(adj_vals) > 1:
-            logger.warning("    ⚠ All weights identical — Granger may have fallen back to lagged Pearson")
+            logger.warning("    ⚠ All weights identical — check causality fallback/sparsification")
         else:
-            strong = (adj_vals > expected_min).sum().item()
-            logger.info("    significant edges (>%.2f): %d/%d  ✓", expected_min, strong, n_nz)
+            if str(CAUSALITY_METHOD).lower() == "granger":
+                strong = (adj_vals > expected_min).sum().item()
+                logger.info("    significant edges (>%.2f): %d/%d  ✓", expected_min, strong, n_nz)
+            else:
+                pos = int((adj_vals > 0).sum().item())
+                neg = int((adj_vals < 0).sum().item())
+                logger.info("    signed-edge mix: positive=%d, negative=%d  ✓", pos, neg)
 
 
 def audit_edge_density(max_graphs: int = 0) -> Dict[str, object]:
@@ -403,9 +416,18 @@ def audit_edge_density(max_graphs: int = 0) -> Dict[str, object]:
         logger.info("    [%3d-%3d): %s %d", lo, hi, bar, cnt)
 
     if pct_floor > 50:
-        logger.error("%.0f%% at minimum edge floor — Granger sparsification too aggressive. "
-                     "Lower SPARSITY_QUANTILE (%.2f) or GRANGER_SIGNIFICANCE_LEVEL (%.3f).",
-                     pct_floor, SPARSITY_QUANTILE, GRANGER_SIGNIFICANCE_LEVEL)
+        logger.error(
+            "%.0f%% at minimum edge floor — sparsification likely too aggressive for method=%s. "
+            "Lower SPARSITY_QUANTILE (%.2f)%s.",
+            pct_floor,
+            CAUSALITY_METHOD,
+            SPARSITY_QUANTILE,
+            (
+                f" or relax GRANGER_SIGNIFICANCE_LEVEL (currently {GRANGER_SIGNIFICANCE_LEVEL:.3f})"
+                if str(CAUSALITY_METHOD).lower() == "granger"
+                else ""
+            ),
+        )
     elif pct_zero > 5:
         logger.warning("%.1f%% zero-edge graphs — check construct_causal.py sparsification.", pct_zero)
     else:

@@ -40,6 +40,8 @@ from src.core.config import (
     SITE_TR_MAP,
     SPARSITY_QUANTILE,
 )
+from src.core.hyperparams import GNN_MAX_DEGENERATE_GRAPH_RATE
+from src.core.validators import summarize_graph_degeneracy_from_adj
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -74,6 +76,10 @@ def _redownload_npy(corrupted_npy_paths: list, incomplete_subs: list) -> None:
         # incomplete because ts is missing (PNG exists but no ts.npy)
         if not (TS_DIR / f"{sub}_ts.npy").exists():
             subjects_to_fix.add(sub)
+
+    # Respect curated cohort exclusions; these subjects are intentionally removed.
+    excluded_upper = {s.upper() for s in EXCLUDED_SUBJECTS}
+    subjects_to_fix = {s for s in subjects_to_fix if s.upper() not in excluded_upper}
 
     if not subjects_to_fix:
         logger.info("No subjects require NPY re-download.")
@@ -631,9 +637,14 @@ def generate_health_report(
     logger.info("DATA COMPLETENESS")
     # Filter out malformed rows (empty/null FILE_ID values from the phenotype CSV).
     _invalid = {"", "no_filename", "nan", "none"}
+    excluded_upper = {s.upper() for s in EXCLUDED_SUBJECTS}
     metadata_ids = {
         fid for fid in df["FILE_ID"].unique()
-        if pd.notna(fid) and str(fid).strip().lower() not in _invalid
+        if (
+            pd.notna(fid)
+            and str(fid).strip().lower() not in _invalid
+            and str(fid).strip().upper() not in excluded_upper
+        )
     }
     missing_metadata = completed_subs - metadata_ids
 
@@ -806,8 +817,15 @@ def _sample_graphs(graph_files: List[Path], sample_size: int = 200) -> Dict:
         "valid": 0,
         "corrupted": 0,
         "zero_edges": 0,
+        "degenerate": 0,
+        "dead_lobes": [],
         "wrong_shape": 0,
         "edge_counts": [],
+        "edge_weights": [],
+        "sparsification_fallback_triggered": 0,
+        "min_edge_fallback": 0,
+        "dead_lobe_repair": 0,
+        "missing_sparsification_metadata": 0,
     }
     sample = list(np.random.choice(graph_files, min(sample_size, len(graph_files)), replace=False))
     for gf in sample:
@@ -823,10 +841,32 @@ def _sample_graphs(graph_files: List[Path], sample_size: int = 200) -> Dict:
             if torch.isnan(adj).any() or torch.isinf(adj).any():
                 stats["corrupted"] += 1
                 continue
-            n_edges = int((adj != 0).sum().item())
+
+            # Collect edge-weight statistics for graph usefulness checks.
+            offdiag = ~torch.eye(NUM_LOBES, dtype=torch.bool, device=adj.device)
+            nz = (adj != 0) & offdiag
+            if int(nz.sum().item()) > 0:
+                stats["edge_weights"].extend(adj[nz].detach().cpu().numpy().tolist())
+
+            graph_stats = data.get("stats", {}) if isinstance(data, dict) else {}
+            if isinstance(graph_stats, dict) and "sparsification_fallback_triggered" in graph_stats:
+                if bool(graph_stats.get("sparsification_fallback_triggered", False)):
+                    stats["sparsification_fallback_triggered"] += 1
+                if bool(graph_stats.get("min_edge_fallback", False)):
+                    stats["min_edge_fallback"] += 1
+                if bool(graph_stats.get("dead_lobe_repair", False)):
+                    stats["dead_lobe_repair"] += 1
+            else:
+                stats["missing_sparsification_metadata"] += 1
+
+            deg = summarize_graph_degeneracy_from_adj(adj, min_edges=MIN_EDGES_PER_GRAPH)
+            n_edges = int(deg["edge_count"])
             stats["edge_counts"].append(n_edges)
+            stats["dead_lobes"].append(int(deg["dead_lobes"]))
             if n_edges == 0:
                 stats["zero_edges"] += 1
+            if bool(deg["is_degenerate"]):
+                stats["degenerate"] += 1
             else:
                 stats["valid"] += 1
         except Exception:
@@ -835,6 +875,13 @@ def _sample_graphs(graph_files: List[Path], sample_size: int = 200) -> Dict:
         arr = np.array(stats["edge_counts"])
         stats["mean_edges"] = float(arr.mean())
         stats["median_edges"] = float(np.median(arr))
+        stats["mean_dead_lobes"] = float(np.mean(stats["dead_lobes"])) if stats["dead_lobes"] else 0.0
+    if stats["edge_weights"]:
+        w = np.array(stats["edge_weights"], dtype=float)
+        stats["edge_weight_mean"] = float(w.mean())
+        stats["edge_weight_std"] = float(w.std())
+        stats["edge_weight_abs_mean"] = float(np.abs(w).mean())
+        stats["edge_weight_abs_std"] = float(np.abs(w).std())
     return stats
 
 
@@ -1309,7 +1356,8 @@ class PipelineValidator:
             return False
 
         graph_files = list(CAUSAL_GRAPHS_DIR.glob("*_graph.pt"))
-        sample_size = min(50, len(graph_files))
+        # Full scan avoids sample blind spots for sparse/degenerate tails.
+        sample_size = len(graph_files) if len(graph_files) <= 5000 else 5000
         stats = _sample_graphs(graph_files, sample_size=sample_size)
         all_passed = True
 
@@ -1342,6 +1390,19 @@ class PipelineValidator:
                 fix_suggestion=f"Lower SPARSITY_QUANTILE from {SPARSITY_QUANTILE}",
             ))
 
+        if stats.get("degenerate", 0) > sample_size * GNN_MAX_DEGENERATE_GRAPH_RATE:
+            self.add_result(ValidationResult(
+                stage="Graphs",
+                passed=False,
+                message=(
+                    f"{stats['degenerate']}/{sample_size} graphs are degenerate "
+                    f"(edge_count < {MIN_EDGES_PER_GRAPH} or dead lobe present)"
+                ),
+                severity="critical",
+                fix_suggestion="Inspect atlas coverage gaps and sparsification thresholds",
+            ))
+            all_passed = False
+
         if stats["edge_counts"]:
             mean_e = stats.get("mean_edges", 0.0)
             median_e = stats.get("median_edges", 0.0)
@@ -1352,12 +1413,49 @@ class PipelineValidator:
                 severity="info",
                 metrics={
                     "total_graphs": len(graph_files),
+                    "graphs_checked": sample_size,
                     "mean_edges": mean_e,
                     "median_edges": median_e,
+                    "mean_dead_lobes": stats.get("mean_dead_lobes", 0.0),
                     "max_edges": max(stats["edge_counts"]),
                     "min_edges": min(stats["edge_counts"]),
+                    "degenerate_sample": stats.get("degenerate", 0),
+                    "degenerate_rate": stats.get("degenerate", 0) / max(sample_size, 1),
+                    "edge_weight_mean": stats.get("edge_weight_mean"),
+                    "edge_weight_std": stats.get("edge_weight_std"),
+                    "edge_weight_abs_mean": stats.get("edge_weight_abs_mean"),
+                    "edge_weight_abs_std": stats.get("edge_weight_abs_std"),
+                    "sparsification_fallback_rate": stats.get("sparsification_fallback_triggered", 0) / max(sample_size, 1),
+                    "min_edge_fallback_rate": stats.get("min_edge_fallback", 0) / max(sample_size, 1),
+                    "dead_lobe_repair_rate": stats.get("dead_lobe_repair", 0) / max(sample_size, 1),
+                    "missing_sparsification_metadata": stats.get("missing_sparsification_metadata", 0),
                     "edge_counts_sample": stats["edge_counts"],
                 },
+            ))
+
+        if stats.get("missing_sparsification_metadata", 0) > 0:
+            self.add_result(ValidationResult(
+                stage="Graphs",
+                passed=False,
+                message=(
+                    f"{stats['missing_sparsification_metadata']}/{sample_size} sampled graphs "
+                    "lack sparsification metadata"
+                ),
+                severity="warning",
+                fix_suggestion="Rebuild causal graphs with updated construct_causal.py to expose fallback telemetry",
+            ))
+
+        fallback_rate = stats.get("sparsification_fallback_triggered", 0) / max(sample_size, 1)
+        if fallback_rate > 0.5:
+            self.add_result(ValidationResult(
+                stage="Graphs",
+                passed=False,
+                message=(
+                    f"High sparsification fallback trigger rate: {fallback_rate:.1%} "
+                    "(graph quality currently relies heavily on fallback/repair)"
+                ),
+                severity="warning",
+                fix_suggestion="Audit sparsification thresholding and lobe-isolation dynamics",
             ))
 
         return all_passed

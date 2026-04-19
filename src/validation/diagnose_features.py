@@ -21,6 +21,7 @@ from src.core.config import (
     MIN_EDGES_PER_GRAPH,
     DEFAULT_TR,
 )
+from src.core.validators import summarize_graph_degeneracy_from_adj
 
 logging.basicConfig(
     level=logging.INFO,
@@ -265,6 +266,8 @@ def audit_edge_distribution() -> dict:
     edge_counts = []
     granger_zero_count = 0
     error_count = 0
+    degenerate_count = 0
+    dead_lobe_counts = []
 
     for gf in graph_files:
         try:
@@ -273,8 +276,12 @@ def audit_edge_distribution() -> dict:
                 error_count += 1
                 continue
             adj: torch.Tensor = g["adj"]
-            n_edges = (adj != 0).sum().item()
+            deg = summarize_graph_degeneracy_from_adj(adj, min_edges=MIN_EDGES_PER_GRAPH)
+            n_edges = int(deg["edge_count"])
             edge_counts.append(n_edges)
+            dead_lobe_counts.append(int(deg["dead_lobes"]))
+            if bool(deg["is_degenerate"]):
+                degenerate_count += 1
 
             # Check if this graph has all-zero edge weights (Granger fallback indicator)
             edge_vals = adj[adj != 0]
@@ -301,6 +308,9 @@ def audit_edge_distribution() -> dict:
     logger.info("  MIN_EDGES_PER_GRAPH floor : %d", MIN_EDGES_PER_GRAPH)
     logger.info("  Graphs at/below floor  : %d / %d  (%.1f%%)",
                 at_floor, len(counts), floor_pct)
+    logger.info("  Degenerate graphs (edge<threshold OR dead lobe): %d / %d (%.1f%%)",
+                degenerate_count, len(counts), 100.0 * degenerate_count / max(len(counts), 1))
+    logger.info("  Mean dead lobes per graph: %.2f", float(np.mean(dead_lobe_counts)) if dead_lobe_counts else 0.0)
 
     if floor_pct > 50:
         logger.warning(
@@ -336,6 +346,7 @@ def audit_edge_distribution() -> dict:
         "median": float(np.median(counts)),
         "std": float(counts.std()),
         "at_floor_pct": float(floor_pct),
+        "degenerate_pct": float(100.0 * degenerate_count / max(len(counts), 1)),
         "granger_zero_graphs": granger_zero_count,
     }
 
