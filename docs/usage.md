@@ -1,122 +1,114 @@
-# Usage Guide
+# Training Infrastructure
 
-## Full Pipeline (Recommended)
-Run all missing stages:
-```bash
-python src/run_pipeline.py --auto
+## Overview
+This document covers training architectures, loss functions, optimization strategies, and learning objectives used in Neuro-CXG.
+
+---
+
+## Loss Functions
+
+### FocalLoss (`src/models/losses.py`)
+
+**Purpose**: Address class imbalance and hard-example mining in binary classification (ASD vs Control).
+
+**Usage**
+```python
+from src.models.losses import FocalLoss
+
+criterion = FocalLoss(
+    alpha=0.75, 
+    gamma=3.0, 
+    pos_weight=1.05  # class imbalance ratio
+)
+loss = criterion(logits, targets)
 ```
 
-If you have already regenerated the split for site-stratified CV, the canonical re-run is:
-```bash
-python src/data/split.py --site-stratified-cv
-python -m src.features.fold_safe_harmonization
-python src/run_pipeline.py --auto --skip-download --skip-split
+---
+
+## Training Configuration
+
+### Learning Rate Schedule (OneCycle)
+```
+max_lr: 0.002 (GNN_ONECYCLE_MAX_LR)
+pct_start: 0.2 (20% of epochs increase, 80% decrease)
 ```
 
-Useful variants:
-```bash
-# Reuse existing downloaded/split data
-python src/run_pipeline.py --auto --skip-download --skip-split
-
-# Plan only (no execution)
-python src/run_pipeline.py --dry-run
-
-# Force rebuild intermediate artifacts
-python src/run_pipeline.py --force-reset
-
-# Post-training analysis only
-python src/run_pipeline.py --analysis-only
+### Early Stopping
+```
+patience: 30 epochs (GNN_EARLY_STOPPING_PATIENCE)
+mode: max (maximize validation AUC)
 ```
 
-The pipeline now checks for harmonized fold files before GNN training begins, so missing fold artifacts fail fast instead of surfacing deep inside the training loop.
+### Regularization
+- **L2 weight decay**: `5e-5` (GNN_WEIGHT_DECAY)
+- **Dropout**: `0.35` (GNN_DROPOUT)
+- **Structural dropout** (optional): randomly zero node features in ~30% of graphs
 
-## Stage-Level Commands
-```bash
-# ROI detection training
-python -m src.pipelines.roi_detection
+---
 
-# Spatial features
-python -m src.features.extract_spatial
+## GNN Architecture Highlights
 
-# Temporal features
-python -m src.features.extract_temporal
+### CausalBrainGNN (src/models/causal_gnn.py)
 
-# Fold-safe harmonization
-python -m src.features.fold_safe_harmonization
+**Input Shape**
+- Nodes: 12 brain lobes
+- Node features: 28 dimensions
 
-# Optional: regenerate CV folds so validation sites are separated from training sites
-python src/data/split.py --site-stratified-cv
+**Layers**
+- GATv2Conv: 2 layers, 4 attention heads, 128 hidden channels
+- Activation: GELU
 
-# Causal graph construction
-python -m src.features.construct_causal
+---
 
-# GNN training
-python -m src.models.gnn_model
+## Training Loop Patterns
+
+### Standard Single-Fold Training
+```python
+from src.models.training_utils import EarlyStopping, CheckpointManager, TrainingTracker
+
+early_stop = EarlyStopping(patience=30, mode='max')
+ckpt_mgr = CheckpointManager(checkpoint_dir, prefix='best_model')
+tracker = TrainingTracker()
+
+for epoch in range(max_epochs):
+    train_loss = train_one_epoch(model, train_loader, optimizer, criterion)
+    val_auc = evaluate(model, val_loader, cfg=config)
+    
+    tracker.log_epoch(epoch, {'train_loss': train_loss, 'val_auc': val_auc})
+    
+    if early_stop(val_auc):
+        print(f"Early stopping at epoch {epoch}")
+        break
+    
+    if val_auc > best_auc:
+        ckpt_mgr.save(model, optimizer, epoch=epoch, metrics={'auc': val_auc})
 ```
 
-## Evaluation and Explainability
+---
+
+## Testing and Validation
+
+### Unit Tests
 ```bash
-python src/run_evaluation.py
-python src/run_explainability.py
-python src/run_result_analysis.py
-```
-
-## Additional Utility Commands
-```bash
-# Validate environment
-python -c "from src.core.config import validate_environment; validate_environment()"
-
-# Run pipeline with execution plan only
-python src/run_pipeline.py --dry-run
-
-# Run only visual/reporting stages
-python src/run_pipeline.py --analysis-only
-
-# Unit and integration tests
 pytest tests/unit/
+```
+
+### Integration Tests
+```bash
 pytest tests/integration/
 ```
 
-## Expected Outputs
-- Graphs: data/processed/causal_graphs/
-- Checkpoints: models/checkpoints/
-- Evaluation: results/evaluation/
-- Explainability: results/explainability/
-- Analysis: results/analysis/
+---
 
-## Configuration Usage
-- Core defaults are imported from src/core/config.py.
-- Prefer changing constants in src/core/hyperparams.py and src/core/feature_registry.py through config exports.
+## Known Issues and Workarounds
 
-## Troubleshooting
-1. Missing checkpoints
-- Run training stage first, or use baseline checkpoint directory if available.
+- CV-Test Gap: site-specific scanner variations; use site-stratified CV
+- Gamma Band: zeroed at runtime for TR=2s subjects via `UNRELIABLE_FREQ_BANDS_AT_NYQUIST`
+- CUDA Graph Issue: `torch.compile` disabled in `_maybe_compile_model()`
 
-2. Shape mismatch errors
-- Rebuild features and graphs:
-```bash
-python src/run_pipeline.py --force-reset --auto --skip-download --skip-split
-```
+---
 
-3. Harmonization artifacts missing
-- Run:
-```bash
-python -m src.features.fold_safe_harmonization
-```
-
-4. GNN training aborts before the first epoch
-- Check that `data/metadata/harmonized_folds_cv/harmonized_fold_<k>.csv` exists for every fold.
-- If you regenerated the split, rerun harmonization before training.
-
-## Common Failure Patterns
-1. Metric collapse near random
-- Check class balance, thresholds, and site confound settings.
-
-2. NaN/Inf issues in training
-- Rebuild features and confirm integrity checks pass before retraining.
-
-3. Shape mismatch in model input
-- Ensure feature ordering and channel counts match config exports.
-
-4. Unexpected checkpoint behavior
-- Confirm active checkpoint directory and run ID provenance before comparison.
+## References
+- `src/core/hyperparams.py`
+- `src/models/gnn_model.py`
+- `src/models/training_utils.py`

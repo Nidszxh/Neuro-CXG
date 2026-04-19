@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — 2026-04-18
+
+### GPU-Accelerated Granger Causality
+**Root Cause**: Sequential CPU Granger causality is slow (~42 min for multiview on ~1000 subjects).
+
+**Added**
+- `GRANGER_USE_GPU` config flag in `hyperparams.py` (default: `True`)
+- `_compute_granger_causality_gpu_impl()` in `causal_inference.py`: GPU-accelerated
+  Granger using batched linear regression + vectorized F-test
+- Auto-detection: uses GPU when `GRANGER_USE_GPU=True` and CUDA available
+- Fallback: auto-falls back to CPU on any error
+- Added `use_gpu` param to `compute_granger_causality()` and `compute_causality_matrix()`
+- Updated `construct_multiview_graphs()` to use GPU
+- Test script: `tests/unit/test_granger_gpu.py`
+
+---
+
 ## [Unreleased] — 2026-04-14
 
 ### Task 1 — Structural Learning Enforcement (DD-009)
