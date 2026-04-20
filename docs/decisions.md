@@ -1,128 +1,134 @@
 # Design Decision Log
 
-This file records major architectural and modeling decisions.
+This log records active architectural and modeling decisions reflected in source code.
 
-## DD-001: 12-region lobe graph instead of 170-ROI graph
-- Decision: aggregate AAL ROIs into 12 anatomical regions before graph learning.
-- Alternatives considered:
-  - Full 170-node ROI graph.
-  - Coarser 5-lobe graph.
-- Why chosen:
-  - Better sample-efficiency for ABIDE-scale training.
-  - Preserves anatomical interpretability while reducing graph complexity.
+## DD-001: Aggregate 170 AAL ROIs into 12 lobe-level nodes
 
-## DD-002: GATv2 as primary graph backbone
-- Decision: use GATv2-based message passing.
-- Alternatives considered:
-  - GCN, GraphSAGE.
-- Why chosen:
-  - Attention is useful for weighted directed connectivity.
-  - Better expressivity on sparse, heterogeneous edge patterns.
+- Decision: construct 12-node graphs from lobe-level aggregation instead of 170-node ROI graphs.
+- Rationale:
+  - better sample efficiency for ABIDE-scale training
+  - cleaner clinical interpretation at system level
+- Source of truth:
+  - `src/core/atlas_config.py` (lobe mapping)
+  - `src/features/construct_causal.py` (aggregation + graph packaging)
 
-## DD-003: Fold-safe ComBat harmonization
-- Decision: harmonization must be fitted on fold-train only and applied to fold-val/test.
-- Alternatives considered:
-  - Global harmonization before CV.
-- Why chosen:
-  - Prevents leakage from validation distribution into training normalization.
-  - Preserves evaluation integrity in multi-site settings.
+## DD-002: Keep configuration modular, re-export through a stable facade
 
-## DD-004: Keep diagnosis as protected covariate in harmonization
-- Decision: include DX_GROUP in covariates during ComBat.
-- Alternatives considered:
-  - Harmonize only by site.
-- Why chosen:
-  - Prevents removal of disease-relevant signal as nuisance variance.
+- Decision: maintain focused config modules (`paths`, `feature_registry`, `hyperparams`, `atlas_config`, `validators`) and expose them through `src/core/config.py`.
+- Rationale:
+  - minimizes drift from scattered constants
+  - preserves backward compatibility for existing imports
+- Source of truth:
+  - `src/core/config.py`
+  - `src/core/paths.py`
+  - `src/core/feature_registry.py`
+  - `src/core/hyperparams.py`
 
-## DD-005: Stage registry for orchestration metadata
-- Decision: move stage metadata into src/pipeline/registry.py and have run_pipeline use it.
-- Alternatives considered:
-  - Ad-hoc stage dictionaries in runner only.
-- Why chosen:
-  - Cleaner dependency mapping.
-  - Less drift between stage declarations and execution logic.
+## DD-003: Use a declarative stage registry for orchestration
 
-## DD-006: Config split into focused modules
-- Decision: split monolithic config into paths, feature_registry, atlas_config, hyperparams, validators.
-- Alternatives considered:
-  - Keep single large config file.
-- Why chosen:
-  - Better maintainability and discoverability.
-  - Backward compatibility preserved via thin src/core/config.py re-export.
+- Decision: define stage metadata and dependencies in `src/pipeline/registry.py`, and execute via `src/run_pipeline.py`.
+- Rationale:
+  - one place to update stage contracts
+  - consistent skip/auto/dry-run behavior
+- Source of truth:
+  - `src/pipeline/registry.py`
+  - `src/run_pipeline.py`
 
-## DD-007: Disable strong GRL by default
-- Decision: keep GRL disabled in canonical training configuration.
-- Alternatives considered:
-  - Always-on high-alpha adversarial site loss.
-- Why chosen:
-  - High-alpha setting previously collapsed class discrimination.
-  - Reintroduced only through controlled experiments.
+## DD-004: Enforce fold-safe harmonization with diagnosis protection
 
-## DD-008: Keep detailed explainability outputs in default workflow
-- Decision: include node, edge, and feature attribution phases after training.
-- Alternatives considered:
-  - Accuracy-only reporting.
-- Why chosen:
-  - Clinical/scientific credibility requires interpretable findings.
-  - Supports literature-grounded validation.
+- Decision: fit ComBat on fold-train only and apply to val/test; include `DX_GROUP` as protected covariate.
+- Rationale:
+  - prevents fold leakage
+  - avoids stripping disease-related variance during site correction
+- Source of truth:
+  - `src/features/fold_safe_harmonization.py`
 
-## DD-009: Structural dropout to enforce edge-structural learning (Task 1)
-- Decision: randomly zero all node features for 30% of graphs per batch during training;
-  add EdgeStructureContrastiveLoss (weight 0.05) between full-feature and edge-only views.
-- Root Cause: Model treats node features as primary signal; edge structure is secondary.
-  GradientEdgeAttributor scores showed near-zero importance for most edges.
-- Why chosen:
-  - Simple mechanism with clear gradient path through conv1/conv2/conv3.
-  - NT-Xent loss explicitly measures edge-feature alignment.
-  - Backward compatible: structural_dropout_prob and edge_contrastive_weight default to 0.0.
+## DD-005: Retain only anatomical spatial channels in model input
 
-## DD-010: Multi-view causal graphs for robustness to estimation noise (Task 2)
-- Decision: Generate 6 causal graph views per subject (base, extended_lag, 3 bootstraps,
-  high_confidence) and apply CausalInvarianceLoss (NT-Xent, τ=0.07, weight=0.15).
-- Root Cause: Single Granger estimate is noisy — one bad fit fails completely.
-- Why chosen:
-  - Bootstrap views test robustness to subsample variance.
-  - Extended-lag view captures longer-range causal dynamics.
-  - High-confidence view enforces that the model relies on strong edges.
-  - CausalInvarianceLoss forces invariance across views without requiring labels.
-  - Opt-in: invariance loss only activates when CAUSAL_GRAPHS_MULTIVIEW_DIR exists.
+- Decision: model input uses 4 spatial channels (`x`, `y`, `z_depth`, `size`).
+- Clarification:
+  - `conf_std` and `detection_count` are still processed for harmonization diagnostics,
+    but excluded from graph node feature tensors used by GNN training.
+- Rationale:
+  - reduces scanner/site proxy leakage in learning signal
+- Source of truth:
+  - `src/core/feature_registry.py`
+  - `src/features/graph_factory.py`
+  - `src/features/fold_safe_harmonization.py`
 
-## DD-011: Anatomical hierarchical pooling (Task 3)
-- Decision: Replace global mean/max/sum pooling with two-level attention pooling:
-  Level 1: lobes → 4 functional networks (DMN, Salience, Visual/Cerebellar, Limbic).
-  Level 2: networks → graph vector.
-- Root Cause: Global pooling collapses the functional hierarchy; DMN and Salience
-  are the primary ASD-affected networks but receive equal weight.
-- Why chosen:
-  - Matches known resting-state functional organization (Power 2011, Yeo 2011).
-  - Stores last_network_embeddings for network-level explainability.
-  - Old pooling modes (attention, mean_max_sum) preserved for ablations.
+## DD-006: Use directed causal connectivity with ridge-regularized Granger default
 
-## DD-012: Remove conf_std and detection_count from spatial features (Task 4)
-- Decision: Keep only 4 anatomical coordinates (x, y, z_depth, size) as spatial features.
-  Remove conf_std and detection_count entirely from ALL_FEATURE_NAMES.
-- Root Cause: RF trained on only conf_std/detection_count achieved AUC=1.000 predicting
-  acquisition site — confirming these features are scanner-identity markers, not anatomy.
-- Why chosen:
-  - Eliminating site-leaking features reduces CV-test AUC gap.
-  - SpatialInvarianceLoss provides an additional gradient-reversal guard on residual site variance.
+- Decision: causal graph construction defaults to `ridge_granger` with fallback methods available by config.
+- Rationale:
+  - directed edges preserve temporal precedence information
+  - regularization improves stability for small-sample fold subsets
+- Source of truth:
+  - `src/core/hyperparams.py` (`CAUSALITY_METHOD`)
+  - `src/features/construct_causal.py`
+  - `src/features/causal_inference.py`
 
-## DD-013: Site-stratified cross-validation (Task 5)
-- Decision: Replace StratifiedKFold with GroupKFold where groups are site clusters
-  defined by scanner manufacturer × TR range (5 clusters from 20 ABIDE sites).
-- Root Cause: Random KFold includes the same scanner's subjects in both train and
-  validation splits; the CV AUC is inflated relative to out-of-site performance.
-- Why chosen:
-  - Each fold's validation set contains scanner profiles absent from its training fold.
-  - Manufacturer × TR clustering respects the dominant technical confounds in ABIDE.
-  - Provides more honest estimate of generalisation to unseen scanners.
+## DD-007: Keep multiview graph generation and invariance training optional, with quality gates
 
-## DD-014: Dead code removal (Task 6)
-- Decision: Remove compute_granger_causality_gpu, compute_transfer_entropy,
-  _compute_te_pair, _conditional_entropy, compute_multilag_causality, EVAL_FREQUENCY.
-- Why chosen:
-  - GPU Granger was unmaintained and had no callers (GPU divergence with CPU path).
-  - Transfer entropy was a prototype that was never integrated into the pipeline.
-  - Multilag causality is superseded by construct_multiview_graphs() (DD-010).
-  - EVAL_FREQUENCY was defined but never read.
-  - Dead code inflates maintenance burden and confuses onboarding.
+- Decision: multiview graph construction is opt-in (`--multiview`), and invariance loss is enabled only when multiview artifacts are present and pass quality checks.
+- Rationale:
+  - allows robustness experiments without forcing all runs into higher-complexity training
+  - guards against degenerate non-base views
+- Source of truth:
+  - `src/pipeline/registry.py` (`multiview_graphs`)
+  - `src/run_pipeline.py` (`--multiview`)
+  - `src/models/gnn_model.py` (multiview availability + quality gate)
+
+## DD-008: Keep GRL site-adversarial path enabled but controlled
+
+- Decision: GRL is enabled in config with conservative alpha defaults (`GNN_GRL_ALPHA`, `GNN_GRL_ALPHA_MAX`), with optional alpha grid-search support.
+- Rationale:
+  - mitigate site leakage while avoiding aggressive adversarial settings
+- Source of truth:
+  - `src/core/hyperparams.py`
+  - `src/models/gnn_model.py`
+  - `src/models/training_utils.py`
+
+## DD-009: Support auxiliary structural/invariance losses as tunable controls
+
+- Decision: structural dropout, edge contrastive, causal invariance, and spatial invariance terms are implemented and controlled by config weights.
+- Current default posture:
+  - conservative baseline (most auxiliary weights set to `0.0`)
+  - mechanism remains available for ablations/experiments
+- Source of truth:
+  - `src/core/hyperparams.py`
+  - `src/models/gnn_model.py`
+  - `src/models/training_utils.py`
+
+## DD-010: Make site-stratified CV an explicit optional protocol
+
+- Decision: default split path uses stratified folds; optional `--site-stratified-cv` rewrites `cv_fold` with GroupKFold over site clusters.
+- Rationale:
+  - preserve baseline comparability while enabling stricter cross-site robustness studies
+- Source of truth:
+  - `src/data/split.py`
+  - `src/run_pipeline.py`
+  - `src/pipeline/registry.py`
+
+## DD-011: Lock deployment operating point through threshold policy
+
+- Decision: evaluation and downstream analysis use centralized threshold policy (`EVAL_THRESHOLD_POLICY`), currently fixed at `EVAL_FIXED_THRESHOLD = 0.5263`.
+- Rationale:
+  - deterministic deployment threshold across runs
+  - avoids per-run threshold drift in reports
+- Source of truth:
+  - `src/core/hyperparams.py`
+  - `src/run_evaluation.py`
+  - `src/run_result_analysis.py`
+  - `src/models/training_utils.py`
+
+## DD-012: Preserve explainability as a first-class post-training stage
+
+- Decision: retain scripted node, edge, feature, and literature explainability workflows in the default analysis stack.
+- Rationale:
+  - supports scientific interpretability requirements beyond single scalar metrics
+- Source of truth:
+  - `src/run_explainability.py`
+  - `src/analysis/node_importance.py`
+  - `src/analysis/edge_importance.py`
+  - `src/analysis/feature_attribution.py`
+  - `src/analysis/literature_validation.py`

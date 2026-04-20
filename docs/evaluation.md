@@ -1,156 +1,163 @@
-# GPU-Accelerated Granger Causality Testing
+# Evaluation
 
-## Overview
-`tests/unit/test_granger_gpu.py` provides a comprehensive test suite for GPU-accelerated Granger causality computation, verifying numerical equivalence between CPU and GPU implementations and benchmarking performance.
+## Scope
 
----
+This document covers post-training reporting scripts:
 
-## Purpose
-Granger causality testing is a computational bottleneck in the Neuro-CXG pipeline:
-- **Baseline (CPU)**: ~42 minutes for all subjects with multiview construction
-- **GPU-accelerated**: 5–10x speedup with proper batching
+- `src/run_evaluation.py`
+- `src/run_explainability.py`
+- `src/run_result_analysis.py`
 
-This test suite validates that GPU acceleration:
-1. Produces numerically equivalent results to CPU implementation
-2. Handles edge cases (NaN, Inf, short time series)
-3. Achieves claimed performance improvements
-4. Falls back gracefully on errors
+These scripts are also wired as stages in `src/pipeline/registry.py` and can be run through `src/run_pipeline.py`.
 
----
+## 1) Comprehensive Evaluation
 
-## Running Tests
+Entry point:
 
-### Single Test Suite
 ```bash
-python tests/unit/test_granger_gpu.py
+python src/run_evaluation.py
 ```
 
-### Individual Tests
+### What It Computes
+
+- AUC-weighted fold ensemble on test graphs
+- full metric suite (AUC, AUPRC, F1, accuracy, sensitivity, specificity)
+- bootstrap confidence intervals
+- permutation significance tests:
+   - global label shuffling
+   - within-site label shuffling
+- subgroup analysis (sex, age bins, top-represented sites)
+- baseline comparisons (SVM, Random Forest, flat MLP)
+
+### Threshold Policy
+
+Evaluation uses `EVAL_THRESHOLD_POLICY` from `src/core/hyperparams.py`:
+
+- `f1` - F1-optimized threshold
+- `youden` - Youden J threshold
+- `fixed` - locked threshold from `EVAL_FIXED_THRESHOLD`
+
+### Useful Options
+
 ```bash
-# Synthetic causal signal
-python -c "from tests.unit.test_granger_gpu import test_synthetic_causal_signal; test_synthetic_causal_signal()"
-
-# Speed benchmark
-python -c "from tests.unit.test_granger_gpu import benchmark_speed; benchmark_speed()"
+python src/run_evaluation.py --no-permutation
+python src/run_evaluation.py --n-permutations 200
+python src/run_evaluation.py --no-baselines --no-subgroups
+python src/run_evaluation.py --output-dir results/evaluation_custom
 ```
 
-### With Pytest Integration
+### Outputs
+
+Default output directory: `results/evaluation/`
+
+- `comprehensive_results.json`
+- `comprehensive_results.csv`
+- `permutation_test_global.png`
+- `permutation_test_within_site.png`
+- `subgroup_analysis.png`
+- `baseline_comparison.png`
+
+## 2) Explainability Pipeline
+
+Entry point:
+
 ```bash
-pytest tests/unit/test_granger_gpu.py -v
-pytest tests/unit/test_granger_gpu.py::test_synthetic_causal_signal -v
+python src/run_explainability.py
 ```
 
----
+### Explainability Phases
 
-## Test Cases
+- node importance
+- edge importance
+- feature attribution
+- literature validation
 
-### 1. Synthetic Causal Signal (`test_synthetic_causal_signal`)
+The script can auto-select fold by highest recorded validation AUC if `--fold` is not provided.
 
-**Objective**: Verify GPU produces correct causal discovery on known data.
+### Useful Options
 
-**Setup**
-- Create synthetic time series with **known causal relationship**: $X \to Y$
-- $X_t$: random normal noise
-- $Y_t = 0.5 \cdot X_{t-1} + 0.3 \cdot \epsilon_t$ (depends on lagged X)
-- $Z_t$: independent noise (control)
-
-**Validation**
-- Compute Granger causality on CPU vs GPU
-- **Expected**: GC(X→Y) > GC(Y→X) (X Granger-causes Y)
-- **Tolerance**: max element-wise difference < 0.5, >90% sparsity pattern agreement
-- **Output**: Side-by-side metrics table
-
----
-
-### 2. Random Data (`test_random_data`)
-
-**Objective**: Verify that GPU correctly identifies **sparse/zero edges** on non-causal data.
-
-**Setup**
-- 12 brain regions, 150 time points
-- Completely independent random normal noise
-
-**Validation**
-- Both CPU and GPU should produce near-zero adjacency matrices
-- Non-zero edge counts should be similar between implementations
-- Max difference < 0.005
-
----
-
-### 3. Short Time Series (`test_short_timeseries`)
-
-**Objective**: Handle edge case where T < max_lag + 10 (insufficient samples for reliable Granger test).
-
-**Expected Behavior**
-- Both CPU and GPU return all-zero adjacency (graceful degradation)
-- Numerically equal fallback behavior
-
----
-
-### 4. NaN/Inf Handling (`test_nan_handling`)
-
-**Objective**: Verify robust preprocessing on corrupted data.
-
-**Setup**
-- Insert NaN at (10, 5) and Inf at (20, 3)
-- Both CPU and GPU must handle without crashes
-
-**Expected Behavior**
-- Pre-filter corrupted rows before Granger computation
-- Return all-zero matrix (safe fallback)
-
----
-
-### 5. Speed Benchmark (`benchmark_speed`)
-
-**Objective**: Measure GPU speedup over CPU baseline.
-
-**Setup**
-- 200 time points, 12 regions
-- Average over 10 repetitions
-
-**Output Metrics**
-- CPU time (ms per iteration)
-- GPU time (ms per iteration)
-- Speedup factor (CPU time / GPU time)
-
----
-
-## Implementation Details
-
-### GPU Implementation (`compute_granger_causality_gpu_impl`)
-Located in `src/features/causal_inference.py`.
-
-**Algorithm**
-```
-Input: time_series matrix (T, n_regions), max_lag
-1. Construct lagged design matrix X ∈ ℝ^((T-max_lag) × n_regions*max_lag)
-2. For each region pair (i, j):
-   - Fit reduced model: y = β₀ (baseline)
-   - Fit full model: y = β₀ + Σ(lagged_j)
-   - Compute F-statistic: F = (RSS_r - RSS_f) / (RSS_f / dof)
-   - Granger weight: max(0, -log₁₀(p_value))
-3. Return n_regions × n_regions adjacency matrix
+```bash
+python src/run_explainability.py --fold 3
+python src/run_explainability.py --phases node edge
+python src/run_explainability.py --no-masking
+python src/run_explainability.py --output-dir results/explainability_custom
 ```
 
-**Optimization Tricks**
-- Vectorize across all lags using `torch.unfold()`
-- Batch QR decomposition for numerical stability
-- GPU memory pooling to reduce allocation overhead
+### Outputs
 
----
+Default output directory: `results/explainability/`
 
-## Troubleshooting
+- `node/` (node and attention artifacts)
+- `edge/` (edge attribution artifacts)
+- `features/` (feature attribution plots)
+- `literature/` (literature cross-reference outputs)
+- `summary.json`
 
-### Test Fails: "CUDA out of memory"
-- **Fix**: Reduce batch size or set `GRANGER_USE_GPU=False`
+## 3) Result Interpretation
 
-### Test Fails: "Numerical differences too large"
-- **Fix**: Ensure consistent dtypes across CPU/GPU paths (float64 vs float32)
+Entry point:
 
----
+```bash
+python src/run_result_analysis.py
+```
 
-## Integration with Pipeline
+### What It Produces
 
-- `src/features/construct_causal.py` — calls `compute_granger_causality(use_gpu=True)`
-- Tests part of standard `pytest tests/unit/`
+- per-subject predictions and confidence table
+- misclassification profiling
+- site-effect summary plots
+- confidence/calibration plots
+- optional severity correlation plots
+- case studies (text + csv)
+
+### Threshold And Calibration Alignment
+
+`run_result_analysis.py` attempts to align with evaluation metadata from:
+
+- `results/evaluation/comprehensive_results.json`
+
+If metadata is missing, it recomputes thresholds and uses fallbacks from checkpoints/config.
+
+### Useful Options
+
+```bash
+python src/run_result_analysis.py --n-cases 3
+python src/run_result_analysis.py --no-heatmap
+python src/run_result_analysis.py --no-severity
+python src/run_result_analysis.py --output-dir results/analysis_custom
+```
+
+### Outputs
+
+Default output directory: `results/analysis/`
+
+- `per_subject_predictions.csv`
+- `misclassification_analysis.png`
+- `site_effects.png`
+- `site_bias_heatmap.png` (unless disabled)
+- `calibration.png`
+- `severity_correlation.png` (unless disabled)
+- `case_studies.csv`
+- `case_studies.txt`
+- `result_analysis_summary.json`
+
+## 4) Running Through Pipeline Stages
+
+To run only these post-training reports via orchestrator:
+
+```bash
+python src/run_pipeline.py --analysis-only
+```
+
+To run all stages including reporting:
+
+```bash
+python src/run_pipeline.py --auto
+```
+
+## 5) Evaluation Reproducibility Checklist
+
+- confirm fold checkpoints exist in the active checkpoint directory
+- keep threshold policy explicit in config
+- avoid mixing outputs from different runs in the same output directory
+- store and review `comprehensive_results.json` as the machine-readable record

@@ -1,58 +1,44 @@
 # Documentation Index
 
 ## Start Here
-1. [problem.md](problem.md) — Problem statement and clinical motivation
-2. [architecture.md](architecture.md) — System design and data flow
-3. [setup.md](setup.md) — Installation and environment setup
-4. [usage.md](usage.md) — Running the pipeline
 
-## Core Technical Docs
-- [data.md](data.md) — Dataset structure and data pipeline
-- [data-curation.md](data-curation.md) — Subject selection, filtering criteria, and curation logic
-- [evaluation.md](evaluation.md) — Evaluation protocol and metrics
-- [experiments.md](experiments.md) — Experimental design and ablations
-- [training.md](training.md) — Training infrastructure, loss functions, and optimization
-- [gpu-granger-testing.md](gpu-granger-testing.md) — GPU acceleration and test suite for Granger causality
-- [results.md](results.md) — Results, metrics, and performance analysis
-- [decisions.md](decisions.md) — Architectural decisions and rationales
+1. [problem.md](problem.md) - Problem framing and project objective.
+2. [setup.md](setup.md) - Environment setup and validation.
+3. [usage.md](usage.md) - Primary command-line workflows.
+4. [walkthrough.md](walkthrough.md) - End-to-end reproducible runbook.
 
-## Supplementary
-- [configs/README.md](../configs/README.md) — Configuration files and hyperparameter guidance
+## Maintained Core Docs
 
-## Maintenance
-- Update [CHANGELOG.md](../CHANGELOG.md) for notable updates.
-- Keep [README.md](../README.md) and [docs/results.md](results.md) aligned with latest canonical and on-disk metrics.
+- [architecture.md](architecture.md) - Pipeline architecture, stage orchestration, and contracts.
+- [components.md](components.md) - Module responsibilities and interfaces.
+- [configuration.md](configuration.md) - Config modules, defaults, and high-impact knobs.
+- [data.md](data.md) - Data artifacts, schemas, and quality checks.
+- [evaluation.md](evaluation.md) - Evaluation, explainability, and result-analysis scripts.
+- [decisions.md](decisions.md) - Active design decisions reflected in code.
+- [performance.md](performance.md) - Runtime characteristics and performance interpretation.
+- [failure-modes.md](failure-modes.md) - Operational failure signatures and recovery paths.
+- [extending.md](extending.md) - Safe extension guide for stages/features/models.
 
----
+## Additional Reference Docs
 
-## New Additions (April 2026)
+- [experiments.md](experiments.md) - Experiment and ablation notes.
+- [results.md](results.md) - Result summaries and run reporting history.
+- [training.md](training.md) - Training-focused implementation notes.
+- [data-curation.md](data-curation.md) - Curation rationale and cohort filtering notes.
+- [gpu-granger-testing.md](gpu-granger-testing.md) - GPU Granger test guidance.
 
-### Training Infrastructure Documentation
-**File**: training.md  
-**Covers**: FocalLoss implementation, learning rate scheduling, multi-view training objectives, GNN architecture, hyperparameter tuning, training loop patterns, and known issues.
+## Draft/Internal Docs
 
-### GPU Granger Causality Testing
-**File**: gpu-granger-testing.md  
-**Covers**: Test suite overview, running tests, 5 test cases (synthetic causal signal, random data, short time series, NaN handling, speed benchmark), test metrics, implementation details, and performance baseline.
+- [structured-documentation-draft.md](structured-documentation-draft.md) - Internal draft used to assemble the structured documentation set.
+- [DOCUMENTATION_AUDIT_REPORT.md](DOCUMENTATION_AUDIT_REPORT.md) - Prior audit snapshot.
 
-### Data Curation Documentation
-**File**: data-curation.md  
-**Covers**: Dataset composition (1,015 final subjects), inclusion/exclusion criteria, 6-stage curation pipeline, subject ID format and site roster, reproducibility, data quality metrics, and related files.
+## External Supplement
 
----
+- [configs/README.md](../configs/README.md) - Configuration file notes under `configs/`.
 
-## Modified Files (Not Documented Until Now)
+## Maintenance Rules
 
-| File | Status | Reference |
-|------|--------|-----------|
-| `src/models/losses.py` | NEW | training.md |
-| `tests/unit/test_granger_gpu.py` | NEW | gpu-granger-testing.md |
-| `data/metadata/subject_ids_1015.txt` | NEW | data-curation.md |
-
-## Key Documentation Sync Points
-
-**CHANGELOG.md**: Contains historical record of all features. Cross-reference for implementation dates and version history.
-
-**Decisions.md**: High-level architectural choices. See data-curation.md for subject selection rationale and training.md for loss function choices.
-
-**Results.md**: Performance metrics. Cross-reference to training.md for baseline hyperparameters used in canonical runs.
+- Treat code and config in `src/` as source of truth when docs drift.
+- If output artifact names or paths change, update both docs and stage sentinels in `src/pipeline/registry.py`.
+- Keep root [README.md](../README.md) and this index aligned.
+- Update [CHANGELOG.md](../CHANGELOG.md) for user-visible documentation changes.

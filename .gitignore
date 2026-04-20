@@ -95,6 +95,7 @@ htmlcov/
 pytest.ini
 
 # --- Misc ---
+.github/
 dump/*
 chats/*
 scripts/*

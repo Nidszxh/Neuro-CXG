@@ -1,431 +1,154 @@
-# Data Curation and Subject Selection
+# Data
 
-## Overview
-Neuro-CXG applies rigorous subject inclusion/exclusion criteria to ensure data quality and medical validity. This document describes the dataset composition, filtering steps, and reproducibility.
+## Scope
 
----
+This document describes the runtime data model used by the current source code:
 
-## Dataset Composition
+- where artifacts are written
+- how features are encoded
+- which quality gates are enforced
+- how data moves from download to model-ready graphs
 
-### Source Dataset
-- **Source**: ABIDE I (Autism Brain Imaging Data Exchange)
-- **URL**: s3://fcp-indi/data/Projects/ABIDE
-- **Original**: ~1100+ subjects across 20 imaging sites
-- **Baseline**: Both ASD and typical control groups with resting-state fMRI
+All paths and constants referenced here come from `src/core/paths.py` and `src/core/feature_registry.py` via `src/core/config.py`.
 
-### Final Cohort
-- **File**: `data/metadata/subject_ids_1015.txt`
-- **Count**: 1,015 subjects
-- **Composition**: 
-  - ASD: 486 subjects (47.9%)
-  - Control (TYP): 514 subjects (50.6%)
-  - Unknown/excluded: ~85–90 subjects
+## Source Datasets
 
-### Exclusion Summary
-| Step | Excluded | Cumulative | Reason |
-|------|----------|-----------|--------|
-| Download | ~50–100 | 50–100 | Data availability, corruption, bad download |
-| Atlas validation | 5–10 | 55–110 | Missing/malformed ROI data |
-| Dead lobe filter | 15–20 | 70–130 | Entire lobe missing spatial features |
-| Harmonization | 0 | 70–130 | NaN/Inf in features (pre-filtered) |
-| Total excluded | ~85–115 | ~85–115 | — |
-| **Final cohort** | — | **1,015** | — |
+- Imaging source: ABIDE I resting-state fMRI from the public FCP-INDI bucket
+- Phenotype source: `data/processed/Phenotypic_V1_0b_preprocessed1.csv`
+- Atlas source: `data/raw/atlases/AAL3v1.nii`
 
----
+## Directory-Level Data Flow
 
-## Inclusion/Exclusion Criteria
+### Raw and intermediate pools
 
-### Inclusion Criteria
-1. ✅ Diagnosis group: ASD or Control (TYP)
-2. ✅ Successful download from ABIDE S3
-3. ✅ 7 z-slices extracted successfully (ALFF percentiles [0.21, 0.30–0.80])
-4. ✅ Atlas overlaps with ROI extraction (at least 150 of 170 AAL3 ROIs detected)
-5. ✅ Spatial features complete for ≥9 brain lobes (gates on region-of-interest detection)
-6. ✅ No dead lobes (entire lobe missing post-spatial-extraction)
-7. ✅ Temporal features complete and finite (no NaN/Inf)
+- `data/images/` - exported ALFF PNG slices used for detection and labeling
+- `data/processed/time_series/` - canonical pre-split time-series pool (legacy-compatible fallback logic exists)
+- `data/metadata/` - manifests and feature tables
 
-### Exclusion Criteria
-1. ❌ Diagnosis = "Other" or blank
-2. ❌ Failed download or corrupted nifti file
-3. ❌ <7 z-slices extracted (insufficient spatial coverage)
-4. ❌ <150 of 170 AAL3 ROIs detected after atlas masking
-5. ❌ <9 lobes with spatial features (failed YOLO ROI detection on multiple lobes)
-6. ❌ Dead lobe: entire lobe missing YOLO detections (0 detections in lobe)
-7. ❌ Any temporal feature NaN/Inf after extraction
+### Split datasets
 
----
+- `data/final/train/`
+- `data/final/val/`
+- `data/final/test/`
 
-## Data Curation Pipeline
+Each split contains:
 
-### Stage 1: Download and Validation
-```
-data/final/{train,val,test}/
-├── <subject_id>
-│   └── alff_mni_3mm_z_slices.npy  (7 z-slices × 192×144 images)
-└── ...
-```
+- `images/` (`*_z*.png`)
+- `labels/` (YOLO txt labels)
+- `time_series/` (`*_ts.npy`, `*_roi_labels.npy`)
 
-**Validation** (`src/validation/audit_check.py`)
-- ✅ File exists and readable
-- ✅ Shape matches expected (7, 192, 144)
-- ✅ No NaN/Inf in raw array
+### Processed graph artifacts
 
-**Output**: `data/metadata/download_log.csv` with per-subject success/failure
+- `data/processed/causal_graphs/` - base subject graphs (`<subject>_graph.pt`)
+- `data/processed/causal_graphs_multiview/` - optional multiview packages (`<subject>/multiview_graphs.pt`)
 
-### Stage 2: Atlas Overlap Check
-```
-src/validation/atlas_validator.py
-├── Load AAL3 atlas (170 ROIs, standard MNI 3mm space)
-├── For each subject's fMRI:
-│   └── Count voxels > threshold per ROI
-└── Filter: ≥150 of 170 ROIs must have ≥1 voxel
-```
+## Manifest And Split Contract
 
-**Purpose**: Ensure fMRI registration was successful; subjects with poor alignment fail here.
+- Manifest path: `data/metadata/master_manifest.csv`
+- Required training columns include `subject_id`, `split`, `DX_GROUP`, `SITE_ID`, and `cv_fold`
+- `split.py` supports:
+  - standard stratified train/val/test split
+  - optional site-stratified CV fold regeneration (`--site-stratified-cv`)
 
-**Diagnostic Output**
-```
-Subject CMU_a_0050642:
-  Atlas coverage: 168/170 ROIs detected
-  ROI min signal: 12 voxels
-  ROI max signal: 1043 voxels
-  Status: PASS
-```
+## Feature Artifacts
 
-### Stage 3: Spatial Feature Extraction
-```
-src/features/extract_spatial.py
-├── Load downloaded fMRI + YOLO pretrained weights
-├── For each subject:
-│   └── Run YOLO inference on 7 z-slices
-│   └── Extract: (x, y, z_depth, size) per lobe
-└── Filter: ≥9 of 12 lobes with detections
-```
+### Temporal features
 
-**Gating**
-```python
-SPATIAL_MIN_REQUIRED_REGIONS = 9  # ≥9 lobes with ≥1 YOLO detection
-```
+- File: `data/metadata/node_attributes_temporal.csv`
+- Producer: `src/features/extract_temporal.py`
+- Column pattern: `roi{1..170}_{feature_name}`
+- Frequency behavior is Nyquist-aware via `ACTIVE_FREQ_BANDS` and unreliable-band zeroing
 
-**Dead Lobe Detection**
-```python
-for lobe_id in range(NUM_LOBES):
-	if lobe_features[lobe_id].all() == 0:  # No detections in lobe
-		subject_status = "DEAD_LOBE"
-		exclude_subject = True
-```
+### Spatial features
 
-### Stage 4: Temporal Feature Extraction
-```
-src/features/extract_temporal.py
-├── Load 170-ROI AAL3 time series (T=150 for TR=2s scans)
-├── Aggregate to 12 lobes (PCA eigenvariate)
-├── Compute 20 temporal features per lobe:
-│   ├── 8 basic (mean, std, skew, kurtosis, psd, mssd, range, autocorr)
-│   └── 12 frequency (5 bands × 2 + spectral_entropy + phase_std)
-└── Filter: No NaN/Inf allowed
-```
+- File: `data/metadata/node_features_3d.csv`
+- Producer: `src/features/extract_spatial.py` (YOLO path) or `src/features/extract_spatial_atlas.py` (atlas fallback path)
+- Lobe-level features per region are `x`, `y`, `z_depth`, `size`
+- `conf_std` and `detection_count` are not consumed by the model feature tensor
 
-**Quality Check**
-```python
-temporal_features = extract_temporal_all(subjects)
+### Harmonized outputs
 
-# Flag any NaN/Inf
-bad_idx = temporal_features.isna().any(axis=1) | temporal_features.isinf().any(axis=1)
-if bad_idx.any():
-	logger.warning(f"Found {bad_idx.sum()} subjects with NaN/Inf in temporal features")
-```
+- Main harmonized temporal export: `data/metadata/node_attributes_harmonized.csv`
+- Per-fold harmonization exports: `data/metadata/harmonized_folds_cv/harmonized_fold_<k>.csv`
+- Harmonized spatial export: `data/metadata/node_features_3d_harmonized.csv`
+- Producer: `src/features/fold_safe_harmonization.py`
 
-### Stage 5: Fold-Safe Harmonization
-```
-src/features/fold_safe_harmonization.py
-├── For each of 5 CV folds:
-│   ├── Fit ComBat on train subjects only
-│   ├── Apply to val/test subjects
-│   └── Per-fold output: harmonized_fold_k.csv
-└── Output: NODE_ATTRIBUTES_HARMONIZED.csv (global, no leakage)
-```
+## Feature Schema And Ordering
 
-**NaN Insertion Check**
-```python
-# Harmonization can create new NaN if it encounters
-# unseen SITE or categorical covariate value
-harmonized_df = harmonize_fold(train_features, val_features)
-if harmonized_df.isna().any().any():
-	logger.warning(f"ComBat introduced NaN; {n} subjects affected")
-	# These subjects are effectively excluded from downstream use
-```
+The model channel layout is generated from `FEATURE_GROUPS` in `src/core/feature_registry.py`:
 
-### Stage 6: Causal Graph Construction
-```
-src/features/construct_causal.py
-├── For each subject:
-│   ├── Load 12-lobe harmonized time series
-│   ├── Compute Granger causality (lag 1-5)
-│   ├── Build directed adjacency (12×12)
-│   └── Adaptive sparsification (keep top 30% edges)
-└── Filter: ≥12 edges per graph (minimum connectivity)
-```
+1. temporal
+2. frequency
+3. internal
+4. spatial
 
-**Dead Graph Detection**
-```python
-num_edges = (adj_matrix != 0).sum()
-if num_edges < MIN_EDGES_PER_GRAPH:  # MIN = 12
-	logger.warning(f"Subject {sub_id}: weak connectivity ({num_edges} edges)")
-	# Graph still used, but flagged as low-confidence
-```
+`ALL_FEATURE_NAMES` defines ordering and `GNN_IN_CHANNELS` is computed from that ordering.
 
----
+Important implications:
 
-## Subject ID Format and Site Information
+- feature count is dynamic when frequency-band configuration changes
+- any feature engineering update must preserve ordering consistency across extraction, dataset assembly, and model loading
 
-### ID Convention
-Format: `<SITE>_<COHORT>_<SUBJECT>`
+## Graph Construction Contract
 
-Examples:
-- `CMU_a_0050642` → CMU site, cohort a, subject ID 0050642
-- `NYU_0050952` → NYU site, no cohort suffix
-- `Leuven_1_0050682` → Leuven, site 1, subject ID
+Producer: `src/features/construct_causal.py`
 
-### Site Roster (20 total)
-| Site | Count | Abbr |
-|------|-------|------|
-| CMU (Carnegie Mellon) | 24 | CMU |
-| Caltech | 24 | Caltech |
-| KKI (Kennedy Krieger Institute) | 77 | KKI |
-| Leuven | 57 | Leuven_1, Leuven_2 |
-| Max Planck Munich | 54 | MaxMun_* |
-| NYU (New York University) | 196 | NYU |
-| OHSU (Oregon Health & Science) | 25 | OHSU |
-| Olin | 36 | Olin |
-| Pitt (University of Pittsburgh) | 87 | Pitt |
-| SBL (Schulich Brain Lab) | 29 | SBL |
-| SDSU (San Diego State) | 29 | SDSU |
-| Stanford | 47 | Stanford |
-| Trinity | 40 | Trinity |
-| UCLA | 76 | UCLA_1, UCLA_2 |
-| UM (University of Michigan) | 117 | UM_1, UM_2 |
-| USM | 53 | USM |
-| Yale | 64 | Yale |
+Per-subject graph package includes at least:
 
----
+- adjacency (`adj`)
+- internal lobe features (`internal_features`)
+- zero-lobe mask (`zero_lobe_mask`)
+- confidence and p-value matrices
+- selected lag metadata
+- sparsification diagnostics
 
-## Subject ID File Usage
+Graph quality assumptions enforced downstream:
 
-### File Location
-```
-data/metadata/subject_ids_1015.txt
-```
+- non-empty graph edge set
+- valid finite node and edge features
 
-### Format
-Plain text, one subject ID per line, no header.
+## Dataset Assembly Contract
 
-```
-CMU_a_0050642
-CMU_a_0050646
-CMU_a_0050647
-...
-```
+`ABIDECausalDataset` (`src/features/graph_factory.py`) joins:
 
-### Loading
-```python
-import pandas as pd
+- harmonized temporal features
+- graph-internal features
+- spatial features (harmonized spatial CSV preferred when present)
 
-# Read subject IDs
-subject_ids = pd.read_csv('data/metadata/subject_ids_1015.txt', header=None)[0].tolist()
-print(f"Total subjects: {len(subject_ids)}")
+to construct `torch_geometric.data.Data` objects with:
 
-# Filter by site
-nyc_subjects = [s for s in subject_ids if 'NYU' in s]
-print(f"NYU subjects: {len(nyc_subjects)}")
-```
+- `x`: `(NUM_LOBES, GNN_IN_CHANNELS)`
+- `edge_index`: `(2, E)`
+- `edge_attr`: `(E, 1)`
+- covariates (`site_id`, `age`, `sex`, `fiq`)
 
-### Validation Against Manifest
-```python
-import pandas as pd
+## Data Quality Gates
 
-# Load master manifest
-manifest = pd.read_csv('data/metadata/master_manifest_1015.csv')
-subject_ids = pd.read_csv('data/metadata/subject_ids_1015.txt', header=None)[0]
+Key gates present in source:
 
-# Verify consistency
-manifest_ids = set(manifest['sub_id'].unique())
-file_ids = set(subject_ids)
+- post-download integrity checks for PNG/NPY validity (`src/validation/pipeline_checks.py`)
+- subject drop-rate guard and graph validity checks in `ABIDECausalDataset`
+- minimum edge and dead-lobe repair logic in graph construction
+- fold-safe harmonization with unseen-site policy controls
 
-assert file_ids == manifest_ids, "Mismatch between IDs file and manifest!"
-print(f"✓ subject_ids_1015.txt consistent with manifest ({len(file_ids)} subjects)")
-```
+These gates are designed to fail early or emit explicit warnings when data quality is insufficient.
 
----
+## Rebuild Sequence
 
-## Reproducibility and Data Refresh
+To rebuild data artifacts stage-by-stage:
 
-### Replicating Curation
 ```bash
-# Step 1: Download from ABIDE
 python -m src.data.abide_download
-
-# Step 2: Validate and filter
-python -m src.validation.audit_check
-
-# Step 3: Extract spatial features and apply gating
+python -m src.data.split
+python -m src.pipelines.generate_labels
 python -m src.features.extract_spatial
-
-# Step 4: Extract temporal and check for NaN/Inf
-python -m src.features.extract_temporal
-
-# Step 5: Export final subject list
-python -c "
-import pandas as pd
-from src.core.config import MASTER_MANIFEST
-
-manifest = pd.read_csv(MASTER_MANIFEST)
-final_subjects = manifest['sub_id'].tolist()
-
-with open('data/metadata/subject_ids_1015.txt', 'w') as f:
-	for sub in sorted(final_subjects):
-		f.write(f'{sub}\n')
-
-print(f'Exported {len(final_subjects)} subjects')
-"
+python -m src.features.extract_temporal --n-jobs -1
+python -m src.features.fold_safe_harmonization
+python -m src.features.construct_causal --n-jobs -1
 ```
 
-### Version Tracking
-Current version: **subject_ids_1015.txt** (1,015 subjects, April 19, 2026)
-- Canonical baseline: 1,031 subjects (included 16 subjects later excluded due to dead lobes)
-- Previous iteration: 1,015 subjects with stricter lobe requirements
+Or run the orchestrator:
 
----
-
-## Data Quality Metrics
-
-### Per-Subject Completeness
-| Metric | Min | Mean | Max | Notes |
-|--------|-----|------|-----|-------|
-| ROIs detected (of 170) | 151 | 168.4 | 170 | Atlas overlap |
-| Lobes with spatial features (of 12) | 9 | 11.8 | 12 | YOLO coverage |
-| Temporal features (of 20) | 20 | 20.0 | 20 | Never partial |
-| Graph edges | 12 | 34.4 | 78 | After sparsification |
-
-### Exclusion Impact by Site
-
-| Site | Original | Excluded | Final | Exclusion Rate |
-|------|----------|----------|-------|-----------------|
-| NYU | 210 | 14 | 196 | 6.7% |
-| UM | 125 | 8 | 117 | 6.4% |
-| Pitt | 92 | 5 | 87 | 5.4% |
-| Leuven | 62 | 5 | 57 | 8.1% |
-| KKI | 80 | 3 | 77 | 3.75% |
-
----
-
-## Related Files
-- `data/metadata/master_manifest_1015.csv` — subject metadata (diagnosis, age, sex, site)
-- `data/metadata/download_log.csv` — per-subject download success/failure
-- `data/metadata/active_subject_ids.txt` — subjects passing all validation (alternate naming)
-- `src/validation/audit_check.py` — post-download validation
-- `src/features/extract_spatial.py` — spatial feature gating logic
-- `src/features/extract_temporal.py` — temporal feature NaN detection
-- `CHANGELOG.md` — data curation history
-
----
-
-## References
-- `.github/copilot-instructions.md` — validation patterns
-- `docs/data.md` — data pipeline overview
-- `docs/architecture.md` — system design
-- `src/core/config.py` — SPATIAL_MIN_REQUIRED_REGIONS, MASTER_MANIFEST
-# Data Documentation
-
-## Dataset Source
-- ABIDE I (Autism Brain Imaging Data Exchange)
-- Multi-site resting-state fMRI + phenotypic metadata
-
-## Dataset Snapshot
-| Property | Value |
-|---|---|
-| Effective subjects used in training/evaluation | 1031 (with exclusions applied) |
-| Typical train / val / test split | 719 / 152 / 155 |
-| Multi-site coverage | 20 sites |
-| Atlas | AAL3v1, ROI-level signals aggregated to 12 lobes |
-| Bandpass defaults | 0.01 to 0.15 Hz |
-| TR regime | Site-specific (about 1.5s to 3.0s) |
-
-## Brain Region Set (12 Lobes)
-- Frontal_Superior
-- Frontal_Orbital
-- Motor_Premotor
-- Insula
-- Cingulate
-- Limbic
-- Occipital
-- Parietal
-- Temporal
-- Subcortical
-- Cerebellum
-- Brainstem
-
-## Raw Inputs
-- Resting-state fMRI NIfTI volumes
-- Phenotype CSV including diagnosis and demographics
-- AAL3 atlas for ROI extraction and lobe mapping
-
-## Preprocessing Summary
-1. Download and extraction
-- Subject-level time series extraction from atlas ROIs.
-- 2D slice export for ROI detector training.
-
-2. Split protocol
-- Train/validation/test split from manifest.
-- Stratified balancing by diagnosis and site.
-
-3. Feature extraction
-- Temporal features from ROI/lobe signals.
-- Spatial features from ROI detector output or atlas fallback.
-
-4. Harmonization
-- ComBat harmonization with fold-safe fitting.
-- Diagnosis retained as protected covariate.
-
-5. Graph construction
-- Directed causal adjacency per subject.
-- Sparsification with minimum edge safeguards.
-
-## Feature Schema
-Current feature channels are defined in src/core/feature_registry.py and ordered as:
-1. Temporal
-2. Frequency
-3. Internal
-4. Spatial
-
-Notes:
-- Spatial proxy features linked to site leakage have been treated carefully in recent refactors.
-- Gamma-band handling is Nyquist-aware and controlled through config flags.
-- Always use ALL_FEATURE_NAMES and GNN_IN_CHANNELS from config exports.
-
-## Data Splits
-- Typical split: 70/15/15 (train/val/test)
-- Cross-validation: 5 folds on train set
-- Fold assignments are consumed by fold-safe harmonization and 5-fold model training.
-
-## Key Data Artifacts
-- data/metadata/master_manifest.csv
-- data/metadata/node_attributes_temporal.csv
-- data/metadata/node_attributes_harmonized.csv
-- data/metadata/harmonized_folds_cv/harmonized_fold_<k>.csv
-- data/processed/causal_graphs/<subject>_graph.pt
-- data/metadata/node_features_3d.csv
-- data/metadata/node_features_3d_harmonized.csv
-
-## Augmentation Notes
-- Medical constraints are enforced in detector augmentation settings.
-- Left-right preserving configuration is required for anatomical consistency.
-
-## Exclusions and Quality Controls
-- Subjects with severe missingness or degenerate graphs are excluded.
-- Integrity checks run before training to prevent silent data corruption.
-- Dead-lobe and NaN-heavy subjects are tracked and filtered through config-controlled policies.
-
-## Compliance Notes
-- ABIDE is publicly available research data.
-- No patient-identifying data is stored in this repository.
+```bash
+python src/run_pipeline.py --auto
+```

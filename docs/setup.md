@@ -1,59 +1,127 @@
-# Setup Guide
+# Setup
 
 ## Prerequisites
-- OS: Linux or macOS recommended
-- Python: 3.10+
-- GPU: CUDA-capable GPU recommended for training (11GB+ VRAM preferred)
-- RAM: 32GB recommended for full pipeline and harmonization stages
 
-## 1) Clone and Create Environment
+- OS: Linux is the primary supported environment in this repository
+- Python: 3.10+ recommended
+- Optional GPU: CUDA-capable GPU for faster training/evaluation
+- Disk: enough space for ABIDE artifacts and generated graphs/results
+
+## 1) Create And Activate A Virtual Environment
+
 ```bash
-git clone <repo-url>
-cd Neuro-CXG
 python -m venv .venv
 source .venv/bin/activate
 ```
 
 ## 2) Install Dependencies
+
 ```bash
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## 3) Verify Configuration and Environment
+`requirements.txt` is pinned and includes:
+
+- PyTorch / torchvision / torchaudio
+- torch-geometric
+- nilearn / nibabel / neuroHarmonize
+- ultralytics (YOLO)
+- scikit-learn / scipy / statsmodels
+- captum (explainability)
+- pytest / pytest-cov
+
+## 3) Validate The Runtime Environment
+
 ```bash
 python -c "from src.core.config import validate_environment; validate_environment()"
 ```
 
-## 4) Optional: Run Unit Tests
-```bash
-pytest tests/unit/
-```
+This check validates core paths and lobe mapping invariants before pipeline execution.
 
-## 5) Optional: End-to-End Dry Run
+## 4) Run A Dry Pipeline Plan
+
 ```bash
 python src/run_pipeline.py --dry-run
 ```
 
-## Hardware Notes
-- CPU-only training is possible but much slower.
-- I/O-heavy stages (download, extraction) benefit from SSD storage.
-- If memory pressure occurs, run stages separately instead of full auto mode.
+Dry-run confirms stage planning logic, skip decisions, and current artifact readiness without executing stages.
 
-## Common Setup Issues
-1. Torch/CUDA mismatch
-- Symptom: torch cannot detect GPU.
-- Fix: reinstall torch build compatible with your CUDA runtime.
+## 5) Optional Fast Sanity Checks
 
-2. Missing atlas file
-- Symptom: atlas validation fails.
-- Fix: check data/raw/atlases and rerun atlas validation stage.
+```bash
+pytest tests/unit/
+python -m src.features.extract_temporal --n-jobs 1 --no-frequency
+```
 
-3. neuroHarmonize install issues
-- Symptom: harmonization import error.
-- Fix: reinstall requirements and ensure consistent Python environment.
+## First Real Run Patterns
 
-## Reproducibility Checklist
-- Keep requirements pinned.
-- Use config constants from src/core/config.py rather than hardcoded values.
-- Keep seeds fixed in training scripts.
+```bash
+# Full non-interactive execution
+python src/run_pipeline.py --auto
+
+# Reuse existing download/split artifacts
+python src/run_pipeline.py --auto --skip-download --skip-split
+
+# Analysis stages only (requires trained checkpoints)
+python src/run_pipeline.py --analysis-only
+```
+
+## Troubleshooting
+
+### 1) CUDA not detected
+
+Symptom:
+
+- `torch.cuda.is_available()` is false
+
+Actions:
+
+- verify NVIDIA driver and CUDA runtime
+- ensure the active environment has the expected torch build
+- continue on CPU for functional testing if needed
+
+### 2) Missing training prerequisites
+
+Symptom:
+
+- training fails with missing harmonized fold files
+
+Actions:
+
+- run harmonization stage:
+
+```bash
+python -m src.features.fold_safe_harmonization
+```
+
+- verify files exist under `data/metadata/harmonized_folds_cv/`
+
+### 3) Atlas or manifest errors
+
+Symptom:
+
+- atlas validation or split/manifests fail
+
+Actions:
+
+- verify `data/raw/atlases/AAL3v1.nii`
+- verify `data/processed/Phenotypic_V1_0b_preprocessed1.csv`
+- rerun split/manifest stages through the orchestrator
+
+### 4) YOLO weights not found for spatial extraction
+
+Symptom:
+
+- `extract_spatial.py` reports missing model weights
+
+Actions:
+
+- run label generation and ROI training stages
+- or switch to atlas-based spatial extraction path for debugging
+
+## Reproducibility Rules
+
+- Import constants from `src/core/config.py`; avoid hardcoded paths and dimensions.
+- Keep `FEATURE_GROUPS`, `ALL_FEATURE_NAMES`, and `GNN_IN_CHANNELS` in sync when changing features.
+- Keep fold-safe behavior intact (train-fit/apply discipline in harmonization and training).

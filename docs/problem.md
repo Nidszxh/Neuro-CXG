@@ -1,55 +1,73 @@
 # Problem Statement
 
-## Goal
-Build a reproducible, interpretable pipeline for classifying Autism Spectrum Disorder (ASD) vs Control from resting-state fMRI using causal graph representations and graph neural networks.
+## Objective
 
-## Why It Matters
-- Clinical ASD diagnosis is still mostly behavioral and expert-driven.
-- Neuroimaging can add objective biomarkers, but multi-site noise and small sample sizes make robust modeling difficult.
-- Interpretable models are needed for scientific trust, not only classification accuracy.
+Develop a reproducible and interpretable pipeline that classifies Autism Spectrum Disorder (ASD) vs Control from resting-state fMRI using directed causal brain graphs and graph neural networks.
 
-## Problem Definition
-Given subject-level fMRI time series and phenotypic metadata from ABIDE I, predict binary diagnosis:
+## Why This Problem Is Hard
+
+- ASD diagnosis is clinically valuable but difficult to anchor to robust imaging biomarkers.
+- ABIDE is multi-site, so scanner/protocol variation can dominate signal if not controlled.
+- Dataset size is modest for deep learning, increasing overfitting risk.
+- Scientific usefulness requires explainability, not only high aggregate metrics.
+
+## Formal Task
+
+Given ABIDE I subject-level fMRI time series and phenotypic metadata, predict binary diagnosis:
+
 - Control -> class 0
 - ASD -> class 1
 
-The system must:
-1. Convert high-dimensional ROI signals into anatomically meaningful graph inputs.
-2. Control site/scanner confounds without removing diagnosis signal.
-3. Provide explainable outputs (important regions/edges/features).
+The pipeline must:
+
+1. Transform high-dimensional ROI activity into anatomically meaningful graph inputs.
+2. Reduce site/scanner confounds while preserving diagnosis-relevant variation.
+3. Produce interpretable outputs at node, edge, and feature levels.
 
 ## Scope
+
 In scope:
-- ABIDE I data pipeline (download, split, feature extraction, graph construction, training, evaluation, explainability).
-- 12-region lobe-level causal graphs.
-- 5-fold cross-validation and held-out test evaluation.
+
+- End-to-end ABIDE I workflow (download, split, feature extraction, harmonization, graph construction, training, evaluation, explainability, result analysis).
+- 12-lobe graph representation derived from atlas ROI signals.
+- 5-fold CV plus held-out test evaluation.
 
 Out of scope:
-- Clinical deployment and bedside decision support.
-- Multi-disorder classification beyond ASD vs Control.
-- Real-time inference from raw MRI scanners.
 
-## Constraints
-- Multi-site heterogeneity (20 sites, varying TR and scanner protocols).
-- Limited subject count for deep learning.
-- Strict leakage prevention requirements in preprocessing/harmonization.
-- Neuroanatomical consistency requirements (no left-right flips in data augmentation).
+- Clinical deployment or bedside decision support.
+- Multi-disorder diagnosis beyond ASD vs Control.
+- Real-time scanner-side inference.
 
-## Assumptions
-- ABIDE labels are sufficiently reliable for supervised learning.
-- Lobe-level aggregation retains enough signal for ASD discrimination.
-- Granger/lagged directed connectivity captures useful temporal interaction structure.
+## Non-Negotiable Constraints
+
+- Multi-site heterogeneity across 20 sites (scanner and protocol variability).
+- Strict leakage prevention for harmonization, fold assignment, and threshold usage.
+- Anatomical fidelity constraints for augmentation (no left/right flips or rotations that break neuroanatomical consistency).
+- Reproducibility requirements (seeded runs, deterministic stage contracts, config-driven constants).
+
+## Working Assumptions
+
+- ABIDE labels are reliable enough for supervised learning at research quality.
+- Lobe-level aggregation retains useful ASD-discriminative information.
+- Directed temporal interaction estimates (for example Granger-based) provide learnable graph structure.
 
 ## Success Criteria
-Primary:
-- Stable cross-validation AUC and statistically significant held-out test AUC.
-- Reproducible pipeline execution from config-driven stages.
 
-Secondary:
-- Explainability outputs align with known ASD-related networks.
+Primary criteria:
+
+- Stable fold-level validation behavior with statistically meaningful held-out test performance.
+- Fully reproducible stage execution from configuration and documented artifacts.
+
+Secondary criteria:
+
+- Explainability outputs that are coherent with known ASD-relevant networks.
 - Clear diagnostics for data quality, graph quality, and site effects.
+- Operational robustness (graceful fallback behavior for low-quality inputs).
 
-## Current Status Snapshot (March 2026 artifacts)
-- CV AUC: ~0.74 (5-fold)
-- Test AUC: ~0.65 with permutation significance
-- Known remaining gap: CV-test generalization difference likely tied to residual site effects
+## Current Status (Run-Dependent)
+
+- Canonical project references report CV around 0.74 AUC and test around 0.65 AUC.
+- Recent runs show variability by configuration and artifact set, especially around site generalization.
+- The dominant open risk remains CV-test gap driven by residual site effects and threshold/reporting alignment.
+
+Use run-specific artifacts as source of truth for final numbers, and avoid mixing metrics from different run directories.
