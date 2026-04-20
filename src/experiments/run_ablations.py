@@ -36,7 +36,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score, f1_score
 from torch_geometric.nn import global_mean_pool
 
@@ -264,7 +263,31 @@ def run_kfold(
     n_asd = labels.count(1)
     logger.info(f"  Total subjects: {len(labels)}  (Control={n_ctrl}, ASD={n_asd})")
 
-    skf = StratifiedKFold(n_splits=folds, shuffle=True, random_state=42)
+    manifest = None
+    if hasattr(dataset, "manifest"):
+        manifest = dataset.manifest
+    elif hasattr(dataset, "ds") and hasattr(dataset.ds, "manifest"):
+        manifest = dataset.ds.manifest
+
+    if manifest is None or "cv_fold" not in manifest.columns:
+        raise ValueError(
+            "Ablations require manifest-defined cv_fold splits for site-stratified protocol. "
+            "Run split.py first to generate predefined folds."
+        )
+
+    cv_folds = manifest["cv_fold"].to_numpy()
+    if cv_folds.min() < 0 or cv_folds.max() >= folds:
+        raise ValueError(
+            f"Invalid cv_fold values: found [{cv_folds.min()}, {cv_folds.max()}], "
+            f"expected [0, {folds - 1}]."
+        )
+
+    cv_splits = []
+    for fold_id in range(folds):
+        train_idx = np.where(cv_folds != fold_id)[0]
+        val_idx = np.where(cv_folds == fold_id)[0]
+        cv_splits.append((train_idx, val_idx))
+
     fold_aucs: List[float] = []
     fold_f1s: List[float] = []
 
@@ -291,7 +314,7 @@ def run_kfold(
     else:
         criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
 
-    for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(labels)), labels)):
+    for fold, (train_idx, val_idx) in enumerate(cv_splits):
         t0 = time.time()
 
         train_data = [dataset[i] for i in train_idx if dataset[i] is not None]

@@ -379,11 +379,81 @@ class CausalBrainGNN(torch.nn.Module):
 
     def _encode(self, x, edge_index, edge_attr, batch, site_id, age, sex, fiq):
         """Shared encoder body used by both forward() and _forward_with_embedding()."""
+        preprocessing_mode = str(getattr(self, "_preprocessing_mode", "legacy_global")).strip().lower()
+        site_norm_mode = str(getattr(self, "_site_normalization_mode", "global")).strip().lower()
+
+        # Optional fold-internal MI feature mask loaded from checkpoint.
+        feature_mask = getattr(self, "_feature_mask", None)
+        if feature_mask is not None:
+            try:
+                mask_t = torch.as_tensor(feature_mask, dtype=x.dtype, device=x.device).view(1, -1)
+                if mask_t.shape[1] == x.shape[1]:
+                    x = x * mask_t
+            except Exception:
+                pass
+
+        # Optional fold-internal within-site normalization loaded from checkpoint.
+        site_means = getattr(self, "_site_feature_means", None)
+        site_stds = getattr(self, "_site_feature_stds", None)
+        site_norm_applied = False
+        if (
+            preprocessing_mode != "legacy_global"
+            and site_norm_mode == "within_site"
+            and isinstance(site_means, dict)
+            and isinstance(site_stds, dict)
+            and site_means
+            and site_stds
+            and site_id is not None
+        ):
+            try:
+                site_vec = site_id.view(-1)
+                if site_vec.numel() > 0:
+                    x_norm = x.clone()
+                    global_mean = getattr(self, "_feature_mean", None)
+                    global_std = getattr(self, "_feature_std", None)
+                    global_mean_t = None
+                    global_std_t = None
+                    if global_mean is not None and global_std is not None:
+                        global_mean_t = torch.as_tensor(global_mean, dtype=x.dtype, device=x.device).view(1, -1)
+                        global_std_t = torch.as_tensor(global_std, dtype=x.dtype, device=x.device).view(1, -1).clamp_min(1e-6)
+                        if global_mean_t.shape[1] != x.shape[1] or global_std_t.shape[1] != x.shape[1]:
+                            global_mean_t = None
+                            global_std_t = None
+
+                    unique_sites = torch.unique(site_vec).tolist()
+                    for sid_val in unique_sites:
+                        sid_int = int(sid_val)
+                        mean = site_means.get(sid_int)
+                        std = site_stds.get(sid_int)
+                        if mean is None or std is None:
+                            mean_t = global_mean_t
+                            std_t = global_std_t
+                        else:
+                            mean_t = torch.as_tensor(mean, dtype=x.dtype, device=x.device).view(1, -1)
+                            std_t = torch.as_tensor(std, dtype=x.dtype, device=x.device).view(1, -1).clamp_min(1e-6)
+
+                        if mean_t is None or std_t is None:
+                            continue
+                        if mean_t.shape[1] != x.shape[1] or std_t.shape[1] != x.shape[1]:
+                            continue
+                        node_mask = (site_vec[batch] == sid_int)
+                        if node_mask.any():
+                            x_norm[node_mask] = (x_norm[node_mask] - mean_t) / std_t
+                            site_norm_applied = True
+                    x = x_norm
+            except Exception:
+                pass
+
         # Optional fold-wise feature scaling loaded from checkpoint.
         # Keeps inference-time preprocessing consistent with train-fold scaling.
         feature_mean = getattr(self, "_feature_mean", None)
         feature_std = getattr(self, "_feature_std", None)
-        if feature_mean is not None and feature_std is not None:
+        should_apply_global = not (
+            preprocessing_mode != "legacy_global"
+            and site_norm_mode == "within_site"
+            and site_norm_applied
+        )
+        if should_apply_global and feature_mean is not None and feature_std is not None:
             try:
                 mean_t = torch.as_tensor(feature_mean, dtype=x.dtype, device=x.device).view(1, -1)
                 std_t = torch.as_tensor(feature_std, dtype=x.dtype, device=x.device).view(1, -1).clamp_min(1e-6)

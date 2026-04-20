@@ -91,6 +91,7 @@ from src.core.config import (
     NUM_LOBES,
     RESULTS_DIR,
     EVAL_THRESHOLD_POLICY,
+    EVAL_FIXED_THRESHOLD,
 )
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
@@ -488,14 +489,18 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
     )
 
     policy = str(EVAL_THRESHOLD_POLICY).strip().lower()
-    if policy not in {"f1", "youden"}:
+    if policy not in {"f1", "youden", "fixed"}:
         logger.warning(
             "Unknown EVAL_THRESHOLD_POLICY=%r; falling back to 'f1'",
             EVAL_THRESHOLD_POLICY,
         )
         policy = "f1"
 
-    if policy == "youden":
+    if policy == "fixed":
+        threshold = float(np.clip(EVAL_FIXED_THRESHOLD, 0.0, 1.0))
+        metrics = _full_metrics(ens_probs, labels, threshold=threshold)
+        logger.info("  Fixed threshold: %.4f", threshold)
+    elif policy == "youden":
         threshold = youden_thr
         metrics = youden_metrics
     else:

@@ -80,6 +80,7 @@ from src.core.config import (
     NUM_LOBES,
     RESULTS_DIR,
     EVAL_THRESHOLD_POLICY,
+    EVAL_FIXED_THRESHOLD,
 )
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
@@ -487,8 +488,13 @@ def _resolve_analysis_threshold(
                 pass
 
     policy = str(threshold_policy).strip().lower()
-    if policy not in {"f1", "youden"}:
+    if policy not in {"f1", "youden", "fixed"}:
         policy = "f1"
+
+    if policy == "fixed":
+        thr = float(np.clip(EVAL_FIXED_THRESHOLD, 0.0, 1.0))
+        logger.info("  Using fixed deployment threshold from config: %.4f", thr)
+        return thr
 
     fallback_threshold = float(np.mean(fold_thresholds)) if fold_thresholds else 0.5
 
@@ -1184,9 +1190,9 @@ def main() -> None:
     threshold_policy = str(
         eval_meta.get("threshold_policy", str(EVAL_THRESHOLD_POLICY).strip().lower())
     ).strip().lower()
-    if threshold_policy not in {"f1", "youden"}:
+    if threshold_policy not in {"f1", "youden", "fixed"}:
         threshold_policy = str(EVAL_THRESHOLD_POLICY).strip().lower()
-        if threshold_policy not in {"f1", "youden"}:
+        if threshold_policy not in {"f1", "youden", "fixed"}:
             threshold_policy = "f1"
 
     fold_aucs = _ensemble_fold_aucs()

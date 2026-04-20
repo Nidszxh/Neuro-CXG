@@ -6,7 +6,7 @@ from pathlib import Path
 from tqdm import tqdm
 from typing import Any, Dict, Tuple, Optional
 from joblib import Parallel, delayed
-from scipy.stats import pearsonr, f as f_distribution
+from scipy.stats import pearsonr, f as f_distribution, t as t_distribution
 import sys
 
 # Setup paths
@@ -26,6 +26,13 @@ from src.core.config import (
     RIDGE_GRANGER_HIGH_CONF_P_THRESHOLD,
     RIDGE_GRANGER_P_PRUNE_THRESHOLD,
     RIDGE_GRANGER_HYBRID_BETA,
+    PARTIAL_CORR_GLASSO_ALPHA,
+    PARTIAL_CORR_GLASSO_MAX_ITER,
+    PARTIAL_CORR_GLASSO_TOL,
+    PARTIAL_CORR_MIN_ABS_EDGE,
+    PARTIAL_CORR_MIN_SAMPLES,
+    PARTIAL_CORR_FDR_ENABLED,
+    PARTIAL_CORR_FDR_ALPHA,
     MULTIVIEW_GENERATION_ENFORCE_QUALITY_GATE,
     MULTIVIEW_GENERATION_MAX_ZERO_EDGE_RATE,
     MULTIVIEW_GENERATION_POLICY,
@@ -391,6 +398,182 @@ def _compute_lagged_pearson_multilag(
     }
 
 
+def _partial_corr_zero_payload(device: torch.device) -> Dict[str, torch.Tensor]:
+    """Return an all-zero partial-correlation payload for safe fallbacks."""
+    zeros = torch.zeros(NUM_LOBES, NUM_LOBES, device=device)
+    ones = torch.ones(NUM_LOBES, NUM_LOBES, device=device)
+    return {
+        "weighted_partial_matrix": zeros,
+        "partial_corr_matrix": zeros,
+        "precision_matrix": zeros,
+        "confidence_matrix": zeros,
+        "pvalue_matrix": ones,
+        "fdr_significant_mask": torch.zeros(NUM_LOBES, NUM_LOBES, dtype=torch.bool, device=device),
+        "low_confidence_mask": torch.ones(NUM_LOBES, NUM_LOBES, dtype=torch.bool, device=device),
+    }
+
+
+def _benjamini_hochberg_reject(p_values: np.ndarray, alpha: float) -> np.ndarray:
+    """Return BH rejection mask for a flat vector of p-values."""
+    p = np.asarray(p_values, dtype=np.float64)
+    finite_mask = np.isfinite(p)
+    reject = np.zeros_like(p, dtype=bool)
+    if not finite_mask.any():
+        return reject
+
+    p_valid = np.clip(p[finite_mask], 0.0, 1.0)
+    m = p_valid.size
+    if m == 0:
+        return reject
+
+    order = np.argsort(p_valid)
+    ranked = p_valid[order]
+    thresholds = float(alpha) * (np.arange(1, m + 1) / float(m))
+    passing = ranked <= thresholds
+    if not np.any(passing):
+        return reject
+
+    max_rank = int(np.where(passing)[0].max())
+    cutoff = ranked[max_rank]
+    reject_valid = p_valid <= cutoff
+    reject[np.where(finite_mask)[0]] = reject_valid
+    return reject
+
+
+def _compute_partial_corr_glasso_matrix(
+    ts_lobe: torch.Tensor,
+    alpha: float,
+    max_iter: int,
+    tol: float,
+    min_abs_edge: float,
+    min_samples: int,
+    fdr_enabled: bool,
+    fdr_alpha: float,
+) -> Dict[str, torch.Tensor]:
+    """Estimate sparse partial-correlation edges with GraphicalLasso.
+
+    This method fits a sparse precision matrix (inverse covariance) and converts it
+    to partial correlations:
+
+        rho_ij = -Theta_ij / sqrt(Theta_ii * Theta_jj)
+
+    where Theta is the precision matrix. The resulting adjacency is symmetric and
+    captures conditional dependence rather than temporal precedence.
+    """
+    min_required = max(int(min_samples), NUM_LOBES + 2)
+    if ts_lobe.shape[0] < min_required:
+        logger.warning(
+            "Insufficient timepoints for partial_corr_glasso (%d < %d)",
+            int(ts_lobe.shape[0]),
+            min_required,
+        )
+        return _partial_corr_zero_payload(ts_lobe.device)
+
+    if torch.isnan(ts_lobe).any() or torch.isinf(ts_lobe).any():
+        logger.warning("Input contains NaN/Inf values - returning zero partial-correlation matrix")
+        return _partial_corr_zero_payload(ts_lobe.device)
+
+    ts_mean = ts_lobe.mean(dim=0, keepdim=True)
+    ts_std = ts_lobe.std(dim=0, keepdim=True).clamp_min(1e-6)
+    ts_norm = (ts_lobe - ts_mean) / ts_std
+    ts_np = ts_norm.detach().cpu().numpy().astype(np.float64)
+
+    try:
+        from sklearn.covariance import GraphicalLasso
+
+        glasso = GraphicalLasso(
+            alpha=float(alpha),
+            max_iter=int(max_iter),
+            tol=float(tol),
+            assume_centered=False,
+        )
+        glasso.fit(ts_np)
+        precision_np = np.asarray(glasso.precision_, dtype=np.float64)
+    except Exception as e:
+        logger.warning(f"GraphicalLasso failed ({e}) - returning zero partial-correlation matrix")
+        return _partial_corr_zero_payload(ts_lobe.device)
+
+    if precision_np.shape != (NUM_LOBES, NUM_LOBES):
+        logger.warning(
+            "GraphicalLasso precision shape mismatch (%s) - returning zero matrix",
+            precision_np.shape,
+        )
+        return _partial_corr_zero_payload(ts_lobe.device)
+
+    diag = np.clip(np.diag(precision_np), _CONFIDENCE_EPS, None)
+    denom = np.sqrt(np.outer(diag, diag))
+    partial_np = -precision_np / (denom + _CONFIDENCE_EPS)
+    np.fill_diagonal(partial_np, 0.0)
+    partial_np = np.nan_to_num(partial_np, nan=0.0, posinf=0.0, neginf=0.0)
+
+    abs_partial = np.abs(partial_np)
+    min_abs_edge = float(max(min_abs_edge, 0.0))
+
+    pvalue_np = np.ones((NUM_LOBES, NUM_LOBES), dtype=np.float64)
+    fdr_sig_np = np.zeros((NUM_LOBES, NUM_LOBES), dtype=bool)
+
+    n_samples_eff = int(ts_np.shape[0])
+    if n_samples_eff > NUM_LOBES + 2:
+        dof = max(n_samples_eff - NUM_LOBES, 1)
+        abs_r = np.clip(abs_partial, 0.0, 1.0 - _FISHER_EPS)
+        denom = np.maximum(1.0 - abs_r ** 2, _CONFIDENCE_EPS)
+        t_stat = abs_r * np.sqrt(dof / denom)
+        pvalue_np = 2.0 * (1.0 - t_distribution.cdf(t_stat, df=dof))
+        pvalue_np = np.nan_to_num(pvalue_np, nan=1.0, posinf=1.0, neginf=1.0)
+        np.fill_diagonal(pvalue_np, 1.0)
+
+        if bool(fdr_enabled):
+            offdiag_mask = ~np.eye(NUM_LOBES, dtype=bool)
+            reject_flat = _benjamini_hochberg_reject(
+                pvalue_np[offdiag_mask],
+                alpha=float(max(min(fdr_alpha, 1.0), 1e-8)),
+            )
+            fdr_sig_np[offdiag_mask] = reject_flat
+            partial_np = np.where(fdr_sig_np, partial_np, 0.0)
+            abs_partial = np.abs(partial_np)
+
+    if min_abs_edge > 0.0:
+        partial_np[abs_partial < min_abs_edge] = 0.0
+        abs_partial = np.abs(partial_np)
+
+    confidence_np = np.zeros_like(abs_partial, dtype=np.float64)
+    offdiag_mask = ~np.eye(NUM_LOBES, dtype=bool)
+    nonzero_offdiag = abs_partial[offdiag_mask]
+    nonzero_offdiag = nonzero_offdiag[nonzero_offdiag > 0]
+    if nonzero_offdiag.size > 0:
+        scale = float(np.quantile(nonzero_offdiag, 0.75))
+        if not np.isfinite(scale) or scale <= 0.0:
+            scale = float(np.mean(nonzero_offdiag))
+        confidence_np = np.clip(abs_partial / (scale + _CONFIDENCE_EPS), 0.0, 1.0)
+
+    low_conf_np = abs_partial < max(min_abs_edge, 1e-8)
+    np.fill_diagonal(confidence_np, 0.0)
+    np.fill_diagonal(low_conf_np, True)
+
+    partial_t = torch.from_numpy(partial_np.astype(np.float32)).to(ts_lobe.device)
+    precision_t = torch.from_numpy(
+        np.nan_to_num(precision_np, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+    ).to(ts_lobe.device)
+    confidence_t = torch.from_numpy(confidence_np.astype(np.float32)).to(ts_lobe.device)
+    pvalue_t = torch.from_numpy(pvalue_np.astype(np.float32)).to(ts_lobe.device)
+    fdr_sig_t = torch.from_numpy(fdr_sig_np.astype(bool)).to(ts_lobe.device)
+    low_conf_t = torch.from_numpy(low_conf_np.astype(bool)).to(ts_lobe.device)
+
+    if torch.isnan(partial_t).any() or torch.isinf(partial_t).any():
+        logger.warning("Partial-correlation output contained NaN/Inf - returning zeros")
+        return _partial_corr_zero_payload(ts_lobe.device)
+
+    return {
+        "weighted_partial_matrix": partial_t,
+        "partial_corr_matrix": partial_t.clone(),
+        "precision_matrix": precision_t,
+        "confidence_matrix": confidence_t,
+        "pvalue_matrix": pvalue_t,
+        "fdr_significant_mask": fdr_sig_t,
+        "low_confidence_mask": low_conf_t,
+    }
+
+
 def _ridge_solve(X: np.ndarray, y: np.ndarray, ridge_lambda: float) -> np.ndarray:
     """Solve ridge regression in closed form with numerical fallback."""
     xtx = X.T @ X
@@ -593,7 +776,9 @@ def compute_causality_matrix(
 
     Args:
         ts_lobe: Time series for lobes (shape: [timepoints, n_lobes])
-        method: Causality method ('granger', 'ridge_granger', 'ridge_granger_hybrid', 'lagged_pearson')
+        method: Causality method
+            ('granger', 'ridge_granger', 'ridge_granger_hybrid',
+             'lagged_pearson', 'partial_corr_glasso')
                 If None, uses CAUSALITY_METHOD from config
         max_lag: Max lag in timepoints for Granger causality. If None, uses GRANGER_MAX_LAG from config.
                  For multi-site studies, this allows per-subject adaptation based on TR.
@@ -690,6 +875,32 @@ def compute_causality_matrix(
                 "selected_lag_matrix": lagged_payload["selected_lag_matrix"],
                 "low_confidence_mask": lagged_payload["low_confidence_mask"],
                 "fisher_z_matrix": lagged_payload["z_matrix"],
+            }
+            return (causal_matrix, metadata) if return_metadata else causal_matrix
+
+        elif method == 'partial_corr_glasso':
+            logger.debug(
+                "Computing partial-correlation GraphicalLasso (alpha=%.4f)",
+                float(PARTIAL_CORR_GLASSO_ALPHA),
+            )
+            partial_payload = _compute_partial_corr_glasso_matrix(
+                ts_lobe=ts_lobe,
+                alpha=float(PARTIAL_CORR_GLASSO_ALPHA),
+                max_iter=int(PARTIAL_CORR_GLASSO_MAX_ITER),
+                tol=float(PARTIAL_CORR_GLASSO_TOL),
+                min_abs_edge=float(PARTIAL_CORR_MIN_ABS_EDGE),
+                min_samples=int(PARTIAL_CORR_MIN_SAMPLES),
+                fdr_enabled=bool(PARTIAL_CORR_FDR_ENABLED),
+                fdr_alpha=float(PARTIAL_CORR_FDR_ALPHA),
+            )
+            causal_matrix = partial_payload["weighted_partial_matrix"]
+            metadata = {
+                "confidence_matrix": partial_payload["confidence_matrix"],
+                "pvalue_matrix": partial_payload["pvalue_matrix"],
+                "fdr_significant_mask": partial_payload["fdr_significant_mask"],
+                "low_confidence_mask": partial_payload["low_confidence_mask"],
+                "partial_corr_matrix": partial_payload["partial_corr_matrix"],
+                "precision_matrix": partial_payload["precision_matrix"],
             }
             return (causal_matrix, metadata) if return_metadata else causal_matrix
         
@@ -891,7 +1102,9 @@ def adaptive_sparsification(
     if pvalue_matrix is not None:
         p_matrix = pvalue_matrix.to(causal_matrix.device).clone()
         p_matrix.fill_diagonal_(1.0)
-        if str(CAUSALITY_METHOD).startswith('ridge_granger'):
+        if str(CAUSALITY_METHOD) == 'partial_corr_glasso':
+            prune_threshold = float(max(min(PARTIAL_CORR_FDR_ALPHA, 1.0), 0.0))
+        elif str(CAUSALITY_METHOD).startswith('ridge_granger'):
             prune_threshold = float(RIDGE_GRANGER_P_PRUNE_THRESHOLD)
         else:
             prune_threshold = float(LAGGED_PEARSON_P_PRUNE_THRESHOLD)
@@ -1180,17 +1393,28 @@ def construct_graph(subject_id: str, split: str, tr: float = 2.0) -> Tuple[bool,
         # Log success statistics
         if str(CAUSALITY_METHOD).startswith('ridge_granger'):
             high_conf_threshold = float(RIDGE_GRANGER_HIGH_CONF_P_THRESHOLD)
-        else:
+        elif str(CAUSALITY_METHOD) == 'lagged_pearson':
             high_conf_threshold = float(LAGGED_PEARSON_P_SELECT_THRESHOLD)
+        else:
+            high_conf_threshold = float('nan')
+
+        pvalue_matrix_for_stats = causal_metadata.get('pvalue_matrix')
+        if pvalue_matrix_for_stats is not None and np.isfinite(high_conf_threshold):
+            high_confidence_edges_pre_topk = int((pvalue_matrix_for_stats < high_conf_threshold).sum().item())
+        else:
+            high_confidence_edges_pre_topk = 0
 
         post_sparse_stats = {
             'edges': num_edges,
             'density': num_edges / (NUM_LOBES * (NUM_LOBES - 1)),
             'max_weight': float(adj_matrix.abs().max()),
             'mean_weight': float(adj_matrix[adj_matrix != 0].abs().mean()),
-            'high_confidence_edges_pre_topk': int(
-                (causal_metadata.get('pvalue_matrix', torch.ones_like(causal_matrix)) < high_conf_threshold).sum().item()
-            ),
+            'high_confidence_edges_pre_topk': high_confidence_edges_pre_topk,
+            'partial_corr_fdr_enabled': bool(PARTIAL_CORR_FDR_ENABLED) if str(CAUSALITY_METHOD) == 'partial_corr_glasso' else False,
+            'partial_corr_fdr_alpha': float(PARTIAL_CORR_FDR_ALPHA) if str(CAUSALITY_METHOD) == 'partial_corr_glasso' else None,
+            'partial_corr_fdr_significant_edges_pre_topk': int(
+                causal_metadata.get('fdr_significant_mask', torch.zeros_like(causal_matrix, dtype=torch.bool)).sum().item()
+            ) if str(CAUSALITY_METHOD) == 'partial_corr_glasso' else 0,
             'topk_per_node_k': int(sparsification_info.get('topk_per_node_k', 0)),
             'sparsification_fallback_triggered': bool(sparsification_info.get('triggered', False)),
             'significance_pruning_applied': bool(sparsification_info.get('significance_pruning_applied', False)),

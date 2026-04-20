@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import random
-from sklearn.model_selection import StratifiedKFold
+from sklearn.feature_selection import mutual_info_classif
 from sklearn.metrics import (
     roc_auc_score, f1_score, confusion_matrix,
     accuracy_score, roc_curve
@@ -42,6 +42,11 @@ from src.core.config import (
     GNN_EDGE_CONTRASTIVE_WEIGHT,
     GNN_INVARIANCE_WEIGHT,
     GNN_SPATIAL_INVARIANCE_WEIGHT,
+    GNN_FOLD_PREPROCESSING_MODE,
+    GNN_MI_FEATURE_SELECTION_ENABLED,
+    GNN_MI_MIN_KEEP_RATIO,
+    GNN_MI_MAX_KEEP_RATIO,
+    GNN_SITE_NORMALIZATION_MODE,
     GNN_ENFORCE_MULTIVIEW_QUALITY_GATE,
     GNN_MULTIVIEW_MAX_ZERO_EDGE_RATE,
     GNN_MULTIVIEW_QUALITY_SAMPLE_SIZE,
@@ -53,6 +58,7 @@ from src.core.config import (
     USE_FOCAL_LOSS,
     USE_CLASS_WEIGHTS,
     EVAL_THRESHOLD_POLICY,
+    EVAL_FIXED_THRESHOLD,
     GNN_USE_SITE_EMBEDDING,
     GNN_USE_DEMOGRAPHICS,
     GNN_NODE_EMB_DIM,
@@ -233,6 +239,16 @@ def find_optimal_threshold(y_true, y_probs):
     point family ("f1" or "youden").
     """
     policy = str(EVAL_THRESHOLD_POLICY).strip().lower()
+    if policy == "fixed":
+        thr = float(np.clip(EVAL_FIXED_THRESHOLD, 0.0, 1.0))
+        if len(np.unique(y_true)) < 2:
+            return thr, 0.0
+        fpr, tpr, thresholds = roc_curve(y_true, y_probs)
+        if thresholds.size == 0:
+            return thr, 0.0
+        idx = int(np.argmin(np.abs(thresholds - thr)))
+        j = tpr - fpr
+        return thr, float(j[idx])
     if policy == "youden":
         if len(np.unique(y_true)) < 2:
             return 0.5, 0.0
@@ -250,6 +266,141 @@ def find_optimal_threshold(y_true, y_probs):
 def evaluate(model, loader, threshold=0.5):
     """Compatibility wrapper around shared loader evaluation."""
     return evaluate_loader(model, loader, DEVICE, threshold=threshold)
+
+
+def _graph_site_id(graph_obj) -> int:
+    """Extract integer site id from a graph sample."""
+    if hasattr(graph_obj, 'site_id') and graph_obj.site_id is not None and graph_obj.site_id.numel() > 0:
+        return int(graph_obj.site_id.view(-1)[0].item())
+    return -1
+
+
+def _fit_mi_feature_selection(train_data):
+    """Fit fold-internal MI feature selector on train fold only.
+
+    Uses a conservative score-floor policy instead of a median split so only
+    near-zero MI channels are pruned. When MI is uninformative, falls back to
+    keeping all channels.
+    """
+    n_features = int(GNN_IN_CHANNELS)
+    min_ratio = float(np.clip(GNN_MI_MIN_KEEP_RATIO, 0.0, 1.0))
+    max_ratio = float(np.clip(GNN_MI_MAX_KEEP_RATIO, min_ratio, 1.0))
+
+    min_k = max(1, int(np.ceil(min_ratio * n_features)))
+    max_k = max(min_k, int(np.floor(max_ratio * n_features)))
+
+    X = np.stack([d.x.mean(dim=0).detach().cpu().numpy() for d in train_data], axis=0)
+    y = np.asarray([int(d.y.item()) for d in train_data], dtype=np.int64)
+
+    if np.unique(y).size < 2:
+        logger.warning(
+            "MI selection: single class in train fold; keeping all %d features",
+            n_features,
+        )
+        scores = np.ones(n_features, dtype=np.float64)
+        score_max = 1.0
+        floor_threshold = 0.0
+        selected_idx = np.arange(n_features, dtype=np.int64)
+        candidate_k = int(n_features)
+    else:
+        scores = mutual_info_classif(X, y, random_state=42, n_neighbors=5)
+        scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
+        score_max = float(scores.max())
+        floor_threshold = 0.10 * score_max
+
+        if score_max < 1e-9:
+            logger.warning(
+                "MI selection: all MI scores near zero; keeping all %d features",
+                n_features,
+            )
+            selected_idx = np.arange(n_features, dtype=np.int64)
+            candidate_k = int(n_features)
+        else:
+            above_floor = scores >= floor_threshold
+            candidate_k = int(above_floor.sum())
+
+            selected_k = int(np.clip(candidate_k, min_k, max_k))
+            if selected_k <= 0:
+                selected_k = min_k
+
+            selected_idx = np.argsort(scores)[::-1][:selected_k]
+            selected_idx = np.sort(selected_idx).astype(np.int64)
+
+    selected_k = int(len(selected_idx))
+    mask = torch.zeros(n_features, dtype=torch.float32)
+    mask[selected_idx] = 1.0
+
+    logger.info(
+        "MI selection: kept %d/%d features (%.0f%%), score range [%.4f, %.4f], floor threshold %.4f",
+        selected_k,
+        n_features,
+        100.0 * selected_k / max(n_features, 1),
+        float(scores.min()),
+        float(scores.max()),
+        float(floor_threshold),
+    )
+
+    metadata = {
+        "enabled": True,
+        "original_features": n_features,
+        "selected_features": int(selected_k),
+        "selected_ratio": float(selected_k / max(n_features, 1)),
+        "min_allowed": int(min_k),
+        "max_allowed": int(max_k),
+        "candidate_k": int(candidate_k),
+        "score_max": float(score_max),
+        "floor_threshold": float(floor_threshold),
+    }
+    return selected_idx.tolist(), mask, metadata
+
+
+def _apply_feature_mask(graphs, feature_mask: torch.Tensor) -> None:
+    """Apply feature mask in-place without changing channel dimensionality."""
+    if feature_mask is None:
+        return
+    for d in graphs:
+        d.x = d.x * feature_mask.to(device=d.x.device, dtype=d.x.dtype).view(1, -1)
+
+
+def _fit_site_normalization_stats(train_data):
+    """Fit per-site and global normalization stats on train fold only."""
+    per_site = {}
+    all_nodes = []
+    for d in train_data:
+        sid = _graph_site_id(d)
+        per_site.setdefault(sid, []).append(d.x)
+        all_nodes.append(d.x)
+
+    site_stats = {}
+    for sid, xs in per_site.items():
+        cat = torch.cat(xs, dim=0)
+        mean = cat.mean(dim=0, keepdim=True)
+        std = cat.std(dim=0, keepdim=True).clamp_min(1e-6)
+        site_stats[int(sid)] = (mean, std)
+
+    global_cat = torch.cat(all_nodes, dim=0)
+    global_mean = global_cat.mean(dim=0, keepdim=True)
+    global_std = global_cat.std(dim=0, keepdim=True).clamp_min(1e-6)
+    return site_stats, (global_mean, global_std)
+
+
+def _apply_site_normalization(graphs, site_stats, global_stats) -> None:
+    """Apply per-site normalization with fallback to global stats."""
+    global_mean, global_std = global_stats
+    for d in graphs:
+        sid = _graph_site_id(d)
+        mean, std = site_stats.get(int(sid), (global_mean, global_std))
+        d.x = (d.x - mean.to(device=d.x.device, dtype=d.x.dtype)) / std.to(device=d.x.device, dtype=d.x.dtype)
+
+
+def _site_stats_to_serializable(site_stats):
+    """Convert site stats dict to checkpoint-safe lists."""
+    means = {}
+    stds = {}
+    for sid, (mean, std) in site_stats.items():
+        means[str(int(sid))] = mean.squeeze(0).detach().cpu().numpy().tolist()
+        stds[str(int(sid))] = std.squeeze(0).detach().cpu().numpy().tolist()
+    return means, stds
 
 
 def evaluate_ensemble(
@@ -614,6 +765,15 @@ def _run_training_once(
     else:
         logger.info(f"Loss: CrossEntropy (class_weights={USE_CLASS_WEIGHTS})")
     logger.info(f"Threshold policy: {EVAL_THRESHOLD_POLICY}")
+    logger.info("Fold preprocessing mode: %s", GNN_FOLD_PREPROCESSING_MODE)
+    if str(GNN_FOLD_PREPROCESSING_MODE).strip().lower() != "legacy_global":
+        logger.info(
+            "Wave-1 preprocessing: MI feature selection=%s (%.2f-%.2f), normalization=%s",
+            GNN_MI_FEATURE_SELECTION_ENABLED,
+            GNN_MI_MIN_KEEP_RATIO,
+            GNN_MI_MAX_KEEP_RATIO,
+            GNN_SITE_NORMALIZATION_MODE,
+        )
     logger.info(
         "Aux losses: structural_dropout=%.3f, edge_contrastive=%.3f, "
         "invariance=%.3f, spatial_invariance=%.3f",
@@ -779,19 +939,101 @@ def _run_training_once(
         logger.info(f"Train: Control={train_labels.count(0)}, ASD={train_labels.count(1)}")
         logger.info(f"Val: Control={val_labels.count(0)}, ASD={val_labels.count(1)}")
 
-        # Fold-wise feature standardization (fit on train fold only, apply to train+val).
-        if train_data:
-            train_x = torch.cat([d.x for d in train_data], dim=0)
-            feat_mean = train_x.mean(dim=0, keepdim=True)
-            feat_std = train_x.std(dim=0, keepdim=True).clamp_min(1e-6)
-            for d in train_data:
-                d.x = (d.x - feat_mean) / feat_std
-            for d in val_data:
-                d.x = (d.x - feat_mean) / feat_std
-            logger.info("Applied fold-wise node feature standardization (train-fit only)")
+        preprocess_mode = str(GNN_FOLD_PREPROCESSING_MODE).strip().lower()
+        site_norm_mode = str(GNN_SITE_NORMALIZATION_MODE).strip().lower()
+        feature_mask = torch.ones(GNN_IN_CHANNELS, dtype=torch.float32)
+        selected_feature_idx = list(range(GNN_IN_CHANNELS))
+        feature_selection_meta = {
+            "enabled": False,
+            "original_features": int(GNN_IN_CHANNELS),
+            "selected_features": int(GNN_IN_CHANNELS),
+            "selected_ratio": 1.0,
+            "min_allowed": int(GNN_IN_CHANNELS),
+            "max_allowed": int(GNN_IN_CHANNELS),
+            "candidate_k": int(GNN_IN_CHANNELS),
+        }
+        site_feature_means = {}
+        site_feature_stds = {}
+
+        if preprocess_mode == "legacy_global":
+            if train_data:
+                train_x = torch.cat([d.x for d in train_data], dim=0)
+                feat_mean = train_x.mean(dim=0, keepdim=True)
+                feat_std = train_x.std(dim=0, keepdim=True).clamp_min(1e-6)
+                for d in train_data:
+                    d.x = (d.x - feat_mean) / feat_std
+                for d in val_data:
+                    d.x = (d.x - feat_mean) / feat_std
+                logger.info("Applied legacy fold-global feature standardization (train-fit only)")
+            else:
+                feat_mean = torch.zeros((1, GNN_IN_CHANNELS), dtype=torch.float32)
+                feat_std = torch.ones((1, GNN_IN_CHANNELS), dtype=torch.float32)
         else:
-            feat_mean = torch.zeros((1, GNN_IN_CHANNELS), dtype=torch.float32)
-            feat_std = torch.ones((1, GNN_IN_CHANNELS), dtype=torch.float32)
+            if GNN_MI_FEATURE_SELECTION_ENABLED and train_data:
+                selected_feature_idx, feature_mask, feature_selection_meta = _fit_mi_feature_selection(train_data)
+                n_retained = int(feature_mask.sum().item())
+                logger.info(
+                    "Fold %d: MI selection retained %d/%d features",
+                    fold,
+                    n_retained,
+                    GNN_IN_CHANNELS,
+                )
+                safety_floor = max(8, int(0.30 * GNN_IN_CHANNELS))
+                if n_retained < safety_floor:
+                    logger.error(
+                        "Fold %d: MI selection retained %d/%d features (safety floor=%d); falling back to all features",
+                        fold,
+                        n_retained,
+                        GNN_IN_CHANNELS,
+                        safety_floor,
+                    )
+                    feature_mask = torch.ones(GNN_IN_CHANNELS, dtype=torch.float32)
+                    selected_feature_idx = list(range(GNN_IN_CHANNELS))
+                    feature_selection_meta = {
+                        **feature_selection_meta,
+                        "selected_features": int(GNN_IN_CHANNELS),
+                        "selected_ratio": 1.0,
+                        "fallback_to_all_features": True,
+                    }
+                _apply_feature_mask(train_data, feature_mask)
+                _apply_feature_mask(val_data, feature_mask)
+                logger.info(
+                    "Applied fold MI feature mask: kept %d/%d features (%.1f%%)",
+                    feature_selection_meta["selected_features"],
+                    feature_selection_meta["original_features"],
+                    100.0 * feature_selection_meta["selected_ratio"],
+                )
+
+            if not train_data:
+                feat_mean = torch.zeros((1, GNN_IN_CHANNELS), dtype=torch.float32)
+                feat_std = torch.ones((1, GNN_IN_CHANNELS), dtype=torch.float32)
+            elif site_norm_mode == "within_site":
+                site_stats, (feat_mean, feat_std) = _fit_site_normalization_stats(train_data)
+                _apply_site_normalization(train_data, site_stats, (feat_mean, feat_std))
+                _apply_site_normalization(val_data, site_stats, (feat_mean, feat_std))
+                site_feature_means, site_feature_stds = _site_stats_to_serializable(site_stats)
+                logger.info(
+                    "Applied fold within-site normalization (train-fit only, %d site profiles)",
+                    len(site_feature_means),
+                )
+            elif site_norm_mode == "global":
+                train_x = torch.cat([d.x for d in train_data], dim=0)
+                feat_mean = train_x.mean(dim=0, keepdim=True)
+                feat_std = train_x.std(dim=0, keepdim=True).clamp_min(1e-6)
+                for d in train_data:
+                    d.x = (d.x - feat_mean) / feat_std
+                for d in val_data:
+                    d.x = (d.x - feat_mean) / feat_std
+                logger.info("Applied fold-global normalization (train-fit only)")
+            elif site_norm_mode == "none":
+                feat_mean = torch.zeros((1, GNN_IN_CHANNELS), dtype=torch.float32)
+                feat_std = torch.ones((1, GNN_IN_CHANNELS), dtype=torch.float32)
+                logger.info("Skipped fold feature normalization (mode=none)")
+            else:
+                raise ValueError(
+                    f"Unknown GNN_SITE_NORMALIZATION_MODE={GNN_SITE_NORMALIZATION_MODE!r}. "
+                    "Expected one of: within_site, global, none."
+                )
         
         train_loader = make_loader(train_data, batch_size=GNN_BATCH_SIZE, shuffle=True)
         val_loader = make_loader(val_data, batch_size=GNN_BATCH_SIZE)
@@ -884,9 +1126,16 @@ def _run_training_once(
             'auprc': best_metrics['auprc'],
             'f1': best_metrics['f1'],
             'threshold': best_metrics['threshold'],
-            # Persist fold-wise scaling stats for inference-time parity.
+            # Persist fold-wise preprocessing metadata for inference-time parity.
             'feature_mean': feat_mean.squeeze(0).cpu().numpy().tolist(),
             'feature_std': feat_std.squeeze(0).cpu().numpy().tolist(),
+            'feature_mask': feature_mask.cpu().numpy().tolist(),
+            'selected_feature_idx': [int(i) for i in selected_feature_idx],
+            'feature_selection_meta': feature_selection_meta,
+            'site_feature_means': site_feature_means,
+            'site_feature_stds': site_feature_stds,
+            'preprocessing_mode': preprocess_mode,
+            'site_normalization_mode': site_norm_mode,
         }
         checkpoint_manager.save(model, None, best_metrics['best_epoch'], checkpoint_metrics, fold=fold)
 
@@ -896,8 +1145,6 @@ def _run_training_once(
         )
         
         # Final evaluation with best checkpoint
-        model._feature_mean = feat_mean.squeeze(0).detach().cpu()
-        model._feature_std = feat_std.squeeze(0).detach().cpu()
         final_threshold = best_metrics['threshold']
         final_metrics = evaluate(model, val_loader, threshold=final_threshold)
         site_auc_values.extend(

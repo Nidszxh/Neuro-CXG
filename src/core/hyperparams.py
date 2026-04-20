@@ -63,7 +63,7 @@ GRAPH_DENSITY_TARGET = 0.30  # Keep top 30% of directional edges (~40/132 for 12
 
 # Phase 1/2 enhancements (Apr 2026)
 # Default to ridge-regularized Granger edges for stronger statistical signal.
-CAUSALITY_METHOD = "ridge_granger"  # Options: 'granger', 'ridge_granger', 'ridge_granger_hybrid', 'lagged_pearson'
+CAUSALITY_METHOD = "ridge_granger"  # Options: 'granger', 'ridge_granger', 'ridge_granger_hybrid', 'lagged_pearson', 'partial_corr_glasso'
 GRANGER_MAX_LAG = 5  # Test lags 1-5 TRs (legacy, kept for backward compatibility)
 GRANGER_MAX_LAG_SECONDS = 10.0  # Test causality up to 10s of history; adjusted by subject TR
 GRANGER_SIGNIFICANCE_LEVEL = 0.05  # Statistical significance threshold
@@ -84,6 +84,17 @@ LAGGED_PEARSON_LAGS = (1, 2, 3, 4)  # Multi-lag candidates evaluated per directe
 LAGGED_PEARSON_P_SELECT_THRESHOLD = 0.10  # Prefer lag with max |z| among p < threshold
 LAGGED_PEARSON_P_PRUNE_THRESHOLD = 0.20  # Zero weak edges before top-k candidate selection
 LAGGED_PEARSON_CONFIDENCE_ALPHA = 0.75  # w = z * sigmoid(alpha * confidence)
+
+# GraphicalLasso partial-correlation controls.
+# This method yields sparse conditional-dependence edges without p-value pruning,
+# and is useful as a robust, low-variance alternative in small-sample folds.
+PARTIAL_CORR_GLASSO_ALPHA = 0.02
+PARTIAL_CORR_GLASSO_MAX_ITER = 200
+PARTIAL_CORR_GLASSO_TOL = 1e-4
+PARTIAL_CORR_MIN_ABS_EDGE = 0.02
+PARTIAL_CORR_MIN_SAMPLES = 40
+PARTIAL_CORR_FDR_ENABLED = True
+PARTIAL_CORR_FDR_ALPHA = 0.10
 
 # --- GRAPH CONSTRUCTION PARAMETERS ---
 # Default policy: keep strongest edges per node (outgoing + incoming) so each
@@ -126,8 +137,8 @@ EXCLUDED_SUBJECTS: frozenset = CURATED_WORST_SUBJECTS_1015
 MAX_NAN_ROIS: int = 30
 
 # --- GNN MODEL PARAMETERS (Phase 3: regularized for small graphs) ---
-GNN_HIDDEN_CHANNELS = 128
-GNN_NUM_HEADS = 4
+GNN_HIDDEN_CHANNELS = 64
+GNN_NUM_HEADS = 2
 GNN_NUM_CLASSES = 2  # 0: Control, 1: ASD
 GNN_DROPOUT = 0.35
 GNN_WEIGHT_DECAY = 5e-5
@@ -147,7 +158,7 @@ GNN_USE_GRL = True
 GNN_GRL_ALPHA = 0.05
 GNN_GRL_ALPHA_MAX = 0.15
 GRL_ALPHA_CANDIDATES = [0.02, 0.05, 0.10, 0.15]
-GNN_AUTO_GRL_GRID_SEARCH = True
+GNN_AUTO_GRL_GRID_SEARCH = False
 # Non-zero weight enables actual adversarial site debiasing when GRL is active.
 GNN_SITE_LOSS_WEIGHT = 0.15
 GNN_EDGE_GATE = True
@@ -160,9 +171,24 @@ GNN_ONECYCLE_WARMUP_FRACTION = 0.15
 # NOTE: Setting structural_dropout and edge_contrastive to force graph learning
 # (previously disabled due to known issue DD-009 - model ignoring graph structure)
 GNN_STRUCTURAL_DROPOUT_PROB = 0.3  # Force model to use graph edges by zeroing node features
-GNN_EDGE_CONTRASTIVE_WEIGHT = 0.1  # Contrastive learning on edge representations
+GNN_EDGE_CONTRASTIVE_WEIGHT = 0.0  # Keep auxiliary contrastive objective off for baseline stability
 GNN_INVARIANCE_WEIGHT = 0.0
 GNN_SPATIAL_INVARIANCE_WEIGHT = 0.0
+
+# Wave-1 fold-internal preprocessing controls.
+# `legacy_global` restores the previous fold-global z-score behavior.
+GNN_FOLD_PREPROCESSING_MODE = "wave1"
+
+# Fold-internal mutual-information feature selection.
+GNN_MI_FEATURE_SELECTION_ENABLED = True
+GNN_MI_MIN_KEEP_RATIO = 0.30
+GNN_MI_MAX_KEEP_RATIO = 0.60
+
+# Fold-internal normalization policy.
+# - "within_site": fit per-site stats on train fold only; unseen sites fallback to global train stats.
+# - "global": fit one global train-fold scaler.
+# - "none": disable fold-internal feature normalization.
+GNN_SITE_NORMALIZATION_MODE = "within_site"
 
 # Fold-safe harmonization policy for validation/test rows from sites that are
 # absent in fold-train. Options:
@@ -200,7 +226,10 @@ OPTIMIZE_THRESHOLD = True
 # Evaluation operating-point policy.
 # - "f1": max-F1 threshold on held-out calibration fold
 # - "youden": max(sensitivity + specificity - 1)
-EVAL_THRESHOLD_POLICY = "youden"
+# - "fixed": use EVAL_FIXED_THRESHOLD directly (deployment lock)
+EVAL_THRESHOLD_POLICY = "fixed"
+# Locked global deployment threshold from Condition C seed-stability calibration.
+EVAL_FIXED_THRESHOLD = 0.5263
 
 # Site robustness gate derived from cross-site experiment output
 # (`results/experiments/data_quality/cross_site_auc.csv`).

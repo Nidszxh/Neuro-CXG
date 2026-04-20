@@ -27,7 +27,12 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from torch_geometric.loader import DataLoader
 from sklearn.metrics import roc_curve
-from src.core.config import GNN_ONECYCLE_PCT_START, GNN_GRL_ALPHA_MAX, EVAL_THRESHOLD_POLICY
+from src.core.config import (
+    GNN_ONECYCLE_PCT_START,
+    GNN_GRL_ALPHA_MAX,
+    EVAL_THRESHOLD_POLICY,
+    EVAL_FIXED_THRESHOLD,
+)
 from src.models.evaluation import evaluate_loader, optimal_threshold
 
 logger = logging.getLogger(__name__)
@@ -38,43 +43,103 @@ def attach_feature_scaler_from_checkpoint(
     checkpoint: Dict[str, Any],
     expected_dim: Optional[int] = None,
 ) -> bool:
-    """Attach fold-wise feature scaling stats from checkpoint to a model.
+    """Attach fold-wise preprocessing metadata from checkpoint to a model.
 
-    Training stores ``feature_mean`` and ``feature_std`` (fit on fold-train only)
-    inside each fold checkpoint. Attaching them to the model enables inference-time
-    scaling parity via ``CausalBrainGNN._encode``.
+    Training stores fold-internal preprocessing artifacts in checkpoints:
+    - ``feature_mean`` / ``feature_std`` (global train-fold stats)
+    - ``feature_mask`` (MI-selected channel mask)
+    - ``site_feature_means`` / ``site_feature_stds`` (per-site train-fold stats)
 
-    Returns True when scaler stats were found and attached.
+    Attaching them to the model enables inference-time parity via
+    ``CausalBrainGNN._encode`` while remaining backward-compatible with older
+    checkpoints that only contain mean/std.
+
+    Returns True when at least one preprocessing artifact was attached.
     """
     if not isinstance(checkpoint, dict):
         return False
 
+    attached = False
+
+    # Global scaler stats (legacy + current).
     feature_mean = checkpoint.get("feature_mean")
     feature_std = checkpoint.get("feature_std")
-    if feature_mean is None or feature_std is None:
-        return False
+    if feature_mean is not None and feature_std is not None:
+        try:
+            mean_t = torch.as_tensor(feature_mean, dtype=torch.float32).view(-1)
+            std_t = torch.as_tensor(feature_std, dtype=torch.float32).view(-1)
+            if mean_t.numel() == 0 or std_t.numel() == 0 or mean_t.numel() != std_t.numel():
+                raise ValueError("invalid scaler shape")
+            if expected_dim is not None and mean_t.numel() != int(expected_dim):
+                raise ValueError("scaler dim mismatch")
+            setattr(model, "_feature_mean", mean_t)
+            setattr(model, "_feature_std", std_t.clamp_min(1e-6))
+            attached = True
+        except Exception:
+            logger.warning("Ignoring malformed checkpoint feature scaler metadata")
 
-    try:
-        mean_t = torch.as_tensor(feature_mean, dtype=torch.float32).view(-1)
-        std_t = torch.as_tensor(feature_std, dtype=torch.float32).view(-1)
-    except Exception:
-        return False
+    target_dim = int(expected_dim) if expected_dim is not None else None
 
-    if mean_t.numel() == 0 or std_t.numel() == 0 or mean_t.numel() != std_t.numel():
-        return False
+    # Fold-internal MI feature mask.
+    feature_mask = checkpoint.get("feature_mask")
+    if feature_mask is not None:
+        try:
+            mask_t = torch.as_tensor(feature_mask, dtype=torch.float32).view(-1)
+            if target_dim is not None and mask_t.numel() != target_dim:
+                raise ValueError("feature mask dim mismatch")
+            setattr(model, "_feature_mask", mask_t)
+            attached = True
+        except Exception:
+            logger.warning("Ignoring malformed checkpoint feature_mask metadata")
 
-    if expected_dim is not None and mean_t.numel() != int(expected_dim):
-        logger.warning(
-            "Checkpoint feature scaler dimension mismatch: expected %d, got %d. Ignoring scaler.",
-            int(expected_dim),
-            int(mean_t.numel()),
-        )
-        return False
+    selected_idx = checkpoint.get("selected_feature_idx")
+    if isinstance(selected_idx, (list, tuple)):
+        try:
+            setattr(model, "_selected_feature_idx", [int(i) for i in selected_idx])
+        except Exception:
+            pass
 
-    std_t = std_t.clamp_min(1e-6)
-    setattr(model, "_feature_mean", mean_t)
-    setattr(model, "_feature_std", std_t)
-    return True
+    preprocessing_mode = checkpoint.get("preprocessing_mode")
+    if isinstance(preprocessing_mode, str) and preprocessing_mode.strip():
+        setattr(model, "_preprocessing_mode", preprocessing_mode.strip().lower())
+
+    site_norm_mode = checkpoint.get("site_normalization_mode")
+    if isinstance(site_norm_mode, str) and site_norm_mode.strip():
+        setattr(model, "_site_normalization_mode", site_norm_mode.strip().lower())
+
+    # Per-site stats for within-site normalization fallback at inference time.
+    site_means_raw = checkpoint.get("site_feature_means")
+    site_stds_raw = checkpoint.get("site_feature_stds")
+    if isinstance(site_means_raw, dict) and isinstance(site_stds_raw, dict):
+        site_means: Dict[int, torch.Tensor] = {}
+        site_stds: Dict[int, torch.Tensor] = {}
+        bad_sites = 0
+        for sid_key, mean_vals in site_means_raw.items():
+            std_vals = site_stds_raw.get(sid_key)
+            if std_vals is None:
+                bad_sites += 1
+                continue
+            try:
+                sid = int(sid_key)
+                mean_t = torch.as_tensor(mean_vals, dtype=torch.float32).view(-1)
+                std_t = torch.as_tensor(std_vals, dtype=torch.float32).view(-1).clamp_min(1e-6)
+                if mean_t.numel() == 0 or mean_t.numel() != std_t.numel():
+                    raise ValueError("invalid site scaler shape")
+                if target_dim is not None and mean_t.numel() != target_dim:
+                    raise ValueError("site scaler dim mismatch")
+                site_means[sid] = mean_t
+                site_stds[sid] = std_t
+            except Exception:
+                bad_sites += 1
+
+        if site_means and site_stds:
+            setattr(model, "_site_feature_means", site_means)
+            setattr(model, "_site_feature_stds", site_stds)
+            attached = True
+        if bad_sites > 0:
+            logger.warning("Ignored malformed site-normalization metadata for %d site(s)", bad_sites)
+
+    return attached
 
 
 class _LRUCache:
@@ -416,7 +481,7 @@ class CheckpointManager:
 
         scaler_attached = attach_feature_scaler_from_checkpoint(model, checkpoint)
         if scaler_attached:
-            logger.info("Loaded fold feature scaler from %s", filename)
+            logger.info("Loaded fold preprocessing metadata from %s", filename)
 
         logger.info(f"Loaded checkpoint: {filename} (epoch {checkpoint.get('epoch', 'unknown')})")
         return checkpoint
@@ -866,6 +931,16 @@ def train_one_epoch_with_accumulation(
 
 def _find_optimal_threshold(y_true: np.ndarray, y_probs: np.ndarray) -> tuple:
     policy = str(EVAL_THRESHOLD_POLICY).strip().lower()
+    if policy == "fixed":
+        thr = float(np.clip(EVAL_FIXED_THRESHOLD, 0.0, 1.0))
+        if y_true.size == 0 or y_probs.size == 0 or np.unique(y_true).size < 2:
+            return thr, 0.0
+        fpr, tpr, thresholds = roc_curve(y_true, y_probs)
+        if thresholds.size == 0:
+            return thr, 0.0
+        idx = int(np.argmin(np.abs(thresholds - thr)))
+        j = tpr - fpr
+        return thr, float(j[idx])
     if policy == "youden":
         if y_true.size == 0 or y_probs.size == 0 or np.unique(y_true).size < 2:
             return 0.5, 0.0
