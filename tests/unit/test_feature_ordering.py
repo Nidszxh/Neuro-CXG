@@ -265,3 +265,13 @@ class TestEvaluationThreshold:
         assert "np.mean(fold_thresholds)" in source, (
             "run_ensemble_evaluation() must set threshold = np.mean(fold_thresholds)."
         )
+
+    def test_fixed_threshold_policy_supported(self):
+        """Evaluation must support a fixed deployment threshold policy."""
+        import inspect
+        from src.run_evaluation import run_ensemble_evaluation
+
+        source = inspect.getsource(run_ensemble_evaluation)
+        assert '"fixed"' in source, (
+            "run_ensemble_evaluation() must handle EVAL_THRESHOLD_POLICY='fixed'."
+        )
