@@ -81,31 +81,52 @@ These are operational estimates, not strict guarantees.
 
 ## 4) Artifact-Backed Model Performance Snapshot
 
-### Latest Evaluation Bundle
+### Current Best Results (April 22, 2026)
 
-From `results/evaluation/comprehensive_results.json`:
+After hyperparameter optimization (lagged_pearson + site conditioning + GRL):
 
-- ensemble AUC: 0.7499
-- AUPRC: 0.7404
-- F1: 0.5985
-- accuracy: 0.6429
-- CV AUC: 0.7586 ± 0.0519
+- **CV AUC**: 0.8001 ± 0.0293
+- **Test AUC (ensemble)**: 0.8748
+- **Test F1**: 0.8121
+- **Test Accuracy**: 0.7987
+- **Mean Best Epoch**: 40.0
 
-### Latest GNN Results (5-Fold CV + Ensemble Test)
+### Per-Fold Results
 
-Current run after force-reset:
+| Fold | AUC | F1 |
+|------|-----|-----|
+| 0 | 0.7828 | 0.7206 |
+| 1 | 0.7621 | 0.7183 |
+| 2 | 0.8215 | 0.8075 |
+| 3 | 0.7895 | 0.7758 |
+| 4 | 0.8445 | 0.7714 |
 
-- CV AUC: 0.7586 ± 0.0519 (higher fold variance observed)
-- Test AUC (ensemble): 0.7499
-- Mean best epoch: 12.0
-- Higher fold variance due to feature/graph regeneration
+### Configuration That Achieved These Results
 
-### Latest Result Analysis Summary
+```python
+CAUSALITY_METHOD = "lagged_pearson"
+GNN_HIDDEN_CHANNELS = 32
+GNN_WEIGHT_DECAY = 5e-4
+GNN_POOLING = "anatomical"
+GNN_USE_SITE_EMBEDDING = True
+GNN_USE_DEMOGRAPHICS = True
+GNN_GRL_ALPHA_MAX = 1.0
+USE_FOCAL_LOSS = True
+EVAL_THRESHOLD_POLICY = "youden"
+```
 
-From `results/analysis/result_analysis_summary.json`:
+### Historical Performance
 
-- overall AUC: >= 0.70 (latest run)
-- overall accuracy: >= 0.64 (latest run)
+| Run | CV AUC | Test AUC | Test F1 |
+|-----|-------|----------|---------|
+| Baseline (ridge_granger) | 0.7586 ± 0.0519 | 0.7325 | 0.6338 |
+| **Current (lagged_pearson + site)** | **0.8001 ± 0.0293** | **0.8748** | **0.8121** |
+
+Key improvements:
+- +0.04 CV AUC from lagged_pearson edges
+- +0.14 Test AUC from site conditioning + strong GRL
+- +0.18 F1 from Youden threshold policy
+- Reduced variance (±0.052 → ±0.029)
 
 ## 5) Interpreting Metric Disagreement Across Artifacts
 

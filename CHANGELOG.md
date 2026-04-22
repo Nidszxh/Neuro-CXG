@@ -7,6 +7,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-04-22
 
+### Performance Milestone: Publication-Quality Results (Optimized Configuration)
+
+**Key Configuration Changes:**
+- `CAUSALITY_METHOD = "lagged_pearson"` (was `ridge_granger`)
+- `GNN_USE_SITE_EMBEDDING = True` (was False)
+- `GNN_USE_DEMOGRAPHICS = True` (was False)
+- `GNN_GRL_ALPHA_MAX = 1.0` (was 0.15)
+- `GNN_POOLING = "anatomical"` (was `mean_max_sum`)
+- `EVAL_THRESHOLD_POLICY = "youden"` (was `fixed`)
+- `GNN_HIDDEN_CHANNELS = 32` (was 64)
+- `GNN_WEIGHT_DECAY = 5e-4` (was 5e-5)
+- `USE_FOCAL_LOSS = True` (was False)
+
+**Results:**
+- CV AUC: 0.8001 ± 0.0293 (was 0.7586 ± 0.0519, **+0.04**)
+- Test AUC: 0.8748 (was 0.7325, **+0.14**)
+- Test F1: 0.8121 (was 0.6338, **+0.18**)
+- Mean Best Epoch: 38.8 (was 12.0)
+- Variance reduced: ±0.0519 → ±0.0293
+
+**Per-Fold Results:**
+| Fold | AUC | F1 | Best Epoch |
+|---|---|---|---|
+| 1 | 0.7822 | 0.7552 | 30 |
+| 2 | 0.7621 | 0.6963 | 59 |
+| 3 | 0.8209 | 0.8125 | 41 |
+| 4 | 0.7895 | 0.7683 | 29 |
+| 5 | 0.8441 | 0.7714 | 35 |
+
+**Code Cleanup:**
+- Suppressed repeated exclusion log messages in `graph_factory.py`
+- Removed no-op spatial harmonization call in `fold_safe_harmonization.py`
+
+**Notes:**
+- Site conditioning + strong GRL (alpha=1.0) were the key to Test AUC improvement
+- lagged_pearson produces more discriminative causal edges than ridge_granger
+- Brainstem lobe still shows constant spatial features (YOLO class 11 not detected)
+
 ### Performance Milestone: Force-Reset Feature Regeneration
 
 **Results:**

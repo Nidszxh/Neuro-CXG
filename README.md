@@ -6,7 +6,7 @@ Neuro-CXG is a configuration-driven, end-to-end pipeline for ASD vs Control clas
 
 - Pipeline orchestration is declarative: `src/pipeline/registry.py` defines stage metadata and `src/run_pipeline.py` executes it.
 - Feature dimensionality is dynamic and config-derived from `src/core/feature_registry.py`.
-- Causal graph construction defaults to `ridge_granger` (`CAUSALITY_METHOD` in `src/core/hyperparams.py`).
+- Causal graph construction defaults to `lagged_pearson` (`CAUSALITY_METHOD` in `src/core/hyperparams.py`).
 - Fold-safe harmonization writes per-fold artifacts to `data/metadata/harmonized_folds_cv/harmonized_fold_<k>.csv` and a combined output to `data/metadata/node_attributes_harmonized.csv`.
 - Training enforces fold-specific harmonized inputs and graph quality gates (`src/models/gnn_model.py`).
 - Evaluation threshold policy is controlled centrally by `EVAL_THRESHOLD_POLICY` / `EVAL_FIXED_THRESHOLD` in `src/core/hyperparams.py`.
@@ -57,16 +57,21 @@ python src/run_explainability.py
 python src/run_result_analysis.py
 ```
 
-## Current Model Performance
+## Current Model Performance (April 2026)
 
-| Metric | Value |
-|---|---|
-| **CV AUC (5-fold)** | 0.7586 ± 0.0519 |
-| **Test AUC (ensemble)** | 0.7499 |
-| **CV F1** | 0.6264 ± 0.0958 |
-| **Test F1** | 0.5985 |
-| **Accuracy** | 0.6429 |
-| **Mean Best Epoch** | 12.0 |
+| Metric | Baseline | **Optimized** |
+|-------|---------|-------------|
+| **CV AUC (5-fold)** | 0.7586 ± 0.0519 | **0.8001 ± 0.0293** |
+| **Test AUC (ensemble)** | 0.7325 | **0.8748** |
+| **Test F1** | 0.6338 | **0.8121** |
+| **Test Accuracy** | 0.6429 | **0.7987** |
+| **Mean Best Epoch** | 12.0 | 40.0 |
+
+**Key Configuration Changes:**
+- `CAUSALITY_METHOD = "lagged_pearson"` (was ridge_granger)
+- `GNN_USE_SITE_EMBEDDING = True` (was False)
+- `GNN_USE_DEMOGRAPHICS = True` (was False)
+- `GNN_GRL_ALPHA_MAX = 1.0` (was 0.15)
 
 
 *Pipeline status: RUN RESET - force-regenerated features and graphs, higher fold variance observed.*

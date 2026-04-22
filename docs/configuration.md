@@ -80,7 +80,7 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 
 ### Causal Graph Defaults
 
-- `CAUSALITY_METHOD = "ridge_granger"`
+- `CAUSALITY_METHOD = "lagged_pearson"`  # Changed from ridge_granger
 - `GRANGER_MAX_LAG = 5`
 - `GRANGER_MAX_LAG_SECONDS = 10.0`
 - `GRANGER_USE_GPU = True`
@@ -88,37 +88,45 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 - `SPARSITY_TOPK_PER_NODE = 3`
 - `MIN_EDGES_PER_GRAPH = 12`
 
-### GNN Defaults
+### GNN Defaults (Optimized for Publication)
 
-- `GNN_HIDDEN_CHANNELS = 64`
+- `GNN_HIDDEN_CHANNELS = 32`  # Reduced from 64
 - `GNN_NUM_HEADS = 2`
 - `GNN_NUM_LAYERS = 2`
 - `GNN_DROPOUT = 0.35`
-- `GNN_POOLING = "mean_max_sum"`
+- `GNN_POOLING = "anatomical"`  # Changed from mean_max_sum
+- `GNN_WEIGHT_DECAY = 5e-4`  # Increased from 5e-5
+- `GNN_ONECYCLE_MAX_LR = 0.001`  # Reduced from 0.002
+- `GNN_ONECYCLE_WARMUP_FRACTION = 0.05`  # Reduced from 0.15
 - `GNN_BATCH_SIZE = 32`
 - `GNN_EPOCHS = 100`
 - `K_FOLDS = 5`
 
-### Site Bias Controls
+### Site Bias Controls (Optimized)
 
+- `GNN_USE_SITE_EMBEDDING = True`  # Enabled for better performance
+- `GNN_USE_DEMOGRAPHICS = True`  # Enabled for more context
 - `GNN_USE_GRL = True`
-- `GNN_GRL_ALPHA = 0.05`
-- `GNN_GRL_ALPHA_MAX = 0.15`
+- `GNN_GRL_ALPHA = 0.10`
+- `GNN_GRL_ALPHA_MAX = 1.0`  # Increased from 0.15
 - `GNN_SITE_LOSS_WEIGHT = 0.15`
 
 ### Auxiliary Objective Controls
 
-- `GNN_STRUCTURAL_DROPOUT_PROB = 0.3`
+- `GNN_STRUCTURAL_DROPOUT_PROB = 0.0`  # Disabled - counterproductive without contrastive
 - `GNN_EDGE_CONTRASTIVE_WEIGHT = 0.0`
 - `GNN_INVARIANCE_WEIGHT = 0.0`
 - `GNN_SPATIAL_INVARIANCE_WEIGHT = 0.0`
 
+### Loss Configuration
+
+- `USE_FOCAL_LOSS = True`  # Enabled for hard-example mining
+- `USE_CLASS_WEIGHTS = False`  # Disabled - classes are near-balanced
+
 ### Threshold Policy
 
-- `EVAL_THRESHOLD_POLICY = "fixed"`
-- `EVAL_FIXED_THRESHOLD = 0.5263`
-
-This policy is consumed by training/evaluation/reporting scripts.
+- `EVAL_THRESHOLD_POLICY = "youden"`  # Changed from fixed
+- `EVAL_FIXED_THRESHOLD = 0.5263`  # Kept for backward compatibility
 
 ## 5) Quality Gates and Policies
 
