@@ -38,6 +38,7 @@ from src.core.config import (
     GNN_ONECYCLE_MAX_LR,
     GNN_ONECYCLE_WARMUP_FRACTION,
     GNN_EARLY_STOPPING_PATIENCE,
+    GNN_MIN_EPOCHS_BEFORE_STOPPING,
     GNN_STRUCTURAL_DROPOUT_PROB,
     GNN_EDGE_CONTRASTIVE_WEIGHT,
     GNN_INVARIANCE_WEIGHT,
@@ -822,6 +823,27 @@ def _run_training_once(
             "Run fold_safe_harmonization.py before gnn_training."
         )
 
+    fold_audit_path = HARMONIZED_FOLDS_DIR / "fold_unseen_site_audit.csv"
+    if fold_audit_path.exists():
+        try:
+            fold_audit = pd.read_csv(fold_audit_path)
+            required_cols = {"unseen_row_count", "val_row_count"}
+            if required_cols.issubset(set(fold_audit.columns)) and not fold_audit.empty:
+                val_rows = pd.to_numeric(fold_audit["val_row_count"], errors="coerce").fillna(0).astype(int)
+                unseen_rows = pd.to_numeric(fold_audit["unseen_row_count"], errors="coerce").fillna(0).astype(int)
+                all_unseen = bool((val_rows > 0).all() and (unseen_rows == val_rows).all())
+                if all_unseen:
+                    raise RuntimeError(
+                        "Detected fold_unseen_site_audit with 100% unseen validation rows in all folds. "
+                        "This indicates site-stratified CV with fold-safe harmonization mismatch. "
+                        "Recommended (Option A): run standard StratifiedKFold CV and regenerate "
+                        "fold harmonization artifacts without --site-stratified-cv."
+                    )
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            logger.warning("Failed to parse unseen-site audit (%s): %s", fold_audit_path, exc)
+
     multiview_present = (
         CAUSAL_GRAPHS_MULTIVIEW_DIR.exists()
         and any(CAUSAL_GRAPHS_MULTIVIEW_DIR.glob("*/multiview_graphs.pt"))
@@ -1079,6 +1101,7 @@ def _run_training_once(
             epochs=GNN_EPOCHS,
             max_lr=GNN_ONECYCLE_MAX_LR,
             patience=GNN_EARLY_STOPPING_PATIENCE,
+            min_epochs_before_stopping=GNN_MIN_EPOCHS_BEFORE_STOPPING,
             use_grl=use_grl,
             grl_weight=GNN_SITE_LOSS_WEIGHT if use_grl else 0.0,
             fold=fold,
@@ -1287,7 +1310,6 @@ def _run_training_once(
     if run_post_analysis:
         try:
             logger.info("\nRunning causal graph analysis...")
-            import pandas as pd
 
             # Load manifest
             manifest_path = DATA_METADATA / 'master_manifest.csv'

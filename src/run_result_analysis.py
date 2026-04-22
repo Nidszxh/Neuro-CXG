@@ -467,6 +467,56 @@ def _load_evaluation_metadata() -> Dict:
         return {}
 
 
+def _classification_metrics_at_threshold(
+    probs: np.ndarray,
+    labels: np.ndarray,
+    threshold: float,
+) -> Dict[str, float]:
+    """Compute accuracy/F1/sensitivity/specificity at a fixed threshold."""
+    if probs.size == 0 or labels.size == 0:
+        return {
+            "threshold": float(threshold),
+            "accuracy": float("nan"),
+            "f1": float("nan"),
+            "sensitivity": float("nan"),
+            "specificity": float("nan"),
+            "n_total": 0,
+            "n_asd": 0,
+            "n_control": 0,
+            "tp": 0,
+            "tn": 0,
+            "fp": 0,
+            "fn": 0,
+        }
+
+    thr = float(np.clip(threshold, 0.0, 1.0))
+    preds = (probs >= thr).astype(int)
+    labels_i = labels.astype(int)
+
+    cm = confusion_matrix(labels_i, preds, labels=[0, 1])
+    tn, fp, fn, tp = cm.ravel()
+
+    sensitivity = float(tp / max(tp + fn, 1))
+    specificity = float(tn / max(tn + fp, 1))
+    f1 = float(f1_score(labels_i, preds, zero_division=0))
+    acc = float(accuracy_score(labels_i, preds))
+
+    return {
+        "threshold": thr,
+        "accuracy": acc,
+        "f1": f1,
+        "sensitivity": sensitivity,
+        "specificity": specificity,
+        "n_total": int(len(labels_i)),
+        "n_asd": int((labels_i == 1).sum()),
+        "n_control": int((labels_i == 0).sum()),
+        "tp": int(tp),
+        "tn": int(tn),
+        "fp": int(fp),
+        "fn": int(fn),
+    }
+
+
 def _resolve_analysis_threshold(
     fold_aucs: List[float],
     fold_thresholds: List[float],
@@ -603,7 +653,7 @@ def run_per_subject_analysis(
     output_dir: Path,
     threshold: float,
     per_site_calibration: Optional[Dict] = None,
-) -> Tuple[pd.DataFrame, Dict[str, object]]:
+) -> Tuple[pd.DataFrame, Dict[str, object], Dict[str, float]]:
     logger.info("=" * 60)
     logger.info("SECTION 1 — PER-SUBJECT PREDICTIONS")
     logger.info("=" * 60)
@@ -633,6 +683,22 @@ def run_per_subject_analysis(
     if "decision_threshold" in df.columns:
         logger.info("  Predicted ASD rate: %.1f%%", float((df["pred_label"] == 1).mean() * 100.0))
 
+    labels_arr = df["true_label"].to_numpy(dtype=np.int64)
+    probs_arr = df["prob_asd"].to_numpy(dtype=np.float64)
+    youden_threshold = _youden_threshold(probs_arr, labels_arr)
+    youden_metrics = _classification_metrics_at_threshold(
+        probs_arr,
+        labels_arr,
+        threshold=youden_threshold,
+    )
+    logger.info(
+        "  Youden analysis threshold: %.4f -> Sens=%.4f Spec=%.4f F1=%.4f",
+        float(youden_threshold),
+        float(youden_metrics["sensitivity"]),
+        float(youden_metrics["specificity"]),
+        float(youden_metrics["f1"]),
+    )
+
     df = _format_prediction_columns(df)
     csv_path = output_dir / "per_subject_predictions.csv"
     df.to_csv(csv_path, index=False)
@@ -646,7 +712,7 @@ def run_per_subject_analysis(
         int(eff_cal.get("num_sites", 0)),
     )
 
-    return df, inference_meta
+    return df, inference_meta, youden_metrics
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1116,6 +1182,7 @@ def save_summary(
     threshold_policy: str,
     per_site_calibration: Optional[Dict],
     requested_per_site_calibration: Optional[Dict],
+    youden_analysis: Optional[Dict] = None,
 ) -> None:
     overall_auc = _safe_roc_auc(df["true_label"].to_numpy(), df["prob_asd"].to_numpy())
     effective_calibration = per_site_calibration or {"applied": False, "num_sites": 0}
@@ -1128,6 +1195,7 @@ def save_summary(
         "threshold_policy":      str(threshold_policy),
         "per_site_calibration":  effective_calibration,
         "per_site_calibration_requested": requested_calibration,
+        "youden_analysis":      youden_analysis or {},
         "misclassification":     misclass_result.get("demographics", {}),
         "site_effects":          site_result,
         "calibration":           calib_result,
@@ -1212,7 +1280,7 @@ def main() -> None:
     )
 
     # ── Section 1: Per-subject predictions ────────────────────────────────────
-    df, inference_meta = run_per_subject_analysis(
+    df, inference_meta, youden_analysis = run_per_subject_analysis(
         test_graphs,
         args.output_dir,
         threshold=threshold,
@@ -1253,6 +1321,7 @@ def main() -> None:
         threshold_policy=threshold_policy,
         per_site_calibration=effective_per_site_calibration,
         requested_per_site_calibration=requested_per_site_calibration,
+        youden_analysis=youden_analysis,
     )
 
 

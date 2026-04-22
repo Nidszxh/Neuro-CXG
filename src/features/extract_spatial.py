@@ -49,7 +49,7 @@ def _load_atlas_lobe_fallbacks() -> dict:
         return {i: (0.0, 0.0, 0.0, 0.0) for i in range(NUM_LOBES)}
 
     fallback = {}
-    warned_missing = False
+    missing_roi_ids = set()
     for lobe_id in range(NUM_LOBES):
         coords = []
         sizes = []
@@ -57,13 +57,7 @@ def _load_atlas_lobe_fallbacks() -> dict:
             roi_id = int(roi_idx_0) + 1
             c = centroids.get(roi_id)
             if c is None:
-                c = centroids.get(int(roi_idx_0))
-            if c is None:
-                if not warned_missing:
-                    logger.warning(
-                        "Atlas centroids use unexpected ROI indexing; falling back to zeros for unmatched ROI ids."
-                    )
-                    warned_missing = True
+                missing_roi_ids.add(roi_id)
                 continue
             coords.append((float(c.get("x", 0.0)), float(c.get("y", 0.0)), float(c.get("z", 0.0))))
             sizes.append(float(roi_sizes.get(roi_id, 1.0)))
@@ -79,10 +73,18 @@ def _load_atlas_lobe_fallbacks() -> dict:
         else:
             fallback[lobe_id] = (0.0, 0.0, 0.0, 0.0)
 
+    if missing_roi_ids:
+        missing_sorted = sorted(missing_roi_ids)
+        logger.warning(
+            "Atlas fallback missing %d ROI centroid ids (showing up to 12): %s",
+            len(missing_sorted),
+            missing_sorted[:12],
+        )
+
     return fallback
 
 
-def _compute_missing_lobe_fallbacks(raw_df: pd.DataFrame) -> dict:
+def _compute_missing_lobe_fallbacks(raw_df: pd.DataFrame) -> tuple[dict, set]:
     """Compute scale-matched fallback features for missing YOLO lobes.
 
     Primary source: empirical per-lobe medians from detected ROIs (same coordinate
@@ -114,44 +116,21 @@ def _compute_missing_lobe_fallbacks(raw_df: pd.DataFrame) -> dict:
 
     missing_lobes = [lid for lid, vals in fallback.items() if vals is None]
     if not missing_lobes:
-        return fallback
+        return fallback, set()
 
-    atlas_fallback = _load_atlas_lobe_fallbacks()
+    missing_set = set(missing_lobes)
     logger.warning(
-        "Global YOLO detections missing for lobe ids %s; using mapped atlas priors.",
+        "Global YOLO detections missing for lobe ids %s; using explicit zero fallback and spatial-missing mask.",
         missing_lobes,
     )
-
-    atlas_vals = np.array([atlas_fallback[lid] for lid in range(NUM_LOBES)], dtype=float)
-    obs_mins = np.array([
-        float(raw_df["x"].min()),
-        float(raw_df["y"].min()),
-        float(raw_df["z"].min()),
-        float(raw_size.min()),
-    ])
-    obs_maxs = np.array([
-        float(raw_df["x"].max()),
-        float(raw_df["y"].max()),
-        float(raw_df["z"].max()),
-        float(raw_size.max()),
-    ])
-
-    atlas_mins = atlas_vals.min(axis=0)
-    atlas_maxs = atlas_vals.max(axis=0)
-    atlas_ranges = np.where((atlas_maxs - atlas_mins) > 1e-8, atlas_maxs - atlas_mins, 1.0)
-    obs_ranges = np.where((obs_maxs - obs_mins) > 1e-8, obs_maxs - obs_mins, 1.0)
-
     for lobe_id in missing_lobes:
-        a = np.array(atlas_fallback.get(lobe_id, global_defaults), dtype=float)
-        mapped = ((a - atlas_mins) / atlas_ranges) * obs_ranges + obs_mins
-        mapped = np.where(np.isfinite(mapped), mapped, np.array(global_defaults, dtype=float))
-        fallback[lobe_id] = tuple(float(v) for v in mapped.tolist())
+        fallback[lobe_id] = (0.0, 0.0, 0.0, 0.0)
 
     for lobe_id in range(NUM_LOBES):
         if fallback[lobe_id] is None:
             fallback[lobe_id] = global_defaults
 
-    return fallback
+    return fallback, missing_set
 
 
 def extract_spatial():
@@ -227,7 +206,13 @@ def extract_spatial():
     partial_count = 0
     subject_ids = raw_df["subject_id"].unique()
 
-    fallback_by_lobe = _compute_missing_lobe_fallbacks(raw_df)
+    fallback_by_lobe, global_missing_lobes = _compute_missing_lobe_fallbacks(raw_df)
+    if global_missing_lobes:
+        missing_names = [LOBE_NAMES[i] for i in sorted(global_missing_lobes)]
+        logger.warning(
+            "Applying explicit zero spatial fallback for globally missing lobes: %s",
+            missing_names,
+        )
 
     for sub_id in tqdm(
         subject_ids, desc="Building Subject Nodes",
@@ -255,25 +240,37 @@ def extract_spatial():
         for lobe_id in range(NUM_LOBES):
             lobe_name = LOBE_NAMES[lobe_id]
             lobe_data = sub_group[sub_group["roi_class"] == lobe_id]
+            spatial_missing_key = f"{lobe_name}_spatial_missing"
+            is_global_spatial_missing = lobe_id in global_missing_lobes
 
-            # If region not detected, use atlas-derived lobe fallback instead of
-            # hard zeros to avoid encoding missingness as artificial anatomy.
+            # If region not detected, use per-lobe priors for ordinary misses.
+            # For globally missing lobes (e.g., class never detected), use an
+            # explicit zero fallback and mark `<Lobe>_spatial_missing=1`.
             if len(lobe_data) == 0:
                 fb_x, fb_y, fb_z, fb_size = fallback_by_lobe.get(lobe_id, (0.0, 0.0, 0.0, 0.0))
-                logger.debug(
-                    "Subject %s: Region %s not detected, using atlas fallback",
-                    sub_id,
-                    lobe_name,
-                )
+                if is_global_spatial_missing:
+                    logger.debug(
+                        "Subject %s: Region %s globally missing; using zero fallback + spatial missing mask",
+                        sub_id,
+                        lobe_name,
+                    )
+                else:
+                    logger.debug(
+                        "Subject %s: Region %s not detected, using lobe prior fallback",
+                        sub_id,
+                        lobe_name,
+                    )
                 subject_row[f"{lobe_name}_x"] = float(fb_x)
                 subject_row[f"{lobe_name}_y"] = float(fb_y)
                 subject_row[f"{lobe_name}_z_depth"] = float(fb_z)
                 subject_row[f"{lobe_name}_size"] = float(fb_size)
+                subject_row[spatial_missing_key] = int(is_global_spatial_missing)
             else:
                 subject_row[f"{lobe_name}_x"] = lobe_data["x"].mean()
                 subject_row[f"{lobe_name}_y"] = lobe_data["y"].mean()
                 subject_row[f"{lobe_name}_z_depth"] = lobe_data["z"].mean()
                 subject_row[f"{lobe_name}_size"] = lobe_data["w"].mean() * lobe_data["h"].mean()
+                subject_row[spatial_missing_key] = 0
         
         # Append if region aggregation succeeded (processing didn't encounter corruption)
         if subject_row is not None:
@@ -299,11 +296,14 @@ def extract_spatial():
         manifest = pd.read_csv(MANIFEST_PATH)
         manifest["subject_id"] = manifest["subject_id"].astype(str)
         
-        # Create minimal schema for empty output (includes spatial_complete tracking column)
+        # Create minimal schema for empty output (includes spatial_complete + spatial missing mask columns)
         empty_cols = ["subject_id", "spatial_complete"] + [
             f"{lobe}_{feat}" 
             for lobe in LOBE_NAMES.values() 
             for feat in ["x", "y", "z_depth", "size"]
+        ] + [
+            f"{lobe}_spatial_missing"
+            for lobe in LOBE_NAMES.values()
         ]
         final_df = pd.DataFrame(columns=empty_cols)
         output_df = pd.merge(final_df, manifest, on="subject_id", how="inner")
@@ -316,11 +316,21 @@ def extract_spatial():
         col for col in output_df.columns if any(col.startswith(f"{lobe}_") for lobe in LOBE_NAMES.values())
     ]
 
-    expected_cols = NUM_LOBES * NUM_SPATIAL_FEATURES
-    if len(lobe_cols) != expected_cols:
+    # Count only anatomical features (x, y, z_depth, size) - exclude spatial_missing
+    anatomical_cols = [
+        col for col in lobe_cols
+        if any(feat in col for feat in ["_x", "_y", "_z_depth", "_size"])
+    ]
+    expected_anatomical = NUM_LOBES * NUM_SPATIAL_FEATURES
+    if len(anatomical_cols) != expected_anatomical:
         logger.warning(
-            f"Feature count mismatch! Expected {expected_cols} spatial feature columns, "
-            f"got {len(lobe_cols)}"
+            f"Anatomical spatial feature mismatch! Expected {expected_anatomical} columns (x,y,z_depth,size), "
+            f"got {len(anatomical_cols)}"
+        )
+    if len(lobe_cols) != expected_anatomical + NUM_LOBES:
+        logger.warning(
+            f"Total spatial feature mismatch including missing masks! "
+            f"Expected {expected_anatomical + NUM_LOBES} columns, got {len(lobe_cols)}"
         )
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)

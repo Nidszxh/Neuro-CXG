@@ -4,8 +4,8 @@ from src.core.paths import RESULTS_DIR
 
 # --- YOLO DETECTION PARAMETERS (Fixed for Medical Integrity) ---
 YOLO_MODEL_SIZE = "yolo26n.pt"
-YOLO_PROJECT_NAME = "ROI_Detection_v30"  # Output directory name from training
-YOLO_WEIGHTS_PATH = RESULTS_DIR / "experiments" / "detection" / "ROI_Detection_v30" / "weights" / "best.pt"
+YOLO_PROJECT_NAME = "ROI_Detection_v31"  # Output directory name from training
+YOLO_WEIGHTS_PATH = RESULTS_DIR / "experiments" / "detection" / "ROI_Detection_v31" / "weights" / "best.pt"
 YOLO_IMGSZ = 640
 YOLO_BATCH_SIZE = 32
 YOLO_EPOCHS = 100
@@ -153,6 +153,8 @@ GNN_USE_SITE_EMBEDDING = False
 GNN_NODE_EMB_DIM = 16
 GNN_USE_DEMOGRAPHICS = False
 GNN_EARLY_STOPPING_PATIENCE = 30
+# Guardrail against premature stopping on noisy/unstable folds.
+GNN_MIN_EPOCHS_BEFORE_STOPPING = 30
 GNN_POOLING = "mean_max_sum"  # Options: 'anatomical', 'attention', 'mean_max_sum'
 GNN_USE_GRL = True
 GNN_GRL_ALPHA = 0.05
@@ -180,7 +182,7 @@ GNN_SPATIAL_INVARIANCE_WEIGHT = 0.0
 GNN_FOLD_PREPROCESSING_MODE = "wave1"
 
 # Fold-internal mutual-information feature selection.
-GNN_MI_FEATURE_SELECTION_ENABLED = True
+GNN_MI_FEATURE_SELECTION_ENABLED = False
 GNN_MI_MIN_KEEP_RATIO = 0.30
 GNN_MI_MAX_KEEP_RATIO = 0.60
 
@@ -194,7 +196,7 @@ GNN_SITE_NORMALIZATION_MODE = "within_site"
 # absent in fold-train. Options:
 # - "passthrough": harmonize seen sites, leave unseen rows unchanged.
 # - "fail": abort fold harmonization when unseen sites are detected.
-HARMONIZATION_UNSEEN_SITE_POLICY = "passthrough"
+HARMONIZATION_UNSEEN_SITE_POLICY = "fail"
 
 # Multi-view integrity gate: disable invariance training when non-base views are
 # largely degenerate (zero-edge), rather than silently training on broken views.
@@ -225,7 +227,7 @@ OPTIMIZE_THRESHOLD = True
 
 # Evaluation operating-point policy.
 # - "f1": max-F1 threshold on held-out calibration fold
-# - "youden": max(sensitivity + specificity - 1)
+# - "youden": max(sensitivity + specificity - 1) - reduces false negatives
 # - "fixed": use EVAL_FIXED_THRESHOLD directly (deployment lock)
 EVAL_THRESHOLD_POLICY = "fixed"
 # Locked global deployment threshold from Condition C seed-stability calibration.

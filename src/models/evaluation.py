@@ -13,6 +13,7 @@ from sklearn.metrics import (
     f1_score,
     precision_recall_curve,
     roc_auc_score,
+    roc_curve,
 )
 
 
@@ -34,6 +35,29 @@ def optimal_threshold(probs: np.ndarray, labels: np.ndarray) -> tuple[float, flo
     best_idx = int(np.argmax(f1_scores))
     best_threshold = float(thresholds[best_idx]) if best_idx < len(thresholds) else 0.5
     return best_threshold, float(f1_scores[best_idx])
+
+
+def youden_threshold(probs: np.ndarray, labels: np.ndarray) -> tuple[float, float]:
+    """Find threshold that maximizes Youden's J = sensitivity + specificity - 1.
+
+    This balances sensitivity (recall) and specificity, reducing false negatives
+    compared to F1-maximizing threshold.
+
+    Args:
+        probs: Predicted positive-class probabilities.
+        labels: Ground-truth binary labels.
+
+    Returns:
+        A tuple of (best_threshold, best_youden_j).
+    """
+    if probs.size == 0 or labels.size == 0 or np.unique(labels).size < 2:
+        return 0.5, 0.0
+
+    fpr, tpr, thresholds = roc_curve(labels, probs)
+    youden_j = tpr - fpr
+    best_idx = int(np.argmax(youden_j))
+    best_threshold = float(thresholds[best_idx]) if best_idx < len(thresholds) else 0.5
+    return best_threshold, float(youden_j[best_idx])
 
 
 def compute_metrics(

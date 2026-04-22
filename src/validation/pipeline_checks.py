@@ -39,6 +39,7 @@ from src.core.config import (
     PHENO_PATH,
     SITE_TR_MAP,
     SPARSITY_QUANTILE,
+    HARMONIZED_FOLDS_DIR,
 )
 from src.core.hyperparams import GNN_MAX_DEGENERATE_GRAPH_RATE
 from src.core.validators import summarize_graph_degeneracy_from_adj
@@ -1250,6 +1251,29 @@ class PipelineValidator:
         try:
             spatial_df = pd.read_csv(NODE_FEATURES_3D)
 
+            brainstem_cols = [
+                c for c in spatial_df.columns
+                if c.startswith("Brainstem_") and c not in {"Brainstem_conf_std", "Brainstem_detection_count"}
+            ]
+            if brainstem_cols:
+                const_brainstem = all(
+                    pd.to_numeric(spatial_df[col], errors="coerce").fillna(0.0).nunique(dropna=False) <= 1
+                    for col in brainstem_cols
+                )
+                if const_brainstem:
+                    self.add_result(
+                        ValidationResult(
+                            stage="Features",
+                            passed=False,
+                            message=(
+                                "Brainstem spatial features are constant across all subjects "
+                                "(global detection fallback active)"
+                            ),
+                            severity="warning",
+                            fix_suggestion="Audit YOLO class-11 detections and atlas fallback behavior before publication runs",
+                        )
+                    )
+
             lobe_cols = [
                 c
                 for c in spatial_df.columns
@@ -1690,6 +1714,125 @@ class PipelineValidator:
                 severity="info",
             ))
 
+    def check_cv_fold_balance(self, manifest: Optional[pd.DataFrame] = None) -> None:
+        """Validate CV fold-size balance on training split and flag severe skew."""
+        logger.info("Checking CV fold balance...")
+        if manifest is None:
+            ok, manifest = self.check_manifest()
+            if not ok or manifest is None:
+                return
+
+        if "cv_fold" not in manifest.columns:
+            self.add_result(
+                ValidationResult(
+                    stage="Stratification",
+                    passed=False,
+                    message="cv_fold column missing in manifest",
+                    severity="warning",
+                    fix_suggestion="Regenerate manifest/folds with split.py",
+                )
+            )
+            return
+
+        train_df = manifest[manifest["split"] == "train"].copy()
+        if train_df.empty:
+            self.add_result(
+                ValidationResult(
+                    stage="Stratification",
+                    passed=False,
+                    message="No training rows found for CV fold balance check",
+                    severity="warning",
+                )
+            )
+            return
+
+        fold_series = pd.to_numeric(train_df["cv_fold"], errors="coerce")
+        if fold_series.isna().any():
+            self.add_result(
+                ValidationResult(
+                    stage="Stratification",
+                    passed=False,
+                    message="cv_fold contains non-numeric/missing values",
+                    severity="warning",
+                    fix_suggestion="Regenerate cv_fold assignments",
+                )
+            )
+            return
+
+        fold_counts = fold_series.astype(int).value_counts().sort_index()
+        if fold_counts.empty:
+            self.add_result(
+                ValidationResult(
+                    stage="Stratification",
+                    passed=False,
+                    message="No CV folds found in training split",
+                    severity="warning",
+                )
+            )
+            return
+
+        min_fold = int(fold_counts.min())
+        max_fold = int(fold_counts.max())
+        ratio = float(max_fold / max(min_fold, 1))
+        summary = ", ".join([f"{int(k)}:{int(v)}" for k, v in fold_counts.items()])
+
+        if ratio > 2.0:
+            self.add_result(
+                ValidationResult(
+                    stage="Stratification",
+                    passed=False,
+                    message=(
+                        f"Severely unbalanced CV folds (max/min={ratio:.2f}; counts={summary})"
+                    ),
+                    severity="warning",
+                    fix_suggestion="Use balanced StratifiedKFold folds for publication training",
+                )
+            )
+        else:
+            self.add_result(
+                ValidationResult(
+                    stage="Stratification",
+                    passed=True,
+                    message=f"CV fold balance OK (max/min={ratio:.2f}; counts={summary})",
+                    severity="info",
+                    metrics={
+                        "fold_counts": {str(int(k)): int(v) for k, v in fold_counts.items()},
+                        "max_min_ratio": ratio,
+                    },
+                )
+            )
+
+        unseen_audit = HARMONIZED_FOLDS_DIR / "fold_unseen_site_audit.csv"
+        if unseen_audit.exists():
+            try:
+                audit_df = pd.read_csv(unseen_audit)
+                if {"unseen_row_count", "val_row_count"}.issubset(audit_df.columns) and not audit_df.empty:
+                    unseen_rows = pd.to_numeric(audit_df["unseen_row_count"], errors="coerce").fillna(0).astype(int)
+                    val_rows = pd.to_numeric(audit_df["val_row_count"], errors="coerce").fillna(0).astype(int)
+                    all_unseen = bool((val_rows > 0).all() and (unseen_rows == val_rows).all())
+                    if all_unseen:
+                        self.add_result(
+                            ValidationResult(
+                                stage="Stratification",
+                                passed=False,
+                                message=(
+                                    "All validation rows are unseen sites across CV folds "
+                                    "(site-stratified mismatch with fold-safe harmonization)"
+                                ),
+                                severity="warning",
+                                fix_suggestion="Use standard StratifiedKFold CV (Option A) and regenerate fold harmonization",
+                            )
+                        )
+            except Exception as exc:
+                self.add_result(
+                    ValidationResult(
+                        stage="Stratification",
+                        passed=False,
+                        message=f"Failed to parse fold unseen-site audit: {exc}",
+                        severity="warning",
+                    )
+                )
+
     # VISUALIZATION (OPTIONAL)
 
     def visualize_results(self) -> None:
@@ -1825,6 +1968,7 @@ class PipelineValidator:
             self.validate_features()
             self.validate_graphs()
             self.check_stratification(manifest)
+            self.check_cv_fold_balance(manifest)
         self.validate_trained_models()
         self.visualize_results()
 

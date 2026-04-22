@@ -67,8 +67,12 @@ def _make_temporal_features(subject_id: str) -> pd.DataFrame:
     return pd.DataFrame([row])
 
 
-def _make_spatial_features(subject_id: str) -> pd.DataFrame:
+def _make_spatial_features(
+    subject_id: str,
+    global_missing_lobes: set[int] | None = None,
+) -> pd.DataFrame:
     """Build a spatial feature row with all 6 columns per lobe."""
+    global_missing_lobes = global_missing_lobes or set()
     spatial_cols = {"subject_id": subject_id}
     for lobe_id in range(NUM_LOBES):
         name = LOBE_NAMES[lobe_id]
@@ -78,6 +82,7 @@ def _make_spatial_features(subject_id: str) -> pd.DataFrame:
         spatial_cols[f"{name}_size"] = float(np.random.rand() * 2000)
         spatial_cols[f"{name}_conf_std"] = float(np.random.rand())
         spatial_cols[f"{name}_detection_count"] = float(np.random.randint(3, 8))
+        spatial_cols[f"{name}_spatial_missing"] = int(lobe_id in global_missing_lobes)
     return pd.DataFrame([spatial_cols])
 
 
@@ -341,3 +346,66 @@ def test_label_encoding_control(dataset_control):
     assert sample.y.item() == 0, (
         f"DX_GROUP=1 (Control) should encode as y=0, got y={sample.y.item()}"
     )
+
+
+@pytest.fixture(scope="module")
+def mock_data_dir_spatial_missing(tmp_path_factory):
+    """Mock dataset where Brainstem is globally marked spatial-missing."""
+    root = tmp_path_factory.mktemp("mock_abide_spatial_missing")
+    meta_dir = root / "metadata"
+    graphs_dir = root / "causal_graphs"
+    meta_dir.mkdir()
+    graphs_dir.mkdir()
+
+    np.random.seed(21)
+    subject_id = "TEST_SPATIAL_MISSING_0001"
+    _make_manifest(subject_id, "train", dx_group=2).to_csv(
+        meta_dir / "master_manifest.csv", index=False
+    )
+    _make_temporal_features(subject_id).to_csv(
+        meta_dir / "node_attributes_harmonized.csv", index=False
+    )
+    _make_spatial_features(subject_id, global_missing_lobes={11}).to_csv(
+        meta_dir / "node_features_3d.csv", index=False
+    )
+
+    adj = _make_sparse_adj(NUM_LOBES, min_edges=N_EDGES_MIN)
+    internal = torch.rand(NUM_LOBES, 2)
+    torch.save(
+        {
+            "adj": adj,
+            "internal_features": internal,
+            "zero_lobe_mask": torch.zeros(NUM_LOBES, dtype=torch.bool),
+            "subject_id": subject_id,
+            "lobe_order": list(range(NUM_LOBES)),
+        },
+        graphs_dir / f"{subject_id}_graph.pt",
+    )
+    return root, meta_dir, graphs_dir
+
+
+@pytest.fixture(scope="module")
+def dataset_spatial_missing(mock_data_dir_spatial_missing):
+    """ABIDECausalDataset built from mock data with spatial_missing columns."""
+    _, meta_dir, graphs_dir = mock_data_dir_spatial_missing
+    with patch.multiple(
+        "src.features.graph_factory",
+        MASTER_MANIFEST=meta_dir / "master_manifest.csv",
+        NODE_ATTRIBUTES_HARMONIZED=meta_dir / "node_attributes_harmonized.csv",
+        NODE_FEATURES_3D=meta_dir / "node_features_3d.csv",
+        NODE_FEATURES_3D_HARMONIZED=meta_dir / "node_features_3d_harmonized.csv",
+        CAUSAL_GRAPHS_DIR=graphs_dir,
+    ):
+        from src.features.graph_factory import ABIDECausalDataset
+
+        ds = ABIDECausalDataset(split="train")
+    return ds
+
+
+def test_zero_lobe_mask_merges_spatial_missing(dataset_spatial_missing):
+    """Spatial missing-mask columns should propagate into graph zero_lobe_mask."""
+    sample = dataset_spatial_missing.get(0)
+    assert sample is not None, "dataset_spatial_missing.get(0) returned None"
+    assert hasattr(sample, "zero_lobe_mask")
+    assert sample.zero_lobe_mask.shape == (NUM_LOBES,)
+    assert bool(sample.zero_lobe_mask[11].item()) is True, "Brainstem mask should be True"

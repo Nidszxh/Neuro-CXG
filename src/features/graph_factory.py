@@ -120,6 +120,14 @@ class ABIDECausalDataset(Dataset):
         )
         logger.info("  Spatial features: %s", _spatial_path.name)
         self.coords = _load_csv_cached(_spatial_path, index_col='subject_id')
+        self._spatial_missing_cols = [
+            f"{name}_spatial_missing" for name in LOBE_NAMES.values()
+        ]
+        self._has_spatial_missing_mask = all(
+            c in self.coords.columns for c in self._spatial_missing_cols
+        )
+        if self._has_spatial_missing_mask:
+            logger.info("  Spatial missing-mask columns detected and will be merged into zero_lobe_mask")
         
         # 4. Adjacency matrices directory
         self.adj_dir = CAUSAL_GRAPHS_DIR
@@ -325,6 +333,10 @@ class ABIDECausalDataset(Dataset):
                 'zero_lobe_mask',
                 torch.zeros(NUM_LOBES, dtype=torch.bool)
             ).bool()
+
+            spatial_missing_mask = self._get_subject_spatial_missing_mask(sub_id)
+            if spatial_missing_mask is not None and spatial_missing_mask.numel() == NUM_LOBES:
+                zero_lobe_mask = (zero_lobe_mask | spatial_missing_mask.bool()).bool()
             
             # 3. Load 12-Region Spatial Features (6 per region)
             spatial_features = self._get_subject_spatial(sub_id)
@@ -517,6 +529,37 @@ class ABIDECausalDataset(Dataset):
         except Exception as e:
             logger.error(f"Subject {sub_id}: Error loading spatial features: {e}")
             return None
+
+    def _get_subject_spatial_missing_mask(self, sub_id):
+        """Return per-lobe spatial-missing mask from spatial feature CSV.
+
+        The extractor writes `<Lobe>_spatial_missing` for lobes with no global
+        YOLO detections (explicit zero fallback). We merge this into the graph
+        `zero_lobe_mask` so training/explainability can treat these lobes as
+        structurally missing signals.
+        """
+        if not getattr(self, "_has_spatial_missing_mask", False):
+            return torch.zeros(NUM_LOBES, dtype=torch.bool)
+
+        try:
+            row = self.coords.loc[sub_id]
+        except KeyError:
+            return torch.zeros(NUM_LOBES, dtype=torch.bool)
+
+        mask = []
+        for lobe_id in range(NUM_LOBES):
+            col = self._spatial_missing_cols[lobe_id]
+            val = 0.0
+            try:
+                raw = row[col]
+                if isinstance(raw, pd.Series):
+                    raw = raw.iloc[0]
+                val = float(raw)
+            except Exception:
+                val = 0.0
+            mask.append(bool(np.isfinite(val) and val > 0.5))
+
+        return torch.tensor(mask, dtype=torch.bool)
 
     def _encode_site(self, site_name):
         """

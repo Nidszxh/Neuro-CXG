@@ -59,6 +59,9 @@ VARIANCE_RETENTION_HIGH = 1.3    # flag features gaining  >30 % of original vari
 COMBAT_MIN_VARIANCE = 1e-8       # treat near-constant channels as constant for ComBat stability
 QUALITY_MIN_REFERENCE_VARIANCE = 1e-8  # avoid unstable retention ratios from tiny denominators
 
+COMBAT_SHRINKAGE = 0.0  # Disabled - neuroHarmonize doesn't support shrink param directly
+                      # Use EB.extend = False for less aggressive harmonization instead
+
 
 @dataclass
 class HarmonizationFold:
@@ -379,7 +382,10 @@ def _harmonize_fold(
                 tf[col] += rng.normal(0, 1e-8, len(tf))
                 if not vf.empty:
                     vf[col] += rng.normal(0, 1e-8, len(vf))
-        model, train_harm = harmonizationLearn(tf.values, train_covariates)
+        model, train_harm = harmonizationLearn(
+            tf.values,
+            train_covariates,
+        )
         if vf.empty:
             val_harm = np.empty((0, len(train_features.columns)))
         else:
@@ -534,6 +540,26 @@ def _check_harmonization_quality(
     with np.errstate(divide="ignore", invalid="ignore"):
         per_feat_ret = (harm_var_series / orig_var_series).replace([np.inf, -np.inf], np.nan)
 
+    retention_df = pd.DataFrame(
+        {
+            "feature": common,
+            "orig_variance": orig_var_series.reindex(common).values,
+            "harm_variance": harm_var_series.reindex(common).values,
+            "retention": per_feat_ret.reindex(common).values,
+        }
+    )
+    retention_df["status"] = "within"
+    retention_df.loc[retention_df["retention"] < VARIANCE_RETENTION_LOW, "status"] = "low"
+    retention_df.loc[retention_df["retention"] > VARIANCE_RETENTION_HIGH, "status"] = "high"
+
+    report_path = HARMONIZED_FOLDS_DIR / "harmonization_variance_retention.csv"
+    try:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        retention_df.sort_values("retention", ascending=True).to_csv(report_path, index=False)
+        logger.info("  Saved per-feature variance retention report -> %s", report_path)
+    except Exception as exc:
+        logger.warning("  Failed to save variance retention report: %s", exc)
+
     stable_mask = orig_var_series > QUALITY_MIN_REFERENCE_VARIANCE
     stable_ret = per_feat_ret[stable_mask].dropna()
     if stable_ret.empty:
@@ -575,8 +601,22 @@ def _check_harmonization_quality(
                 "(expected: inputs are pre-z-scored so ComBat site removal naturally reduces total variance; "
                 "lobe-level signal is preserved)."
             )
+            low_examples = retention_df[retention_df["status"] == "low"]
+            if not low_examples.empty:
+                logger.warning(
+                    "  Lowest-retention features (<%.2f): %s",
+                    VARIANCE_RETENTION_LOW,
+                    low_examples.sort_values("retention").head(10)["feature"].tolist(),
+                )
         if 100 * n_high / n_total > VARIANCE_WARNING_THRESHOLD:
             logger.warning("  Many features gained >30%% variance after harmonization")
+            high_examples = retention_df[retention_df["status"] == "high"]
+            if not high_examples.empty:
+                logger.warning(
+                    "  Highest-retention features (>%.2f): %s",
+                    VARIANCE_RETENTION_HIGH,
+                    high_examples.sort_values("retention", ascending=False).head(10)["feature"].tolist(),
+                )
     if nans_introduced > 0:
         logger.warning("  Harmonization introduced %d NaN values", nans_introduced)
     else:
@@ -693,6 +733,13 @@ def harmonize_cv_safe_fold(
 
     folds_with_unseen = [r for r in fold_site_audit if r["unseen_site_count"] > 0]
     total_unseen_rows = int(sum(r["unseen_row_count"] for r in folds_with_unseen))
+    all_rows_unseen = bool(
+        fold_site_audit
+        and all(
+            int(row["val_rows"]) > 0 and int(row["unseen_row_count"]) == int(row["val_rows"])
+            for row in fold_site_audit
+        )
+    )
     logger.info(
         "Fold unseen-site audit: %d/%d folds have unseen validation sites (%d total unseen rows), policy=%s",
         len(folds_with_unseen),
@@ -707,6 +754,13 @@ def harmonize_cv_safe_fold(
             row["unseen_row_count"],
             row["val_rows"],
             row["unseen_sites"],
+        )
+
+    if all_rows_unseen:
+        logger.error(
+            "All validation rows across all folds are unseen SITE levels. "
+            "This configuration is incompatible with fold-safe harmonization and will "
+            "produce train/val feature-space mismatch under passthrough behavior."
         )
 
     audit_dir = Path(output_dir) if output_dir is not None else HARMONIZED_FOLDS_DIR
@@ -732,7 +786,9 @@ def harmonize_cv_safe_fold(
     if folds_with_unseen and unseen_policy == "fail":
         raise RuntimeError(
             "Fold harmonization aborted by HARMONIZATION_UNSEEN_SITE_POLICY='fail': "
-            f"{len(folds_with_unseen)} fold(s) contain validation-only SITE levels."
+            f"{len(folds_with_unseen)} fold(s) contain validation-only SITE levels. "
+            "Recommended (Option A): use standard StratifiedKFold CV for publication runs "
+            "(do not pass --site-stratified-cv)."
         )
 
     harmonized_folds: List[HarmonizationFold] = []
@@ -898,7 +954,10 @@ def harmonize_spatial_features(
         return spatial_df
 
     try:
-        model, train_harm = harmonizationLearn(train_feats[active_cols].values, train_cov)
+        model, train_harm = harmonizationLearn(
+            train_feats[active_cols].values,
+            train_cov,
+        )
         train_df = train_df.copy()
         train_df[active_cols] = train_harm
 

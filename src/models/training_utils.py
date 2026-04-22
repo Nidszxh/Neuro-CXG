@@ -972,6 +972,7 @@ def train_fold_with_onecycle(
     use_grl: bool,
     grl_weight: float,
     fold: int,
+    min_epochs_before_stopping: int = 0,
     weight_decay: float = 0.0,
     gradient_accumulation_steps: int = 2,
     pct_start: float = GNN_ONECYCLE_PCT_START,
@@ -1069,8 +1070,15 @@ def train_fold_with_onecycle(
             }
             best_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
 
-        if early_stopping(metrics['auc']):
-            logger.info(f"Fold {fold}: early stopping at epoch {epoch}")
+        should_stop = early_stopping(metrics['auc'])
+        if epoch >= int(max(min_epochs_before_stopping, 0)) and should_stop:
+            logger.info(
+                "Fold %s: early stopping at epoch %s (min_epochs=%s, patience=%s)",
+                fold,
+                epoch,
+                int(max(min_epochs_before_stopping, 0)),
+                int(patience),
+            )
             break
 
     if best_state is None:

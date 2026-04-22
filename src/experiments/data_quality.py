@@ -56,6 +56,7 @@ from src.core.config import (
     GNN_EDGE_GATE,
     GNN_ONECYCLE_MAX_LR,
     GNN_EARLY_STOPPING_PATIENCE,
+    GNN_MIN_EPOCHS_BEFORE_STOPPING,
     GNN_POOLING,
     GNN_WEIGHT_DECAY,
     K_FOLDS,
@@ -698,6 +699,7 @@ def experiment_atlas_centroid_baseline() -> Dict:
             model=model, train_loader=tl, val_loader=vl,
             criterion=criterion, device=DEVICE, epochs=GNN_EPOCHS,
             max_lr=GNN_ONECYCLE_MAX_LR, patience=GNN_EARLY_STOPPING_PATIENCE,
+            min_epochs_before_stopping=GNN_MIN_EPOCHS_BEFORE_STOPPING,
             use_grl=True, grl_weight=0.2, fold=fold, weight_decay=GNN_WEIGHT_DECAY,
         )
         auc = best_metrics["auc"]
