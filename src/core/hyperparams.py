@@ -63,7 +63,7 @@ GRAPH_DENSITY_TARGET = 0.30  # Keep top 30% of directional edges (~40/132 for 12
 
 # Phase 1/2 enhancements (Apr 2026)
 # Default to ridge-regularized Granger edges for stronger statistical signal.
-CAUSALITY_METHOD = "ridge_granger"  # Options: 'granger', 'ridge_granger', 'ridge_granger_hybrid', 'lagged_pearson', 'partial_corr_glasso'
+CAUSALITY_METHOD = "lagged_pearson"  # Options: 'granger', 'ridge_granger', 'ridge_granger_hybrid', 'lagged_pearson', 'partial_corr_glasso'
 GRANGER_MAX_LAG = 5  # Test lags 1-5 TRs (legacy, kept for backward compatibility)
 GRANGER_MAX_LAG_SECONDS = 10.0  # Test causality up to 10s of history; adjusted by subject TR
 GRANGER_SIGNIFICANCE_LEVEL = 0.05  # Statistical significance threshold
@@ -137,11 +137,11 @@ EXCLUDED_SUBJECTS: frozenset = CURATED_WORST_SUBJECTS_1015
 MAX_NAN_ROIS: int = 30
 
 # --- GNN MODEL PARAMETERS (Phase 3: regularized for small graphs) ---
-GNN_HIDDEN_CHANNELS = 64
+GNN_HIDDEN_CHANNELS = 32
 GNN_NUM_HEADS = 2
 GNN_NUM_CLASSES = 2  # 0: Control, 1: ASD
 GNN_DROPOUT = 0.35
-GNN_WEIGHT_DECAY = 5e-5
+GNN_WEIGHT_DECAY = 5e-4
 GNN_LEARNING_RATE = 0.001
 GNN_BATCH_SIZE = 32
 GNN_EPOCHS = 100
@@ -149,30 +149,30 @@ K_FOLDS = 5
 
 GNN_NUM_LAYERS = 2
 GNN_SKIP_CONNECTIONS = True
-GNN_USE_SITE_EMBEDDING = False
+GNN_USE_SITE_EMBEDDING = True
 GNN_NODE_EMB_DIM = 16
-GNN_USE_DEMOGRAPHICS = False
+GNN_USE_DEMOGRAPHICS = True
 GNN_EARLY_STOPPING_PATIENCE = 30
 # Guardrail against premature stopping on noisy/unstable folds.
 GNN_MIN_EPOCHS_BEFORE_STOPPING = 30
-GNN_POOLING = "mean_max_sum"  # Options: 'anatomical', 'attention', 'mean_max_sum'
+GNN_POOLING = "anatomical"  # Options: 'anatomical', 'attention', 'mean_max_sum'
 GNN_USE_GRL = True
-GNN_GRL_ALPHA = 0.05
-GNN_GRL_ALPHA_MAX = 0.15
-GRL_ALPHA_CANDIDATES = [0.02, 0.05, 0.10, 0.15]
+GNN_GRL_ALPHA = 0.10
+GNN_GRL_ALPHA_MAX = 1.0
+GRL_ALPHA_CANDIDATES = [0.10, 0.25, 0.50, 1.0]
 GNN_AUTO_GRL_GRID_SEARCH = False
 # Non-zero weight enables actual adversarial site debiasing when GRL is active.
 GNN_SITE_LOSS_WEIGHT = 0.15
 GNN_EDGE_GATE = True
-GNN_ONECYCLE_MAX_LR = 0.002
+GNN_ONECYCLE_MAX_LR = 0.001
 GNN_ONECYCLE_PCT_START = 0.2
-GNN_ONECYCLE_WARMUP_FRACTION = 0.15
+GNN_ONECYCLE_WARMUP_FRACTION = 0.05
 
 # Auxiliary regularization defaults (kept conservative by default).
 # These were previously hardcoded in gnn_model.py and can now be tuned safely.
 # NOTE: Setting structural_dropout and edge_contrastive to force graph learning
 # (previously disabled due to known issue DD-009 - model ignoring graph structure)
-GNN_STRUCTURAL_DROPOUT_PROB = 0.3  # Force model to use graph edges by zeroing node features
+GNN_STRUCTURAL_DROPOUT_PROB = 0.0  # Disabled - counterproductive without contrastive complement
 GNN_EDGE_CONTRASTIVE_WEIGHT = 0.0  # Keep auxiliary contrastive objective off for baseline stability
 GNN_INVARIANCE_WEIGHT = 0.0
 GNN_SPATIAL_INVARIANCE_WEIGHT = 0.0
@@ -229,9 +229,8 @@ OPTIMIZE_THRESHOLD = True
 # - "f1": max-F1 threshold on held-out calibration fold
 # - "youden": max(sensitivity + specificity - 1) - reduces false negatives
 # - "fixed": use EVAL_FIXED_THRESHOLD directly (deployment lock)
-EVAL_THRESHOLD_POLICY = "fixed"
-# Locked global deployment threshold from Condition C seed-stability calibration.
-EVAL_FIXED_THRESHOLD = 0.5263
+EVAL_THRESHOLD_POLICY = "youden"
+EVAL_FIXED_THRESHOLD = 0.5263  # Kept for backward compatibility
 
 # Site robustness gate derived from cross-site experiment output
 # (`results/experiments/data_quality/cross_site_auc.csv`).
@@ -241,8 +240,8 @@ SITE_ROBUSTNESS_MAX_WEAK_SITE_FRACTION = 0.40
 SITE_ROBUSTNESS_MIN_EVALUABLE_SITES = 5
 SITE_ROBUSTNESS_GATE_POLICY = "warn"  # Options: "warn", "fail"
 
-USE_FOCAL_LOSS = False
-USE_CLASS_WEIGHTS = True
+USE_FOCAL_LOSS = True
+USE_CLASS_WEIGHTS = False
 USE_BALANCED_SAMPLING = False
 
 # EVAL_FREQUENCY removed in Task 6 (DD-014) — was unused throughout the codebase.

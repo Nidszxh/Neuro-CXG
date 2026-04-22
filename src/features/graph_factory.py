@@ -26,6 +26,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_exclusion_logged = False  # Suppress repeated exclusion log messages
+
+
+def _log_exclusions_once():
+    """Log excluded subjects only once per session."""
+    global _exclusion_logged
+    if not _exclusion_logged:
+        logger.info(
+            "Excluded %d hard-coded corrupted subjects: %s",
+            len(EXCLUDED_SUBJECTS), sorted(EXCLUDED_SUBJECTS),
+        )
+        _exclusion_logged = True
+
 
 def _load_csv_cached(csv_path: Path, index_col: str = None) -> pd.DataFrame:
     """Load CSV and cache to Feather when available for faster subsequent reads."""
@@ -147,10 +160,7 @@ class ABIDECausalDataset(Dataset):
             if s.upper() not in excluded_upper
         }
         if excluded_upper:
-            logger.info(
-                "Excluded %d hard-coded corrupted subjects: %s",
-                len(EXCLUDED_SUBJECTS), sorted(EXCLUDED_SUBJECTS),
-            )
+            _log_exclusions_once()
 
         # 2. Remove subjects where too many temporal feature columns are NaN.
         # Any column whose name starts with a lobe index (0-11) is a feature column.

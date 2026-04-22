@@ -1031,12 +1031,12 @@ def main():
     
     _check_harmonization_quality(features, harmonized_folds)
 
-    # Stage 12b — harmonize spatial site-proxy features (conf_std / detection_count)
+    # Stage 12b — spatial harmonization removed (conf_std/detection_count columns no longer exist)
+    # Spatial features are copied directly without harmonization
     if NODE_FEATURES_3D.exists():
         spatial_df = pd.read_csv(NODE_FEATURES_3D)
-        harmonize_spatial_features(spatial_df, manifest, output_path=NODE_FEATURES_3D_HARMONIZED)
-    else:
-        logger.warning("Spatial features not found (%s) — skipping spatial harmonization", NODE_FEATURES_3D)
+        spatial_df.to_csv(NODE_FEATURES_3D_HARMONIZED, index=False)
+        logger.info("Spatial features copied without harmonization (legacy columns removed)")
 
 
 if __name__ == "__main__":
