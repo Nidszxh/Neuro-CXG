@@ -66,7 +66,10 @@ Secondary criteria:
 
 ## Current Status (Run-Dependent)
 
-- Canonical project references report CV around 0.74 AUC and test around 0.65 AUC.
+- **Latest Results (April 2026)**: CV AUC 0.7586 ± 0.0519, Test AUC 0.7499
+- Pipeline shows higher fold variance after force-reset feature regeneration
+- CV-test gap ~0.009
+- Canonical project references report CV around 0.74 AUC and test around 0.65 AUC (previous baseline).
 - Recent runs show variability by configuration and artifact set, especially around site generalization.
 - The dominant open risk remains CV-test gap driven by residual site effects and threshold/reporting alignment.
 

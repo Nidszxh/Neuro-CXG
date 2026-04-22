@@ -5,6 +5,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — 2026-04-22
+
+### Performance Milestone: Force-Reset Feature Regeneration
+
+**Results:**
+- CV AUC: 0.7586 ± 0.0519 (5-fold cross-validation)
+- Test AUC: 0.7499 (AUC-weighted ensemble)
+- CV F1: 0.6264 ± 0.0958
+- Test F1: 0.5985
+- Accuracy: 0.6429
+- Higher fold variance observed (±0.0519 vs ±0.0102)
+- CV-test gap ~0.009
+
+**Per-Fold Results:**
+| Fold | AUC | AUPRC | F1 | Best Epoch |
+|---|---|---|---|---|
+| 1 | 0.7435 | 0.7169 | 0.6190 | 11 |
+| 2 | 0.6837 | 0.6850 | 0.4673 | 20 |
+| 3 | 0.7513 | 0.7521 | 0.7262 | 12 |
+| 4 | 0.7693 | 0.7928 | 0.5950 | 9 |
+| 5 | 0.8451 | 0.8514 | 0.7244 | 8 |
+
+**Notes:**
+- Force-reset cleared all causal graph and feature artifacts
+- Higher variance may indicate feature instability or hyperparameters in need of retuning
+- Brainstem lobe shows constant spatial features (global detection fallback active)
+
+---
+
+---
+
 ## [Unreleased] — 2026-04-19
 
 ### Wave-1 Generalization Stabilization (Core Pipeline Integration)

@@ -57,6 +57,20 @@ python src/run_explainability.py
 python src/run_result_analysis.py
 ```
 
+## Current Model Performance
+
+| Metric | Value |
+|---|---|
+| **CV AUC (5-fold)** | 0.7586 ± 0.0519 |
+| **Test AUC (ensemble)** | 0.7499 |
+| **CV F1** | 0.6264 ± 0.0958 |
+| **Test F1** | 0.5985 |
+| **Accuracy** | 0.6429 |
+| **Mean Best Epoch** | 12.0 |
+
+
+*Pipeline status: RUN RESET - force-regenerated features and graphs, higher fold variance observed.*
+
 ## Common Execution Modes
 
 ```bash

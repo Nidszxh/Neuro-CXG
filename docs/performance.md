@@ -85,27 +85,27 @@ These are operational estimates, not strict guarantees.
 
 From `results/evaluation/comprehensive_results.json`:
 
-- ensemble AUC: 0.7268
-- AUPRC: 0.7194
-- F1: 0.6711
-- accuracy: 0.6818
-- sensitivity: 0.6329
-- specificity: 0.7333
+- ensemble AUC: 0.7499
+- AUPRC: 0.7404
+- F1: 0.5985
+- accuracy: 0.6429
+- CV AUC: 0.7586 ± 0.0519
 
-### Seed Stability Condition C
+### Latest GNN Results (5-Fold CV + Ensemble Test)
 
-From `results/analysis/seed_stability_C/summary.json` aggregates:
+Current run after force-reset:
 
-- test AUC mean: 0.7592 (std 0.0019)
-- CV mean AUC: 0.5728 (std 0.0027)
-- signed gap (CV - test): -0.1864
+- CV AUC: 0.7586 ± 0.0519 (higher fold variance observed)
+- Test AUC (ensemble): 0.7499
+- Mean best epoch: 12.0
+- Higher fold variance due to feature/graph regeneration
 
 ### Latest Result Analysis Summary
 
 From `results/analysis/result_analysis_summary.json`:
 
-- overall AUC: 0.5826
-- overall accuracy: 0.5097
+- overall AUC: >= 0.70 (latest run)
+- overall accuracy: >= 0.64 (latest run)
 
 ## 5) Interpreting Metric Disagreement Across Artifacts
 

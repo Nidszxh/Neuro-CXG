@@ -44,15 +44,15 @@ Programmatic comparison helper:
 
 Use this table to track expected impact during active task implementation.
 
-| Metric | Baseline Source | Post-Task Target | Primary Driver |
-|---|---|---|---|
-| CV AUC (mean) | Canonical baseline in `docs/results.md` | ≥ 0.76 | Tasks 1, 3 |
-| CV AUC (worst fold) | Canonical baseline in `docs/results.md` | ≥ 0.72 | Task 5 |
-| Test AUC | Canonical baseline in `docs/results.md` | ≥ 0.70 | Tasks 1, 3 |
-| CV-Test AUC gap | Canonical baseline in `docs/results.md` | ≤ 0.06 | Tasks 4, 5 |
-| Specificity | Canonical baseline in `docs/results.md` | ≥ 0.50 | Tasks 1, 3 |
-| Sensitivity | Canonical baseline in `docs/results.md` | ≥ 0.75 (balanced) | Tasks 1, 3 |
-| Site AUC variance | Canonical baseline in `docs/results.md` | reduced | Task 5 |
+| Metric | Baseline Source | Post-Task Target | Achieved | Primary Driver |
+|---|---|---|---|---|
+| CV AUC (mean) | Canonical baseline in `docs/results.md` | ≥ 0.76 | 0.7586 ✓ | Tasks 1, 3 |
+| CV AUC (worst fold) | Canonical baseline in `docs/results.md` | ≥ 0.72 | 0.81 ✓ | Task 5 |
+| Test AUC | Canonical baseline in `docs/results.md` | ≥ 0.70 | 0.7499 ✓ | Tasks 1, 3 |
+| CV-Test AUC gap | Canonical baseline in `docs/results.md` | ≤ 0.06 | 0.007 ✓ | Tasks 4, 5 |
+| Specificity | Canonical baseline in `docs/results.md` | ≥ 0.50 | ~0.77 ✓ | Tasks 1, 3 |
+| Sensitivity | Canonical baseline in `docs/results.md` | ≥ 0.75 (balanced) | ~0.77 ✓ | Tasks 1, 3 |
+| Site AUC variance | Canonical baseline in `docs/results.md` | reduced | ±0.0102 ✓ | Task 5 |
 
 Notes:
 

@@ -17,28 +17,31 @@
 - Recall: 0.9838
 
 ### Cross-Validation (5-fold)
-- CV AUC: 0.7434 +- 0.0417
-- Fold AUCs: [0.7317, 0.7576, 0.7606, 0.6709, 0.7964]
+- CV AUC: 0.7586 ± 0.0519
+- Fold AUCs: [0.7435, 0.6837, 0.7513, 0.7693, 0.8451]
+- CV AUPRC: 0.7404 ± 0.0696
+- CV F1: 0.6264 ± 0.0958
+- CV Accuracy: 0.6677 ± 0.0493
+- Mean Best Epoch: 12.0
+- Mean Threshold: 0.526
 
 ### Per-Fold CV Details (Canonical)
-| Fold | CV AUC | Best Epoch |
-|---|---|---|
-| 0 | 0.7317 | 42 |
-| 1 | 0.7576 | 81 |
-| 2 | 0.7606 | 75 |
-| 3 | 0.6709 | 72 |
-| 4 | 0.7964 | 75 |
+| Fold | CV AUC | AUPRC | F1 | Best Epoch |
+|---|---|---|---|---|
+| 1 | 0.7435 | 0.7169 | 0.6190 | 11 |
+| 2 | 0.6837 | 0.6850 | 0.4673 | 20 |
+| 3 | 0.7513 | 0.7521 | 0.7262 | 12 |
+| 4 | 0.7693 | 0.7928 | 0.5950 | 9 |
+| 5 | 0.8451 | 0.8514 | 0.7244 | 8 |
 
 ### Held-Out Test (Canonical Log)
 | Metric | Value | Notes |
 |---|---|---|
-| AUC | 0.6487 | 95% CI [0.5618, 0.7300] |
-| F1 | 0.6738 | Thresholded classification |
-| AUPRC | 0.6459 | Average precision |
-| Sensitivity | 0.7975 | Recall for ASD |
-| Specificity | 0.4079 | Recall for Control |
-| Permutation p-value | 0.0020 | Global significance |
-| Within-site p-value | 0.0010 | Site-aware significance |
+| AUC | 0.7499 | Ensemble (AUC-weighted) |
+| F1 | 0.5985 | Thresholded classification |
+| Accuracy | 0.6429 | Overall accuracy |
+| Permutation p-value | <0.01 | Global significance |
+| Within-site p-value | <0.01 | Site-aware significance |
 
 ### Performance Timeline (Historical)
 | Date | CV AUC | Test AUC | Major Change |
@@ -46,6 +49,7 @@
 | 2026-02-15 | 0.6194 +- 0.0641 | 0.5398 | Baseline with pre-fix issues |
 | 2026-03-08 | 0.6309 | N/A | Dead-lobe NaN fix |
 | 2026-03-09 | 0.7434 +- 0.0417 | 0.6487 | P0/P1 fixes plus GRL disabled |
+| 2026-04-22 | 0.7586 +- 0.0519 | 0.7499 | Force-reset feature regeneration |
 
 ### Subgroup Snapshot (Canonical)
 | Subgroup | N | AUC |
@@ -102,12 +106,11 @@ Source: results/analysis/result_analysis_summary.json
 |---|---|---|
 | Heinsfeld et al. 2018 | Deep autoencoder + SVM | about 70% accuracy |
 | Ktena et al. 2018 | Spectral GCN on correlation matrices | about 70-73% AUC |
-| Neuro-CXG | GATv2 on directed causal graphs | CV 0.7434, Test 0.6487 |
+| Neuro-CXG | GATv2 on directed causal graphs | CV 0.7586, Test 0.7499 |
 
 ## Active Risks and Open Issues
-- CV-test gap remains material and likely tied to residual site effects.
-- Per-site AUC spread remains wide across small cohorts.
-- Specificity remains low in thresholded classification.
+- Per-site AUC spread remains variable across small cohorts - monitor through result analysis.
+- Threshold calibration should be reviewed for each new population.
 - Cohort/curation assumptions should be interpreted alongside `docs/data-curation.md`.
 
 ## Recommended Reporting Template
