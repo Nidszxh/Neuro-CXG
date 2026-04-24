@@ -232,6 +232,55 @@ def build_pearson_graphs(output_dir: Path) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# GRAPH REBUILD FOR ABLATION D2 (Ridge Granger)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_ridge_granger_graphs(output_dir: Path) -> bool:
+    """
+    Rebuild causal graphs using ridge_granger instead of lagged_pearson.
+    Saves to `output_dir` so existing graphs are not overwritten.
+    Returns True on success.
+    """
+    logger.info("\n" + "=" * 70)
+    logger.info("ABLATION D2: REBUILDING GRAPHS WITH RIDGE GRANGER")
+    logger.info("=" * 70)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Monkey-patch the module-level constant in construct_causal
+    import src.features.construct_causal as cc_mod
+
+    original_method = cc_mod.CAUSALITY_METHOD
+    original_dir = cc_mod.CAUSAL_GRAPHS_DIR
+
+    try:
+        cc_mod.CAUSALITY_METHOD = "ridge_granger"
+        cc_mod.CAUSAL_GRAPHS_DIR = output_dir
+        logger.info(f"  Method override : {original_method} → ridge_granger")
+        logger.info(f"  Output dir      : {output_dir}")
+
+        import pandas as pd
+        from src.core.config import MASTER_MANIFEST
+        from tqdm import tqdm
+
+        manifest = pd.read_csv(MASTER_MANIFEST)
+        success, failed = 0, 0
+        for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Building Ridge Granger graphs"):
+            result = cc_mod.construct_graph(row["subject_id"], row["split"])
+            if result:
+                success += 1
+            else:
+                failed += 1
+
+        logger.info(f"  Built {success}/{success+failed} graphs in {output_dir}")
+        return success > 0
+
+    finally:
+        cc_mod.CAUSALITY_METHOD = original_method
+        cc_mod.CAUSAL_GRAPHS_DIR = original_dir
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CORE TRAINING RUNNER
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -479,6 +528,47 @@ def run_ablation_e(base_ds) -> Dict:
     return run_kfold(base_ds, factory, ablation_name="E (No site/demographics)")
 
 
+def run_ablation_d2() -> Dict:
+    """D2 — Ridge Granger edges: rebuild graphs with 'ridge_granger' method and stronger GRL."""
+    ridge_granger_dir = DATA_PROCESSED / "causal_graphs_ridge_granger"
+
+    # Check if already built
+    n_existing = sum(1 for _ in ridge_granger_dir.glob("*.pt")) if ridge_granger_dir.exists() else 0
+
+    if n_existing < 100:
+        logger.info(f"  Ridge Granger graphs: {n_existing} found, building...")
+        ok = build_ridge_granger_graphs(ridge_granger_dir)
+        if not ok:
+            logger.error("  Graph rebuild failed — skipping ablation D2")
+            return {}
+    else:
+        logger.info(f"  Reusing {n_existing} existing ridge-granger graphs in {ridge_granger_dir}")
+
+    # Create dataset pointing to Ridge Granger graph directory
+    from src.features.graph_factory import ABIDECausalDataset
+
+    class RidgeGrangerDataset(ABIDECausalDataset):
+        def _load_data_sources(self):
+            super()._load_data_sources()
+            self.adj_dir = ridge_granger_dir  # redirect to Ridge Granger graphs
+
+    try:
+        ridge_ds = RidgeGrangerDataset(split="train")
+    except Exception as e:
+        logger.error(f"  Failed to load Ridge Granger dataset: {e}")
+        return {}
+
+    # Use same config as Ablation D (which achieved 0.8585)
+    factory = _gnn_factory_default(
+        use_site_embedding=True,
+        use_demographics=True,
+        use_grl=True,
+        grl_alpha=1.0,  # KEY: stronger GRL like Ablation D
+        edge_gate=True,
+    )
+    return run_kfold(ridge_ds, factory, ablation_name="D2 (Ridge Granger edges)")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # RESULTS SUMMARY
 # ─────────────────────────────────────────────────────────────────────────────
@@ -530,7 +620,7 @@ def print_summary(results: Dict[str, Dict], baseline_auc: float = 0.63) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 ABLATION_MAP = {"A": "FlatMLP (no graph)", "B": "Spatial only", "C": "Temporal (no freq)",
-                "D": "Lagged Pearson", "E": "No site/demographics"}
+                "D": "Lagged Pearson", "D2": "Ridge Granger", "E": "No site/demographics"}
 
 
 def main():
@@ -576,6 +666,9 @@ def main():
 
     if "D" in args.ablations:
         results["D"] = run_ablation_d()  # loads its own dataset
+
+    if "D2" in args.ablations:
+        results["D2"] = run_ablation_d2()  # Ridge Granger with stronger GRL
 
     if "E" in args.ablations:
         results["E"] = run_ablation_e(base_ds)
