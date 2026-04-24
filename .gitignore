@@ -56,16 +56,14 @@ yolo26n.pt
 !models/**/*.json
 
 # --- Results & Experiment Tracking ---
+results/
 runs/
 mlruns/
 .mlflow/
+notebooks/
+paper/experiments/
+
 # Keep plots and summaries, ignore heavy per-subject CSVs if needed
-results/**
-!results/**/*.png
-!results/**/*.jpg
-!results/**/*.json
-!results/**/README.md
-!results/.gitkeep
 
 # --- OS / IDE Junk ---
 .DS_Store
@@ -85,7 +83,6 @@ logs/
 # --- Scripts & Tools ---
 # Keeping the clean script, but ignoring generated tree logs
 tree.sh
-tree.md
 
 # --- Testing & Coverage ---
 .pytest_cache/

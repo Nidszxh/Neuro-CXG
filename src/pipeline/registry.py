@@ -55,7 +55,7 @@ class Stage:
 STAGES: List[Stage] = [
     Stage("download", "ABIDE Download", "src.data.abide_download", DATA_METADATA / "download_log.csv"),
     Stage("split", "Train/Val/Test Split", "src.data.split", MASTER_MANIFEST, dependencies=["download"]),
-    Stage("manifest", "Generate Master Manifest", "src.utils.manifestor", MASTER_MANIFEST, dependencies=["split"]),
+    Stage("manifest", "Generate Master Manifest", "src.data.manifestor", MASTER_MANIFEST, dependencies=["split"]),
     # Task 5 (DD-013): Opt-in site-stratified CV fold regeneration.
     # Run AFTER split and BEFORE harmonization/gnn_training.
     #   python src/run_pipeline.py --site-stratified-cv
@@ -77,8 +77,8 @@ STAGES: List[Stage] = [
         None,
         function="check_dataset_integrity",
     ),
-    Stage("annotate", "Atlas-Based Label Annotation", "src.pipelines.generate_labels", FINAL_TRAIN / "labels", dependencies=["split"]),
-    Stage("yolo", "YOLO Training", "src.pipelines.roi_detection", YOLO_WEIGHTS_PATH, dependencies=["annotate"]),
+    Stage("annotate", "Atlas-Based Label Annotation", "src.detection.generate_labels", FINAL_TRAIN / "labels", dependencies=["split"]),
+    Stage("yolo", "YOLO Training", "src.detection.roi_detection", YOLO_WEIGHTS_PATH, dependencies=["annotate"]),
     Stage("spatial_features", "Spatial Feature Extraction", "src.features.extract_spatial", NODE_FEATURES_3D, dependencies=["split"]),
     Stage(
         "temporal_features",

@@ -624,7 +624,7 @@ def experiment_atlas_centroid_baseline() -> Dict:
     if atlas_centroids is None:
         logger.error(
             "  Cannot compute atlas centroids: no roi_centroids.json and nibabel unavailable.\n"
-            "  Run `python src/pipelines/generate_labels.py` first to generate roi_centroids.json."
+            "  Run `python -m src.detection.generate_labels` first to generate roi_centroids.json."
         )
         return {}
 

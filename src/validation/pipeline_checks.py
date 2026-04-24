@@ -1656,7 +1656,7 @@ class PipelineValidator:
                 stage="Manifest", passed=False,
                 message=f"Manifest missing: {MASTER_MANIFEST}",
                 severity="critical",
-                fix_suggestion="Run: python -m src.utils.manifestor",
+                fix_suggestion="Run: python -m src.data.manifestor",
             ))
             return False, None
         try:
@@ -1667,7 +1667,7 @@ class PipelineValidator:
                     stage="Manifest", passed=False,
                     message=f"Missing columns: {missing_cols}",
                     severity="critical",
-                    fix_suggestion="Regenerate: python -m src.utils.manifestor",
+                    fix_suggestion="Regenerate: python -m src.data.manifestor",
                 ))
                 return False, None
             splits = set(df["split"].unique())
