@@ -82,7 +82,7 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 
 - `CAUSALITY_METHOD = "lagged_pearson"`  # Changed from ridge_granger
 - `GRANGER_MAX_LAG = 5`
-- `GRANGER_MAX_LAG_SECONDS = 10.0`
+- `GRANGER_MAX_LAG_SECONDS = 10.0`  # Max lag in seconds
 - `GRANGER_USE_GPU = True`
 - `SPARSITY_METHOD = "topk_per_node"`
 - `SPARSITY_TOPK_PER_NODE = 3`
@@ -107,8 +107,8 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 - `GNN_USE_SITE_EMBEDDING = True`  # Enabled for better performance
 - `GNN_USE_DEMOGRAPHICS = True`  # Enabled for more context
 - `GNN_USE_GRL = True`
-- `GNN_GRL_ALPHA = 0.10`
-- `GNN_GRL_ALPHA_MAX = 1.0`  # Increased from 0.15
+- `GNN_GRL_ALPHA = 0.10`  # CRITICAL: Do NOT increase to 1.0 - test AUC drops from 0.85 to 0.83
+- `GNN_GRL_ALPHA_MAX = 1.0`
 - `GNN_SITE_LOSS_WEIGHT = 0.15`
 
 ### Auxiliary Objective Controls

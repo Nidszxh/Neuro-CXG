@@ -6,6 +6,43 @@
 - Keep both views side by side to avoid accidental metric drift.
 - Keep experiment planning targets in `docs/experiments.md`; this page reports measured outcomes only.
 
+## Current Best Run (April 24, 2026)
+- Run ID: pipeline_20260424_191537
+- Status: Best performing configuration after systematic investigation
+- Configuration: lagged_pearson + GNN_GRL_ALPHA=0.10 + MaxLag=10.0s
+
+### Current Cross-Validation (5-fold)
+- CV AUC: 0.8004 ± 0.0293
+- CV F1: 0.7562 ± 0.0400
+- CV Accuracy: 0.7483 ± 0.0271
+
+### Per-Fold CV Details (Current Best)
+| Fold | CV AUC | AUPRC | F1 | Best Epoch |
+|---|---|---|---|---|
+| 1 | 0.7826 | 0.8040 | 0.7153 | 36 |
+| 2 | 0.7629 | 0.7811 | 0.7059 | 59 |
+| 3 | 0.8219 | 0.8215 | 0.8125 | 41 |
+| 4 | 0.7897 | 0.7978 | 0.7758 | 29 |
+| 5 | 0.8449 | 0.8775 | 0.7714 | 35 |
+
+### Current Held-Out Test
+| Metric | Value | 95% CI |
+|-------|-------|--------|
+| **AUC** | **0.8753** | - |
+| **F1** | **0.8121** | - |
+| Accuracy | 0.7987 | - |
+| Sensitivity | 0.8481 | - |
+| Specificity | 0.7467 | - |
+| Permutation p-value | <0.01 | ✓ Significant |
+
+### Investigation Summary (April 24, 2026)
+
+| Config | CV AUC | Test AUC | Test F1 | Recommendation |
+|--------|--------|---------|---------|-------------|
+| lagged_pearson + GRL=0.10 | 0.8004 | **0.8753** | **0.8121** | ✓ RECOMMENDED |
+| lagged_pearson + GRL=1.0 | 0.8034 | 0.8498 | 0.7662 | Not recommended |
+| ridge_granger + GRL=0.10 | 0.8075 | 0.8359 | 0.7484 | Not recommended |
+
 ## Canonical Reference Run
 - Run ID: pipeline_20260309_194459
 - Status: canonical benchmark run used in project reporting

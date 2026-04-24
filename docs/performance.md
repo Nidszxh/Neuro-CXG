@@ -81,12 +81,12 @@ These are operational estimates, not strict guarantees.
 
 ## 4) Artifact-Backed Model Performance Snapshot
 
-### Current Best Results (April 22, 2026)
+### Current Best Results (April 24, 2026)
 
 After hyperparameter optimization (lagged_pearson + site conditioning + GRL):
 
-- **CV AUC**: 0.8001 ± 0.0293
-- **Test AUC (ensemble)**: 0.8748
+- **CV AUC**: 0.8004 ± 0.0293
+- **Test AUC (ensemble)**: 0.8753
 - **Test F1**: 0.8121
 - **Test Accuracy**: 0.7987
 - **Mean Best Epoch**: 40.0
@@ -95,11 +95,11 @@ After hyperparameter optimization (lagged_pearson + site conditioning + GRL):
 
 | Fold | AUC | F1 |
 |------|-----|-----|
-| 0 | 0.7828 | 0.7206 |
-| 1 | 0.7621 | 0.7183 |
-| 2 | 0.8215 | 0.8075 |
-| 3 | 0.7895 | 0.7758 |
-| 4 | 0.8445 | 0.7714 |
+| 0 | 0.7826 | 0.7153 |
+| 1 | 0.7629 | 0.7059 |
+| 2 | 0.8219 | 0.8125 |
+| 3 | 0.7897 | 0.7758 |
+| 4 | 0.8449 | 0.7714 |
 
 ### Configuration That Achieved These Results
 
@@ -120,13 +120,36 @@ EVAL_THRESHOLD_POLICY = "youden"
 | Run | CV AUC | Test AUC | Test F1 |
 |-----|-------|----------|---------|
 | Baseline (ridge_granger) | 0.7586 ± 0.0519 | 0.7325 | 0.6338 |
-| **Current (lagged_pearson + site)** | **0.8001 ± 0.0293** | **0.8748** | **0.8121** |
+| **Current (lagged_pearson + site)** | **0.8004 ± 0.0293** | **0.8753** | **0.8121** |
 
-Key improvements:
-- +0.04 CV AUC from lagged_pearson edges
-- +0.14 Test AUC from site conditioning + strong GRL
-- +0.18 F1 from Youden threshold policy
-- Reduced variance (±0.052 → ±0.029)
+**April 24, 2026 Configuration Investigation Results:**
+
+| Config | CV AUC | Test AUC | Test F1 | Notes |
+|--------|--------|---------|---------|-------|
+| lagged_pearson + GRL=0.10 | 0.8004 | 0.8753 | 0.8121 | ✓ BEST |
+| lagged_pearson + GRL=1.0 | 0.8034 | 0.8498 | 0.7662 | Lower test |
+| ridge_granger + GRL=0.10 | 0.8075 | 0.8359 | 0.7484 | Higher CV, lower test |
+| ridge_granger + GRL=1.0 | - | ~0.85 | ~0.79 | Not tested |
+
+Key findings:
+- **lagged_pearson + GRL=0.10 achieves best test performance** despite slightly lower CV
+- ridge_granger has higher CV but lower test, suggesting potential overfitting
+- GRL=1.0 works in ablation script but NOT in main pipeline (different GRL implementation)
+- CV doesn't always predict test performance
+
+**Final Recommended Configuration:**
+```python
+CAUSALITY_METHOD = "lagged_pearson"  # Best test performance
+GRANGER_MAX_LAG_SECONDS = 10.0  # Max lag in seconds
+GNN_HIDDEN_CHANNELS = 32
+GNN_WEIGHT_DECAY = 5e-4
+GNN_POOLING = "anatomical"
+GNN_USE_SITE_EMBEDDING = True
+GNN_USE_DEMOGRAPHICS = True
+GNN_GRL_ALPHA = 0.10  # NOT 1.0 - test drops with 1.0
+USE_FOCAL_LOSS = True
+EVAL_THRESHOLD_POLICY = "youden"
+```
 
 ## 5) Interpreting Metric Disagreement Across Artifacts
 

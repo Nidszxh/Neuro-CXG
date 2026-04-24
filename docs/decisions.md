@@ -79,8 +79,8 @@ This log records active architectural and modeling decisions reflected in source
   - `GNN_HIDDEN_CHANNELS = 32` - reduced from 64 to reduce overfitting
   - `GNN_WEIGHT_DECAY = 5e-4` - increased from 5e-5
 - Results:
-  - CV AUC: 0.8001 ± 0.0293 (was 0.7586 ± 0.0519)
-  - Test AUC: 0.8748 (was 0.7325)
+  - CV AUC: 0.8004 ± 0.0293 (was 0.7586 ± 0.0519)
+  - Test AUC: 0.8753 (was 0.7325)
   - Test F1: 0.8121 (was 0.6338)
 - Source of truth:
   - `src/core/hyperparams.py`

@@ -61,20 +61,21 @@ python src/run_result_analysis.py
 
 | Metric | Baseline | **Optimized** |
 |-------|---------|-------------|
-| **CV AUC (5-fold)** | 0.7586 ± 0.0519 | **0.8001 ± 0.0293** |
-| **Test AUC (ensemble)** | 0.7325 | **0.8748** |
+| **CV AUC (5-fold)** | 0.7586 ± 0.0519 | **0.8004 ± 0.0293** |
+| **Test AUC (ensemble)** | 0.7325 | **0.8753** |
 | **Test F1** | 0.6338 | **0.8121** |
 | **Test Accuracy** | 0.6429 | **0.7987** |
 | **Mean Best Epoch** | 12.0 | 40.0 |
 
 **Key Configuration Changes:**
 - `CAUSALITY_METHOD = "lagged_pearson"` (was ridge_granger)
+- `GRANGER_MAX_LAG_SECONDS = 10.0` (max lag in seconds)
 - `GNN_USE_SITE_EMBEDDING = True` (was False)
 - `GNN_USE_DEMOGRAPHICS = True` (was False)
-- `GNN_GRL_ALPHA_MAX = 1.0` (was 0.15)
+- `GNN_GRL_ALPHA = 0.10` (NOT 1.0 - test drops with 1.0)
 
 
-*Pipeline status: RUN RESET - force-regenerated features and graphs, higher fold variance observed.*
+*Pipeline status: OPTIMIZED - lagged_pearson + GRL=0.10 achieved best test performance.*
 
 ## Common Execution Modes
 

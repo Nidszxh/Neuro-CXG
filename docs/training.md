@@ -167,10 +167,11 @@ Completed experiments (April 2026):
 | Test AUC | 0.6487 [0.5618, 0.7300] | Bootstrap CI, permutation p=0.0020 |
 | Test F1 | 0.6738 | At F1-optimal threshold |
 
-**Current Run** (April 19, 2026 stabilization):
-- CV AUC: 0.6711 ± 0.0149 (degraded, under investigation)
-- Test AUC: 0.6033 (still significant, p<0.01)
-- Graph health: 34.37 mean edges, 0 dead lobes, 2/1015 disconnected
+**Current Run** (April 24, 2026):
+- CV AUC: 0.8004 ± 0.0293
+- Test AUC: 0.8753
+- Test F1: 0.8121
+- Graph health: 48.7 mean edges, 0 dead lobes
 
 ---
 

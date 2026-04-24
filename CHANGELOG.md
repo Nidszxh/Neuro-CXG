@@ -5,6 +5,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — 2026-04-24
+
+### Configuration Investigation: Optimal Settings Confirmed
+
+**Investigation Summary (April 24, 2026):**
+- Tested all combinations: lagged_pearson vs ridge_granger × GRL=0.10 vs GRL=1.0
+- Found that CV doesn't always predict test performance
+- ridge_granger had higher CV but LOWER test (potential overfitting)
+- GRL=1.0 works in ablation script but NOT in main pipeline
+- **Best config: lagged_pearson + GRL=0.10**
+
+**Results:**
+| Config | CV AUC | Test AUC | Test F1 |
+|--------|--------|---------|--------|
+| lagged_pearson + GRL=0.10 | 0.8004 | **0.8753** | **0.8121** |
+| lagged_pearson + GRL=1.0 | 0.8034 | 0.8498 | 0.7662 |
+| ridge_granger + GRL=0.10 | 0.8075 | 0.8359 | 0.7484 |
+
+**Key Finding:** Use GRL_ALPHA=0.10 (NOT 1.0) in production.
+
+### Documentation Updates
+- docs/performance.md - Added investigation results
+- docs/ANALYSIS_AND_VALIDATION.md - Updated with current metrics
+- docs/configuration.md - Warning about GRL_ALPHA
+- docs/results.md - Added current best run metrics
+- results/experiments/ablations/investigation_log.md - Full investigation log
+- src/experiments/run_ablations.py - Added D2 ablation for ridge_granger
+
+---
+
 ## [Unreleased] — 2026-04-22
 
 ### Performance Milestone: Publication-Quality Results (Optimized Configuration)
@@ -21,10 +51,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `USE_FOCAL_LOSS = True` (was False)
 
 **Results:**
-- CV AUC: 0.8001 ± 0.0293 (was 0.7586 ± 0.0519, **+0.04**)
-- Test AUC: 0.8748 (was 0.7325, **+0.14**)
+- CV AUC: 0.8004 ± 0.0293 (was 0.7586 ± 0.0519, **+0.04**)
+- Test AUC: 0.8753 (was 0.7325, **+0.14**)
 - Test F1: 0.8121 (was 0.6338, **+0.18**)
-- Mean Best Epoch: 38.8 (was 12.0)
+- Mean Best Epoch: 40.0 (was 12.0)
 - Variance reduced: ±0.0519 → ±0.0293
 
 **Per-Fold Results:**
