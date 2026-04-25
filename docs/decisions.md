@@ -68,7 +68,7 @@ This log records active architectural and modeling decisions reflected in source
   - `lagged_pearson` - multi-lag Pearson correlation (current default)
   - `ridge_granger_hybrid` - beta-weighted combination
   - `partial_corr_glasso` - sparse conditional dependence
-## DD-007: Optimized GNN hyperparameters for publication performance (April 2026)
+## DD-011: Optimized GNN hyperparameters for publication performance (April 2026)
 
 - Decision: use site conditioning, demographic conditioning, and anatomical pooling for publication-quality results.
 - Key changes:
@@ -85,7 +85,7 @@ This log records active architectural and modeling decisions reflected in source
 - Source of truth:
   - `src/core/hyperparams.py`
 
-## DD-008: Youden threshold policy for balanced sensitivity/specificity
+## DD-009: Youden threshold policy for balanced sensitivity/specificity
 
 - Decision: use Youden threshold policy for evaluation reporting.
 - Rationale:
@@ -94,7 +94,7 @@ This log records active architectural and modeling decisions reflected in source
 - Source of truth:
   - `src/core/hyperparams.py` (`EVAL_THRESHOLD_POLICY = "youden"`)
 
-## DD-007: Keep multiview graph generation and invariance training optional, with quality gates
+## DD-012: Keep multiview graph generation and invariance training optional, with quality gates
 
 - Decision: multiview graph construction is opt-in (`--multiview`), and invariance loss is enabled only when multiview artifacts are present and pass quality checks.
 - Rationale:
@@ -105,7 +105,7 @@ This log records active architectural and modeling decisions reflected in source
   - `src/run_pipeline.py` (`--multiview`)
   - `src/models/gnn_model.py` (multiview availability + quality gate)
 
-## DD-008: Keep GRL site-adversarial path enabled but controlled
+## DD-010: Keep GRL site-adversarial path enabled but controlled
 
 - Decision: GRL is enabled in config with conservative alpha defaults (`GNN_GRL_ALPHA`, `GNN_GRL_ALPHA_MAX`), with optional alpha grid-search support.
 - Rationale:
@@ -115,7 +115,7 @@ This log records active architectural and modeling decisions reflected in source
   - `src/models/gnn_model.py`
   - `src/models/training_utils.py`
 
-## DD-009: Support auxiliary structural/invariance losses as tunable controls
+## DD-013: Support auxiliary structural/invariance losses as tunable controls
 
 - Decision: structural dropout, edge contrastive, causal invariance, and spatial invariance terms are implemented and controlled by config weights.
 - Current default posture:
@@ -126,7 +126,7 @@ This log records active architectural and modeling decisions reflected in source
   - `src/models/gnn_model.py`
   - `src/models/training_utils.py`
 
-## DD-010: Make site-stratified CV an explicit optional protocol
+## DD-014: Make site-stratified CV an explicit optional protocol
 
 - Decision: default split path uses stratified folds; optional `--site-stratified-cv` rewrites `cv_fold` with GroupKFold over site clusters.
 - Rationale:
@@ -136,7 +136,7 @@ This log records active architectural and modeling decisions reflected in source
   - `src/run_pipeline.py`
   - `src/pipeline/registry.py`
 
-## DD-011: Lock deployment operating point through threshold policy
+## DD-015: Lock deployment operating point through threshold policy
 
 - Decision: evaluation and downstream analysis use centralized threshold policy (`EVAL_THRESHOLD_POLICY`), currently fixed at `EVAL_FIXED_THRESHOLD = 0.5263`.
 - Rationale:
@@ -148,7 +148,7 @@ This log records active architectural and modeling decisions reflected in source
   - `src/run_result_analysis.py`
   - `src/models/training_utils.py`
 
-## DD-012: Preserve explainability as a first-class post-training stage
+## DD-016: Preserve explainability as a first-class post-training stage
 
 - Decision: retain scripted node, edge, feature, and literature explainability workflows in the default analysis stack.
 - Rationale:
@@ -159,3 +159,24 @@ This log records active architectural and modeling decisions reflected in source
   - `src/analysis/edge_importance.py`
   - `src/analysis/feature_attribution.py`
   - `src/analysis/literature_validation.py`
+
+## DD-017: Visualization correctness fixes (April 2025)
+
+- Decision: Fixed critical correctness bugs identified in visualization code review.
+- Rationale:
+  - Ensure ASD/Control labels are correctly rendered in all diagnostic plots
+  - Ensure training metrics are accurately represented in monitoring
+  - Consolidate loss classes for maintainability without affecting model behavior
+- Changes:
+  - `diagnostics.py`: Fixed DX_GROUP mapping from `{1:ASD, 2:Control}` to `{2:ASD, 1:Control}` in `_plot_topology_comparison()` and `compare_asd_vs_control()`
+  - `gnn_model.py`: Fixed val_loss tracking to use actual loss instead of `1-AUC` proxy; added `val_inverse_auc` for monitoring
+  - `registry.py`: Added `description` field to `Stage` dataclass and helper functions
+  - `losses.py`: Consolidated `CausalInvarianceLoss`, `SpatialInvarianceLoss`, `EdgeStructureContrastiveLoss`
+  - `hyperparams.py`: Added `GNN_SITE_EMBEDDING_DIM = 16` constant
+  - `decisions.md`: Renumbered duplicate DD-007/DD-008 entries
+- Source of truth:
+  - `src/analysis/diagnostics.py`
+  - `src/models/gnn_model.py`
+  - `src/pipeline/registry.py`
+  - `src/models/losses.py`
+  - `src/core/hyperparams.py`

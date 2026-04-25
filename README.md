@@ -19,7 +19,7 @@ Neuro-CXG is a configuration-driven, end-to-end pipeline for ASD vs Control clas
 | `src/run_pipeline.py` | Main orchestrator entrypoint that resolves and executes stage plans. |
 | `src/core/` | Configuration modules, constants, and runtime validators. |
 | `src/data/` | ABIDE ingestion, split generation, and dataset preparation helpers. |
-| `src/pipelines/` | Stage scripts for labeling and ROI detection workflows. |
+| `src/detection/` | ROI detection and labeling workflows. |
 | `src/features/` | Feature extraction, harmonization, causal graph construction, and dataset assembly. |
 | `src/models/` | GNN architecture, training loop, model factory, and training utilities. |
 | `src/analysis/` | Explainability, diagnostics, and reporting visualizations. |

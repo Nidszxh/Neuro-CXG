@@ -124,7 +124,7 @@ python -c "from src.core.config import validate_gnn_training_inputs; validate_gn
 If graph quality is suspicious, run:
 
 ```bash
-python -m src.analysis.diagnose_dead_lobes --split train
+python -m src.validation.pipeline_checks
 python -m src.validation.pipeline_checks
 ```
 

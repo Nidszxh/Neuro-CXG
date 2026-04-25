@@ -25,9 +25,9 @@ dist/
 *.zip
 *.tar*
 *.7z
+*.feather        
 
 # --- Project Data Directories ---
-# Ignore heavy data but keep the directory hierarchy via .gitkeep
 data/raw/**
 data/processed/**
 data/final/**
@@ -35,11 +35,13 @@ data/images/
 data/labels/
 backup83/
 
-# Metadata Exceptions: Keep critical manifests and atlas info
+# Metadata Exceptions
 !data/metadata/atlas_metadata.json
 !data/metadata/roi_centroids.json
 !data/metadata/master_manifest.csv
 !data/metadata/node_attributes_*.csv
+!data/metadata/active_subject_ids.txt     
+!data/metadata/harmonized_folds_cv/*.csv  
 
 # --- Models & Weights ---
 models/**
@@ -50,20 +52,24 @@ models/**
 *.weights
 yolo26n.pt
 
-# Keep model configs/READMEs
 !models/README.md
 !models/**/*.yaml
 !models/**/*.json
 
 # --- Results & Experiment Tracking ---
-results/
-runs/
+results/experiments/runs/     
+results/experiments/detection/ROI_Detection_v*/  
+results/analysis/seed_stability_C/checkpoint_snapshots/  
 mlruns/
 .mlflow/
-notebooks/
-paper/experiments/
 
-# Keep plots and summaries, ignore heavy per-subject CSVs if needed
+# Keep important result summaries
+!results/evaluation/comprehensive_results.*
+!results/experiments/ablations/ablation_results.csv
+!results/explainability/summary.json
+
+# --- Paper Experiments ---
+paper/experiments/
 
 # --- OS / IDE Junk ---
 .DS_Store
@@ -80,10 +86,6 @@ logs/
 *.log
 *.pkl
 
-# --- Scripts & Tools ---
-# Keeping the clean script, but ignoring generated tree logs
-tree.sh
-
 # --- Testing & Coverage ---
 .pytest_cache/
 .coverage
@@ -96,3 +98,4 @@ pytest.ini
 dump/*
 chats/*
 scripts/*
+docs/internal/   

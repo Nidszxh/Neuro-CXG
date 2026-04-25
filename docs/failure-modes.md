@@ -102,7 +102,7 @@ python -m src.features.construct_causal --n-jobs -1
 
 ```bash
 python -m src.validation.pipeline_checks
-python -m src.analysis.diagnose_dead_lobes --split train
+python -m src.validation.pipeline_checks
 ```
 
 3. Confirm upstream temporal/spatial artifacts are valid before retraining.

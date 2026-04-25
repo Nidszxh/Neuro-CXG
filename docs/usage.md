@@ -81,7 +81,7 @@ Additional analysis scripts:
 python -m src.analysis.visualizations
 python -m src.analysis.visualize_causal_graph --auto-pair
 python -m src.analysis.subject_analysis
-python -m src.analysis.diagnose_dead_lobes --split train
+python -m src.validation.pipeline_checks
 ```
 
 ## Script-Specific Options
