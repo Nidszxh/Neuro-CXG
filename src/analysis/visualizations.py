@@ -26,6 +26,7 @@ from src.core.config import (
     GNN_NUM_LAYERS,
     GNN_POOLING,
     GNN_USE_SITE_EMBEDDING,
+    GNN_SITE_EMBEDDING_DIM,
     GNN_USE_DEMOGRAPHICS,
     GNN_USE_GRL,
     GNN_GRL_ALPHA,
@@ -52,11 +53,9 @@ except ImportError:
 
 try:
     from src.analysis.diagnostics import CausalGraphAnalyzer, TrainingMonitor
-    TRAINING_MONITOR_MODULE = True
-    GRAPH_ANALYSIS_MODULE = True
+    DIAGNOSTICS_AVAILABLE = True
 except ImportError:
-    TRAINING_MONITOR_MODULE = False
-    GRAPH_ANALYSIS_MODULE = False
+    DIAGNOSTICS_AVAILABLE = False
     logger.warning("Diagnostics module (TrainingMonitor/CausalGraphAnalyzer) not available")
 
 
@@ -263,100 +262,6 @@ def visualize_accuracy_metrics(output_dir: Path):
         return False
 
 
-
-"""Generate simple feature importance if Captum not available."""
-
-
-def generate_simple_feature_importance(output_dir: Path):
-    logger.info("Generating simple feature importance visualization...")
-
-    try:
-        test_dataset = ABIDECausalDataset(split="test")
-        test_loader = make_loader([d for d in test_dataset if d is not None], batch_size=32)
-
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        checkpoint_path = get_active_checkpoint_dir() / "best_model_fold0.pt"
-        if not checkpoint_path.exists():
-            logger.warning(f"Checkpoint not found: {checkpoint_path}")
-            return
-
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-
-        state_dict = checkpoint["model_state"] if isinstance(checkpoint, dict) and "model_state" in checkpoint else checkpoint
-
-        site_dim = 16 if GNN_USE_SITE_EMBEDDING else 0
-        saved_in_features = state_dict["lin_in.weight"].shape[1]
-        node_emb_dim = saved_in_features - GNN_IN_CHANNELS - site_dim
-        model = build_model(
-            device=device,
-            use_grl=GNN_USE_GRL,
-            grl_alpha=GNN_GRL_ALPHA,
-            node_emb_dim=node_emb_dim,
-        )
-
-        missing, unexpected = model.load_state_dict(state_dict, strict=False)
-        if missing or unexpected:
-            logger.warning(f"Checkpoint load had missing keys: {missing}")
-            logger.warning(f"Checkpoint load had unexpected keys: {unexpected}")
-
-        attach_feature_scaler_from_checkpoint(model, checkpoint, expected_dim=GNN_IN_CHANNELS)
-
-        model.eval()
-
-        feature_gradients = torch.zeros(GNN_IN_CHANNELS)
-        sample_count = 0
-
-        with torch.enable_grad():
-            for batch in test_loader:
-                batch = batch.to(device)
-                batch.x.requires_grad = True
-
-                out = model.forward_batch(batch) if hasattr(model, "forward_batch") else model(
-                    batch.x,
-                    batch.edge_index,
-                    batch.edge_attr,
-                    batch.batch,
-                    site_id=batch.site_id if hasattr(batch, "site_id") else None,
-                    age=batch.age if hasattr(batch, "age") else None,
-                    sex=batch.sex if hasattr(batch, "sex") else None,
-                    fiq=batch.fiq if hasattr(batch, "fiq") else None,
-                )
-
-                loss = out[:, 1].sum()
-                loss.backward()
-
-                feature_gradients += batch.x.grad.abs().mean(dim=0).cpu()
-                sample_count += 1
-
-        feature_gradients /= sample_count
-
-        feature_names = create_feature_names()
-
-        fig, ax = plt.subplots(figsize=(10, 8))
-
-        sorted_idx = torch.argsort(feature_gradients, descending=True)
-        top_20 = sorted_idx[:20]
-
-        y_pos = np.arange(len(top_20))
-        ax.barh(y_pos, feature_gradients[top_20].numpy(), color="#3498db")
-        ax.set_yticks(y_pos)
-        ax.set_yticklabels([feature_names[i] for i in top_20])
-        ax.set_xlabel("Average Gradient Magnitude")
-        ax.set_title("Top 20 Most Important Features (Simple Gradient Analysis)")
-        ax.grid(axis="x", alpha=0.3)
-
-        plt.tight_layout()
-        output_path = output_dir / "feature_importance_simple.png"
-        plt.savefig(output_path, dpi=300, bbox_inches="tight")
-        plt.close()
-
-        logger.info(f"Saved simple feature importance to {output_path}")
-
-    except Exception as e:
-        logger.error(f"Failed to generate simple feature importance: {e}")
-
-
 def run_visualization_pipeline(output_dir: Path):
     """Run complete visualization pipeline."""
     logger.info("=" * 60)
@@ -381,7 +286,7 @@ def run_visualization_pipeline(output_dir: Path):
                 checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
                 state_dict = checkpoint["model_state"] if isinstance(checkpoint, dict) and "model_state" in checkpoint else checkpoint
 
-                site_dim = 16 if GNN_USE_SITE_EMBEDDING else 0
+                site_dim = GNN_SITE_EMBEDDING_DIM if GNN_USE_SITE_EMBEDDING else 0
                 saved_in_features = state_dict["lin_in.weight"].shape[1]
                 node_emb_dim = saved_in_features - GNN_IN_CHANNELS - site_dim
                 model = build_model(
@@ -423,7 +328,7 @@ def run_visualization_pipeline(output_dir: Path):
 
             traceback.print_exc()
 
-    if TRAINING_MONITOR_MODULE:
+    if DIAGNOSTICS_AVAILABLE:
         try:
             logger.info("Generating training history visualizations...")
 
@@ -459,7 +364,7 @@ def run_visualization_pipeline(output_dir: Path):
 
             traceback.print_exc()
 
-    if GRAPH_ANALYSIS_MODULE:
+    if DIAGNOSTICS_AVAILABLE:
         try:
             logger.info("Running graph topology analysis...")
 

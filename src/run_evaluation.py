@@ -92,10 +92,18 @@ from src.core.config import (
     RESULTS_DIR,
     EVAL_THRESHOLD_POLICY,
     EVAL_FIXED_THRESHOLD,
+    EVAL_PER_SITE_MIN_SAMPLES,
 )
+from src.core.hyperparams import GNN_SITE_EMBEDDING_DIM
 from src.features.graph_factory import ABIDECausalDataset
+from src.models.evaluation import (
+    fit_per_site_calibrators,
+    apply_per_site_calibration,
+    optimal_threshold,
+    youden_threshold,
+)
 from src.models.causal_gnn import CausalBrainGNN
-from src.models.factory import build_model
+from src.models.factory import build_model, load_model
 from src.models.training_utils import make_loader, attach_feature_scaler_from_checkpoint
 
 logging.basicConfig(
@@ -125,7 +133,7 @@ def _load_model(fold_id: int) -> CausalBrainGNN:
     # Infer architecture knobs from checkpoint tensors so evaluation stays
     # compatible when config defaults drift between training and evaluation.
     has_site_embedding = any(k.startswith("site_embedding.") for k in state)
-    site_dim = 16 if has_site_embedding else 0
+    site_dim = GNN_SITE_EMBEDDING_DIM if has_site_embedding else 0
 
     saved_lin_in = state.get("lin_in.weight")
     if saved_lin_in is None:
@@ -185,10 +193,6 @@ def _json_safe(value):
     return value
 
 
-def _build_loader(graphs: List, batch_size: int = GNN_BATCH_SIZE) -> DataLoader:
-    return make_loader(graphs, batch_size=batch_size, shuffle=False)
-
-
 @torch.no_grad()
 def _predict_probs(model: CausalBrainGNN, loader: DataLoader) -> Tuple[np.ndarray, np.ndarray]:
     """Return (probs, labels) arrays — probs are ASD probability (class 1)."""
@@ -234,26 +238,6 @@ def _full_metrics(probs: np.ndarray, labels: np.ndarray, threshold: float = 0.5)
     }
 
 
-def _optimal_threshold(probs: np.ndarray, labels: np.ndarray) -> float:
-    """Find threshold that maximises F1 on the given probabilities."""
-    precision, recall, thresholds = precision_recall_curve(labels, probs)
-    f1 = 2 * precision * recall / (precision + recall + 1e-10)
-    best = np.argmax(f1)
-    return float(thresholds[best]) if best < len(thresholds) else 0.5
-
-
-def _youden_threshold(probs: np.ndarray, labels: np.ndarray) -> float:
-    """Find threshold that maximises Youden's J = sensitivity + specificity − 1.
-
-    Prefer over the F1 threshold when balanced sensitivity/specificity is the
-    clinical goal (specificity 0.41 indicates the F1 threshold over-predicts ASD).
-    """
-    fpr, tpr, thresholds = roc_curve(labels, probs)
-    j = tpr - fpr
-    best = int(np.argmax(j))
-    return float(thresholds[best]) if len(thresholds) > 0 else 0.5
-
-
 def _site_ids_from_graphs(graphs: List) -> np.ndarray:
     """Extract integer site_id vector aligned to the provided graph order."""
     return np.array([
@@ -262,44 +246,6 @@ def _site_ids_from_graphs(graphs: List) -> np.ndarray:
         else -1
         for g in graphs
     ])
-
-
-def _fit_per_site_calibrators(
-    probs: np.ndarray,
-    labels: np.ndarray,
-    site_ids: np.ndarray,
-    min_samples: int = 10,
-) -> Dict[int, LogisticRegression]:
-    """Fit one-dimensional Platt calibrators per site using held-out val data."""
-    calibrators: Dict[int, LogisticRegression] = {}
-    for site in np.unique(site_ids):
-        if site < 0:
-            continue
-        mask = site_ids == site
-        if mask.sum() < min_samples:
-            continue
-        if np.unique(labels[mask]).size < 2:
-            continue
-
-        lr = LogisticRegression(C=1.0, solver="lbfgs")
-        lr.fit(probs[mask].reshape(-1, 1), labels[mask])
-        calibrators[int(site)] = lr
-    return calibrators
-
-
-def _apply_per_site_calibration(
-    probs: np.ndarray,
-    site_ids: np.ndarray,
-    calibrators: Dict[int, LogisticRegression],
-) -> np.ndarray:
-    """Apply per-site logistic calibration when a calibrator exists for that site."""
-    calibrated = probs.copy()
-    for site, calibrator in calibrators.items():
-        mask = site_ids == site
-        if not np.any(mask):
-            continue
-        calibrated[mask] = calibrator.predict_proba(probs[mask].reshape(-1, 1))[:, 1]
-    return calibrated
 
 
 def _load_last_fold_val_graphs() -> List:
@@ -382,9 +328,9 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
     logger.info("SECTION 1 — ENSEMBLE TEST-SET EVALUATION")
     logger.info("=" * 60)
 
-    loader = _build_loader(test_graphs)
+    loader = make_loader(test_graphs, batch_size=GNN_BATCH_SIZE, shuffle=False)
     calibration_graphs = _load_last_fold_val_graphs()
-    calibration_loader = _build_loader(calibration_graphs) if calibration_graphs else None
+    calibration_loader = make_loader(calibration_graphs, batch_size=GNN_BATCH_SIZE, shuffle=False) if calibration_graphs else None
 
     fold_ids = []
     fold_probs = []
@@ -462,13 +408,13 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
     if calibration_graphs and fold_cal_probs and cal_labels is not None:
         cal_site_ids = _site_ids_from_graphs(calibration_graphs)
         ens_cal_probs_raw = np.average(np.stack(fold_cal_probs, axis=0), axis=0, weights=weights)
-        calibrators = _fit_per_site_calibrators(ens_cal_probs_raw, cal_labels, cal_site_ids)
+        calibrators = fit_per_site_calibrators(ens_cal_probs_raw, cal_labels, cal_site_ids)
 
         if calibrators:
-            ens_cal_probs = _apply_per_site_calibration(ens_cal_probs_raw, cal_site_ids, calibrators)
-            f1_threshold = _optimal_threshold(ens_cal_probs, cal_labels)
+            ens_cal_probs = apply_per_site_calibration(ens_cal_probs_raw, cal_site_ids, calibrators)
+            f1_threshold = optimal_threshold(ens_cal_probs, cal_labels)[0]
             test_site_ids = _site_ids_from_graphs(test_graphs)
-            ens_probs = _apply_per_site_calibration(ens_probs_raw, test_site_ids, calibrators)
+            ens_probs = apply_per_site_calibration(ens_probs_raw, test_site_ids, calibrators)
             calibration_applied = True
             logger.info(
                 "  Per-site Platt calibration applied for %d sites (threshold=%.4f)",
@@ -480,7 +426,7 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
 
     # Compute both operating points, then select the reporting policy.
     f1_metrics = _full_metrics(ens_probs, labels, threshold=f1_threshold)
-    youden_thr     = _youden_threshold(ens_probs, labels)
+    youden_thr     = youden_threshold(ens_probs, labels)[0]
     youden_metrics = _full_metrics(ens_probs, labels, threshold=youden_thr)
     logger.info(
         "  Youden threshold: %.4f  →  Sens=%.4f  Spec=%.4f  F1=%.4f",
@@ -675,7 +621,7 @@ def run_subgroup_analysis(
     logger.info("=" * 60)
 
     # Build ensemble probs per test graph (maintain order)
-    loader  = _build_loader(test_graphs, batch_size=1)
+    loader  = make_loader(test_graphs, batch_size=1, shuffle=False)
     weights = np.array(fold_aucs) / sum(fold_aucs)
 
     # Collect metadata and predictions per subject
@@ -688,7 +634,7 @@ def run_subgroup_analysis(
             model = _load_model(fold_id)
         except FileNotFoundError:
             continue
-        probs_f, labels_f = _predict_probs(model, _build_loader(test_graphs, batch_size=1))
+        probs_f, labels_f = _predict_probs(model, make_loader(test_graphs, batch_size=1, shuffle=False))
         ens_models_probs[fold_id] = probs_f
         if not all_labels:
             all_labels = labels_f.tolist()
@@ -1173,7 +1119,7 @@ def main() -> None:
         for fold_id in range(K_FOLDS):
             try:
                 model = _load_model(fold_id)
-                p, _  = _predict_probs(model, _build_loader(test_graphs, args.batch_size))
+                p, _  = _predict_probs(model, make_loader(test_graphs, batch_size=args.batch_size, shuffle=False))
                 fold_probs_dict[fold_id] = p
                 del model
             except FileNotFoundError:

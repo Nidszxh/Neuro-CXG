@@ -329,8 +329,8 @@ class CausalGraphAnalyzer:
     ) -> Dict[str, Dict]:
         """Mann-Whitney U comparison of graph metrics between ASD and Control."""
         logger.info("Comparing ASD vs Control graph topology…")
-        asd = graph_metrics[graph_metrics["dx_group"] == 1]
-        ctrl = graph_metrics[graph_metrics["dx_group"] == 2]
+        asd = graph_metrics[graph_metrics["dx_group"] == 2]
+        ctrl = graph_metrics[graph_metrics["dx_group"] == 1]
         logger.info("  ASD: %d, Control: %d", len(asd), len(ctrl))
 
         metrics = [
@@ -377,7 +377,7 @@ class CausalGraphAnalyzer:
         output_dir.mkdir(parents=True, exist_ok=True)
         gm = gm.copy()
         gm["dx_group"] = (
-            gm["dx_group"].astype(int).map({1: "ASD", 2: "Control"}).fillna("Unknown")
+            gm["dx_group"].astype(int).map({2: "ASD", 1: "Control"}).fillna("Unknown")
         )
         sig_metrics = [k for k, v in comparison.items() if v["significant"]][:6]
         if not sig_metrics:

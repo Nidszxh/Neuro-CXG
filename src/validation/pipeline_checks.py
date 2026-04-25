@@ -886,10 +886,6 @@ def _sample_graphs(graph_files: List[Path], sample_size: int = 200) -> Dict:
     return stats
 
 
-# Note: The deprecated PipelineHealthCheck class body has been removed.
-# PipelineHealthCheck is now an alias (see below after PipelineValidator).
-
-
 @dataclass
 class ValidationResult:
     """Structured validation result."""

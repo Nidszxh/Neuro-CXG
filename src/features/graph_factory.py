@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import logging
 import hashlib
 import torch
@@ -178,7 +179,7 @@ class ABIDECausalDataset(Dataset):
         invalid_count = 0
         missing_graph_count = 0
         self._subject_edge_counts = {}
-        self._graph_cache = {}
+        self._graph_cache: OrderedDict = OrderedDict()
         self._graph_stats = {}
         
         for sub in available_subs:
@@ -308,9 +309,10 @@ class ABIDECausalDataset(Dataset):
                 }
 
                 if len(self._graph_cache) >= self._cache_limit:
-                    oldest_key = next(iter(self._graph_cache))
-                    self._graph_cache.pop(oldest_key, None)
+                    self._graph_cache.popitem(last=False)  # LRU: remove oldest (FIFO)
                 self._graph_cache[sub_id] = graph_dict
+            else:
+                self._graph_cache.move_to_end(sub_id)  # LRU: mark as recently used
 
             adj = graph_dict['adj'].clone()  # Should be (12, 12)
             

@@ -3,30 +3,15 @@ Causal Inference for Brain Connectivity
 
 Implements Granger causality for directed graph construction.
 
-**GPU Implementation (June 2026):**
-- Added GPU-accelerated Granger causality via `_compute_granger_causality_gpu_impl()`
-- Uses batched linear regression with vectorized F-test
-- Auto-detects CUDA availability via GRANGER_USE_GPU config flag
-- Falls back to CPU on any error
-
-Removed in Task 6 (DD-014):
-- compute_granger_causality_gpu: unmaintained GPU path; CPU Granger is fast enough
-  for 12-node graphs and avoids CUDA memory fragmentation issues.
-- compute_transfer_entropy / _compute_te_pair / _conditional_entropy: placeholder TE
-  implementation superseded by multi-view causal invariance loss (DD-010).
-- compute_multilag_causality: superseded by construct_multiview_graphs() (DD-010).
-
 References:
 - Granger (1969): Investigating Causal Relations by Econometric Models
 - Barnett & Seth (2014): The MVGC toolbox for Granger causality
 """
 
-import numpy as np
 import logging
-from typing import Tuple, Dict, Optional
-from joblib import Parallel, delayed
-from statsmodels.tsa.stattools import grangercausalitytests
-import torch
+
+import numpy as np
+from typing import Dict
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,7 +22,6 @@ def compute_granger_causality(
     max_lag: int = 5,
     significance_level: float = 0.05,
     n_jobs: int = -1,
-    use_gpu: Optional[bool] = None,
 ) -> np.ndarray:
     """
     Compute multivariate Granger causality matrix.
@@ -49,9 +33,6 @@ def compute_granger_causality(
         max_lag: Maximum lag to test (default: 5 TRs)
         significance_level: Statistical significance threshold
         n_jobs: Number of parallel workers for pairwise region tests (-1 = all cores).
-                Only used when use_gpu=False.
-        use_gpu: If True, use GPU-accelerated implementation. If False, use CPU.
-                 If None, auto-detect: use GPU if GRANGER_USE_GPU=True and CUDA available.
 
     Returns:
         Causality matrix (shape: [n_regions, n_regions])
@@ -63,24 +44,9 @@ def compute_granger_causality(
         >>> gc_matrix = compute_granger_causality(ts, max_lag=5)
         >>> print(gc_matrix.shape)  # (12, 12)
     """
-    # Auto-detect GPU usage
-    if use_gpu is None:
-        try:
-            from src.core.hyperparams import GRANGER_USE_GPU
-            use_gpu = GRANGER_USE_GPU and torch.cuda.is_available()
-        except ImportError:
-            use_gpu = torch.cuda.is_available()
+    from joblib import Parallel, delayed
+    from statsmodels.tsa.stattools import grangercausalitytests
 
-    if use_gpu:
-        try:
-            return _compute_granger_causality_gpu_impl(
-                ts_matrix, max_lag, significance_level
-            )
-        except Exception as e:
-            logger.warning(f"GPU computation failed: {e}, falling back to CPU")
-            # Fall back to CPU
-
-    # Rest of the CPU implementation
     n_timepoints, n_regions = ts_matrix.shape
 
     # Validate input
@@ -133,101 +99,6 @@ def compute_granger_causality(
 
     for i, j, score in results:
         gc_matrix[i, j] = score
-
-    return gc_matrix
-
-
-def _compute_granger_causality_gpu_impl(
-    ts_matrix: np.ndarray,
-    max_lag: int = 5,
-    significance_level: float = 0.05,
-) -> np.ndarray:
-    """
-    GPU-accelerated multivariate Granger causality using batched linear regression.
-
-    Computes all (i → j) pairs simultaneously using vectorized F-test.
-    Based on the SSR (Sum of Squared Residuals) F-test from statsmodels.
-
-    Args:
-        ts_matrix: Time series matrix (shape: [timepoints, n_regions])
-        max_lag: Maximum lag to test (default: 5 TRs)
-        significance_level: Statistical significance threshold
-
-    Returns:
-        Causality matrix (shape: [n_regions, n_regions])
-    """
-    import scipy.stats as stats
-
-    n_timepoints, n_regions = ts_matrix.shape
-
-    if n_timepoints < max_lag + 10:
-        return np.zeros((n_regions, n_regions))
-
-    if np.isnan(ts_matrix).any() or np.isinf(ts_matrix).any():
-        return np.zeros((n_regions, n_regions))
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ts_gpu = torch.as_tensor(ts_matrix, dtype=torch.float32, device=device)
-
-    T = n_timepoints
-    L = max_lag
-    n_effect = T - L
-
-    gc_matrix = np.zeros((n_regions, n_regions))
-
-    for target_idx in range(n_regions):
-        y_full = ts_gpu[:, target_idx]
-        y_valid = y_full[L:]
-
-        Y_lags = torch.zeros(n_effect, L, dtype=torch.float32, device=device)
-        for lag in range(1, L + 1):
-            if lag < L:
-                Y_lags[:, lag - 1] = y_full[L - lag:-lag]
-            else:
-                Y_lags[:, lag - 1] = y_full[:-L]
-
-        X_pinv_Y = torch.linalg.pinv(Y_lags)
-        y_pred_restricted = Y_lags @ X_pinv_Y @ y_valid
-        residuals_restricted = y_valid - y_pred_restricted
-        RSS_restricted = (residuals_restricted ** 2).sum().item()
-
-        for source_idx in range(n_regions):
-            if source_idx == target_idx:
-                continue
-
-            x_full = ts_gpu[:, source_idx]
-
-            X_design = torch.zeros(n_effect, 2 * L, dtype=torch.float32, device=device)
-            for lag in range(1, L + 1):
-                if lag < L:
-                    x_lag = x_full[L - lag:-lag]
-                    y_lag = y_full[L - lag:-lag]
-                else:
-                    x_lag = x_full[:-L]
-                    y_lag = y_full[:-L]
-                X_design[:, L + lag - 1] = x_lag
-                X_design[:, lag - 1] = y_lag
-
-            X_pinv = torch.linalg.pinv(X_design)
-            beta = X_pinv @ y_valid
-            y_pred = X_design @ beta
-            residuals_full = y_valid - y_pred
-            RSS_full = (residuals_full ** 2).sum().item()
-
-            df1 = L
-            df2 = n_effect - 2 * L - 1
-            if df2 <= 0 or RSS_full < 1e-10:
-                continue
-
-            f_stat = ((RSS_restricted - RSS_full) / df1) / (RSS_full / df2)
-
-            if f_stat > 0:
-                p_value = 1 - stats.f.cdf(f_stat, df1, df2)
-                p_value = min(p_value * L, 1.0)
-
-                if p_value <= significance_level:
-                    score = -np.log10(p_value + 1e-10)
-                    gc_matrix[source_idx, target_idx] = min(score, 10.0)
 
     return gc_matrix
 

@@ -74,6 +74,7 @@ from src.core.config import (
     GNN_USE_DEMOGRAPHICS,
     GNN_USE_GRL,
     GNN_USE_SITE_EMBEDDING,
+    GNN_SITE_EMBEDDING_DIM,
     K_FOLDS,
     LOBE_NAMES,
     MASTER_MANIFEST,
@@ -81,10 +82,17 @@ from src.core.config import (
     RESULTS_DIR,
     EVAL_THRESHOLD_POLICY,
     EVAL_FIXED_THRESHOLD,
+    EVAL_PER_SITE_MIN_SAMPLES,
 )
 from src.features.graph_factory import ABIDECausalDataset
+from src.models.evaluation import (
+    fit_per_site_calibrators,
+    apply_per_site_calibration,
+    optimal_threshold,
+    youden_threshold,
+)
 from src.models.causal_gnn import CausalBrainGNN
-from src.models.factory import build_model
+from src.models.factory import build_model, load_model
 from src.models.training_utils import make_loader, attach_feature_scaler_from_checkpoint
 
 logging.basicConfig(
@@ -145,46 +153,8 @@ def _safe_roc_auc(labels: np.ndarray, probs: np.ndarray) -> Optional[float]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _load_model(fold_id: int) -> CausalBrainGNN:
-    ckpt_path = get_active_checkpoint_dir() / f"best_model_fold{fold_id}.pt"
-    if not ckpt_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-
-    ckpt = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
-    state = ckpt.get("model_state", ckpt)
-
-    site_dim = 16 if GNN_USE_SITE_EMBEDDING else 0
-    saved_in_features = state["lin_in.weight"].shape[1]
-    node_emb_dim = saved_in_features - GNN_IN_CHANNELS - site_dim
-
-    model = build_model(
-        device=DEVICE,
-        use_grl=GNN_USE_GRL,
-        grl_alpha=GNN_GRL_ALPHA,
-        node_emb_dim=node_emb_dim,
-    )
-
-    model.load_state_dict(state, strict=False)
-    attach_feature_scaler_from_checkpoint(model, ckpt, expected_dim=GNN_IN_CHANNELS)
-    model.eval()
-    return model
-
-
-def _optimal_threshold(probs: np.ndarray, labels: np.ndarray) -> float:
-    """Find threshold that maximises F1 on the given probabilities."""
-    precision, recall, thresholds = precision_recall_curve(labels, probs)
-    f1 = 2 * precision * recall / (precision + recall + 1e-10)
-    best = np.argmax(f1)
-    return float(thresholds[best]) if best < len(thresholds) else 0.5
-
-
-def _youden_threshold(probs: np.ndarray, labels: np.ndarray) -> float:
-    """Find threshold that maximises Youden's J = sensitivity + specificity − 1."""
-    if len(np.unique(labels)) < 2:
-        return 0.5
-    fpr, tpr, thresholds = roc_curve(labels, probs)
-    j = tpr - fpr
-    best = int(np.argmax(j))
-    return float(thresholds[best]) if len(thresholds) > 0 else 0.5
+    """Load a trained fold checkpoint using the centralized factory function."""
+    return load_model(fold_id=fold_id, device=DEVICE)
 
 
 def _site_ids_from_graphs(graphs: List) -> np.ndarray:
@@ -195,43 +165,6 @@ def _site_ids_from_graphs(graphs: List) -> np.ndarray:
         else -1
         for g in graphs
     ])
-
-
-def _fit_per_site_calibrators(
-    probs: np.ndarray,
-    labels: np.ndarray,
-    site_ids: np.ndarray,
-    min_samples: int = 10,
-) -> Dict[int, LogisticRegression]:
-    """Fit one-dimensional Platt calibrators per site using held-out val data."""
-    calibrators: Dict[int, LogisticRegression] = {}
-    for site in np.unique(site_ids):
-        if site < 0:
-            continue
-        mask = site_ids == site
-        if mask.sum() < min_samples:
-            continue
-        if np.unique(labels[mask]).size < 2:
-            continue
-        lr = LogisticRegression(C=1.0, solver="lbfgs")
-        lr.fit(probs[mask].reshape(-1, 1), labels[mask])
-        calibrators[int(site)] = lr
-    return calibrators
-
-
-def _apply_per_site_calibration(
-    probs: np.ndarray,
-    site_ids: np.ndarray,
-    calibrators: Dict[int, LogisticRegression],
-) -> np.ndarray:
-    """Apply per-site logistic calibration when calibrator exists."""
-    calibrated = probs.copy()
-    for site, calibrator in calibrators.items():
-        mask = site_ids == site
-        if not np.any(mask):
-            continue
-        calibrated[mask] = calibrator.predict_proba(probs[mask].reshape(-1, 1))[:, 1]
-    return calibrated
 
 
 def _load_last_fold_val_graphs() -> List:
@@ -356,10 +289,10 @@ def _collect_per_subject(
                     weights=cal_weights,
                 )
                 cal_site_ids = _site_ids_from_graphs(calibration_graphs)
-                calibrators = _fit_per_site_calibrators(ens_cal_probs, calibration_labels, cal_site_ids)
+                calibrators = fit_per_site_calibrators(ens_cal_probs, calibration_labels, cal_site_ids)
                 if calibrators:
                     test_site_ids = _site_ids_from_graphs(graphs)
-                    ens_probs = _apply_per_site_calibration(ens_probs, test_site_ids, calibrators)
+                    ens_probs = apply_per_site_calibration(ens_probs, test_site_ids, calibrators)
                     calibration_applied = True
                     calibration_sites = len(calibrators)
 
@@ -599,10 +532,10 @@ def _resolve_analysis_threshold(
     f1_threshold = float(fallback_threshold)
     if per_site_requested:
         cal_site_ids = _site_ids_from_graphs(calibration_graphs)
-        calibrators = _fit_per_site_calibrators(ens_probs_raw, labels_ref, cal_site_ids)
+        calibrators = fit_per_site_calibrators(ens_probs_raw, labels_ref, cal_site_ids)
         if calibrators:
-            ens_probs_effective = _apply_per_site_calibration(ens_probs_raw, cal_site_ids, calibrators)
-            f1_threshold = _optimal_threshold(ens_probs_effective, labels_ref)
+            ens_probs_effective = apply_per_site_calibration(ens_probs_raw, cal_site_ids, calibrators)
+            f1_threshold = optimal_threshold(ens_probs_effective, labels_ref)[0]
             logger.info(
                 "  Recomputed calibrated F1 threshold from calibration split: %.4f",
                 float(f1_threshold),
@@ -619,7 +552,7 @@ def _resolve_analysis_threshold(
         )
 
     if policy == "youden":
-        thr = _youden_threshold(ens_probs_effective, labels_ref)
+        thr = youden_threshold(ens_probs_effective, labels_ref)[0]
         logger.info("  Recomputed Youden threshold from calibration split: %.4f", float(thr))
     else:
         thr = f1_threshold
@@ -685,15 +618,15 @@ def run_per_subject_analysis(
 
     labels_arr = df["true_label"].to_numpy(dtype=np.int64)
     probs_arr = df["prob_asd"].to_numpy(dtype=np.float64)
-    youden_threshold = _youden_threshold(probs_arr, labels_arr)
+    youden_thr = youden_threshold(probs_arr, labels_arr)[0]
     youden_metrics = _classification_metrics_at_threshold(
         probs_arr,
         labels_arr,
-        threshold=youden_threshold,
+        threshold=youden_thr,
     )
     logger.info(
         "  Youden analysis threshold: %.4f -> Sens=%.4f Spec=%.4f F1=%.4f",
-        float(youden_threshold),
+        float(youden_thr),
         float(youden_metrics["sensitivity"]),
         float(youden_metrics["specificity"]),
         float(youden_metrics["f1"]),

@@ -36,6 +36,7 @@ class Stage:
     dependencies: List[str] = field(default_factory=list)
     function: Optional[str] = None
     args: List[str] = field(default_factory=list)
+    description: str = ""
 
     def is_complete(self) -> bool:
         """Return True when this stage appears complete from filesystem artifacts."""
@@ -112,14 +113,6 @@ STAGES: List[Stage] = [
         args=["--multiview"],
     ),
     Stage(
-        "dead_lobe_diagnosis",
-        "Dead-Lobe Diagnosis",
-        "src.analysis.diagnose_dead_lobes",
-        None,
-        dependencies=["split"],
-        args=["--split", "train"],
-    ),
-    Stage(
         "diagnostics",
         "Pipeline Diagnostics",
         "src.validation.pipeline_checks",
@@ -151,7 +144,6 @@ STAGES: List[Stage] = [
     Stage("subject_analysis", "Subject Analysis", "src.analysis.subject_analysis", RESULTS_DIR / "subject_analysis", dependencies=["causal_graphs"]),
     Stage("audit_check", "Post-Fix Audit Check", "src.validation.audit_check", None),
     Stage("dev_audit", "Developer Audit", "src.validation.dev_audit", None),
-    Stage("feature_diagnostics", "Feature Diagnostics", "src.validation.diagnose_features", None),
     Stage("data_quality_experiments", "Data Quality Experiments", "src.experiments.data_quality", RESULTS_DATA_QUALITY_DIR),
     Stage("ablation_studies", "Ablation Studies", "src.experiments.run_ablations", RESULTS_ABLATIONS_DIR),
 ]
@@ -165,3 +157,16 @@ def stage_map(stages: Iterable[Stage] = STAGES) -> Dict[str, Stage]:
 def completion_snapshot(stages: Iterable[Stage] = STAGES) -> Dict[str, bool]:
     """Return stage completion status keyed by stage key."""
     return {stage.key: stage.is_complete() for stage in stages}
+
+
+def get_stage_dependencies(key: str, stages: Iterable[Stage] = STAGES) -> List[str]:
+    """Return list of dependency keys for a given stage."""
+    stage_dict = stage_map(stages)
+    if key in stage_dict:
+        return stage_dict[key].dependencies
+    return []
+
+
+def get_stages_by_phase(phase: str, stages: Iterable[Stage] = STAGES) -> List[Stage]:
+    """Return stages matching a given phase prefix (e.g., 'data', 'features', 'models')."""
+    return [s for s in stages if s.key.startswith(phase)]

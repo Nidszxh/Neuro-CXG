@@ -13,14 +13,8 @@ from tqdm import tqdm
 from joblib import Parallel, delayed
 
 import torch
-if torch.cuda.is_available():
-    torch.set_num_threads(1)
-    GPU_DEVICE = torch.device("cuda")
-    USE_GPU = True
-else:
-    torch.set_num_threads(torch.get_num_threads())
-    GPU_DEVICE = torch.device("cpu")
-    USE_GPU = False
+
+torch.set_num_threads(min(4, torch.get_num_threads()))
 
 # Setup paths and config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -523,195 +517,6 @@ def _compute_phase_std_vectorized(ts: np.ndarray) -> np.ndarray:
     return phase_std
 
 
-def _compute_phase_std_gpu(ts_tensor: torch.Tensor) -> torch.Tensor:
-    """GPU-accelerated instantaneous phase std via Hilbert transform."""
-    n_timepoints, n_rois = ts_tensor.shape
-    try:
-        analytic = torch.ops.fft.hilbert(ts_tensor)
-    except AttributeError:
-        analytic = _hilbert_manual(ts_tensor)
-    instantaneous_phase = torch.angle(analytic)
-    phase_std = torch.std(instantaneous_phase, dim=0)
-    phase_std = torch.where(torch.isfinite(phase_std), phase_std, torch.zeros_like(phase_std))
-    return phase_std
-
-
-def _hilbert_manual(x: torch.Tensor) -> torch.Tensor:
-    """Manual Hilbert transform using FFT when torch.ops.fft.hilbert unavailable."""
-    n = x.shape[0]
-    fft_vals = torch.fft.fft(x, dim=0)
-    h = torch.zeros(n)
-    if n % 2 == 0:
-        h[1:n//2] = 1
-        h[n//2+1:] = -1
-    else:
-        h[1:(n+1)//2] = 1
-        h[(n+1)//2:] = -1
-    h[0] = 0
-    if n % 2 == 0:
-        h[n//2] = 0
-    fft_hilbert = fft_vals * h.to(x.device).to(x.dtype)
-    return torch.fft.ifft(fft_hilbert, dim=0)
-
-
-def _compute_psd_gpu(ts_tensor: torch.Tensor, tr: float) -> torch.Tensor:
-    """GPU-accelerated PSD: mean power in 0.01-0.1 Hz band via FFT."""
-    n_timepoints, n_rois = ts_tensor.shape
-    freqs = torch.fft.fftfreq(n_timepoints, d=tr)
-    mask = (freqs > 0.01) & (freqs < 0.1)
-    if not mask.any():
-        return torch.zeros(n_rois, device=ts_tensor.device)
-
-    fft_vals = torch.fft.fft(ts_tensor, dim=0)
-    psd = torch.abs(fft_vals) ** 2
-    psd_mean = torch.mean(psd[mask, :], dim=0)
-    psd_mean = torch.where(torch.isfinite(psd_mean) & (psd_mean > 0), psd_mean, torch.zeros_like(psd_mean))
-    return psd_mean
-
-
-def _compute_spectral_entropy_gpu(psd_tensor: torch.Tensor, total_power: torch.Tensor) -> torch.Tensor:
-    """GPU-accelerated spectral entropy across all ROIs."""
-    psd_norm = psd_tensor / total_power
-    psd_norm = torch.where(psd_norm > 0, psd_norm, torch.tensor(float('nan'), device=psd_tensor.device))
-    spectral_entropy = -torch.nansum(psd_norm * torch.log(psd_norm + 1e-10), dim=0)
-    spectral_entropy = torch.where(torch.isfinite(spectral_entropy), spectral_entropy, torch.zeros_like(spectral_entropy))
-    return spectral_entropy
-
-
-def _compute_peak_freqs_gpu(
-    psd_tensor: torch.Tensor,
-    freqs_tensor: torch.Tensor,
-    band_mask: torch.Tensor,
-) -> torch.Tensor:
-    """GPU-accelerated peak frequency extraction within band."""
-    if not band_mask.any():
-        return torch.zeros(psd_tensor.shape[1], device=psd_tensor.device)
-
-    psd_band = psd_tensor[band_mask, :]
-    freqs_band = freqs_tensor[band_mask]
-    peak_indices = torch.argmax(psd_band, dim=0)
-    peak_freqs = freqs_band[peak_indices]
-    peak_freqs = torch.where(torch.isfinite(peak_freqs), peak_freqs, torch.zeros_like(peak_freqs))
-    return peak_freqs
-
-
-def _extract_temporal_gpu(
-    ts_data: np.ndarray,
-    tr: float,
-    add_frequency: bool = True,
-) -> np.ndarray:
-    """
-    GPU-accelerated temporal feature extraction for all ROIs at once.
-    Uses PyTorch for FFT-based computations.
-
-    Args:
-        ts_data: Time series array of shape (time_points, n_rois)
-        tr: Repetition time
-        add_frequency: Whether to include frequency features
-
-    Returns:
-        Array of shape (n_rois, features_per_roi) with temporal + frequency features
-    """
-    ts_tensor = torch.from_numpy(ts_data).float().to(GPU_DEVICE)
-    n_timepoints, n_rois = ts_tensor.shape
-
-    temporal_feature_names = list(FEATURE_GROUPS["temporal"])
-    freq_feature_names = list(FEATURE_GROUPS["frequency"]) if add_frequency else []
-    n_temporal = len(temporal_feature_names)
-    n_freq = len(freq_feature_names)
-    features_per_roi = n_temporal + n_freq
-
-    ts_clean = ts_tensor.clone()
-    std_vals = torch.std(ts_clean, dim=0, keepdim=True)
-
-    bad_rois = (std_vals < 1e-6).flatten() | ~torch.all(torch.isfinite(ts_clean), dim=0)
-    ts_clean[:, bad_rois] = 0.0
-
-    clip_bounds = 1e3
-    mean_vals = torch.mean(ts_clean, dim=0)
-    std_vals = torch.std(ts_clean, dim=0)
-    skew_vals = torch.clip(torch.tensor([skew(ts_clean[:, i].cpu().numpy(), bias=False) for i in range(n_rois)]), -clip_bounds, clip_bounds).to(GPU_DEVICE)
-    kurt_vals = torch.clip(torch.tensor([kurtosis(ts_clean[:, i].cpu().numpy(), bias=False) for i in range(n_rois)]), -clip_bounds, clip_bounds).to(GPU_DEVICE)
-
-    psd_vals = _compute_psd_gpu(ts_clean, tr)
-    psd_vals = torch.log1p(psd_vals)
-
-    mssd_vals = torch.mean(torch.diff(ts_clean, dim=0) ** 2, dim=0)
-    range_vals = torch.ptp(ts_clean, dim=0)
-
-    ts_centered = ts_clean - mean_vals
-    c0 = torch.sum(ts_centered ** 2, dim=0) / n_timepoints
-    c_lag = torch.sum(ts_centered[:-1, :] * ts_centered[1:, :], dim=0) / n_timepoints
-    c0 = torch.where(c0 > 0, c0, torch.ones_like(c0))
-    autocorr_vals = c_lag / c0
-
-    base_features = torch.stack([
-        mean_vals,
-        std_vals,
-        skew_vals,
-        kurt_vals,
-        psd_vals,
-        mssd_vals,
-        range_vals,
-        autocorr_vals,
-    ], dim=1)
-
-    output_features = base_features.clone()
-
-    if add_frequency:
-        fs = 1.0 / tr
-        safe_bands = {}
-        nyquist = fs / 2.0
-        nyquist_eps = nyquist - NYQUIST_EPS
-
-        for band_name, (low, high) in ACTIVE_FREQ_BANDS.items():
-            if high >= nyquist:
-                safe_bands[band_name] = (low, high)
-            else:
-                safe_low = max(0.0, low)
-                safe_high = min(high, nyquist_eps)
-                if safe_low >= safe_high:
-                    safe_bands[band_name] = (0.0, 0.0)
-                else:
-                    safe_bands[band_name] = (safe_low, safe_high)
-
-        n_bands = len(ACTIVE_FREQ_BANDS)
-        freq_feature_arr = torch.zeros((n_rois, n_freq), device=GPU_DEVICE)
-
-        try:
-            nperseg = min(256, n_timepoints)
-            freqs_np, psd_np = welch(ts_data, fs=fs, nperseg=nperseg, noverlap=nperseg // 2, window="hann", scaling="density")
-            freqs_tensor = torch.from_numpy(freqs_np).float().to(GPU_DEVICE)
-            psd_tensor = torch.from_numpy(psd_np).float().to(GPU_DEVICE)
-        except Exception:
-            return np.zeros((n_rois, features_per_roi))
-
-        total_power = torch.trapz(psd_tensor, freqs_tensor, dim=0)
-        total_power = torch.where(total_power > 0, total_power, torch.ones_like(total_power))
-
-        ordered_bands = ["delta", "theta", "alpha", "beta", "gamma"]
-        for idx, band_name in enumerate(ordered_bands):
-            if band_name not in safe_bands:
-                continue
-            low, high = safe_bands[band_name]
-            if low >= high:
-                continue
-            band_mask = (freqs_tensor >= low) & (freqs_tensor < high)
-            band_power = torch.trapz(psd_tensor[band_mask, :], freqs_tensor[band_mask], dim=0)
-            freq_feature_arr[:, idx] = band_power / total_power
-
-            freq_feature_arr[:, idx + n_bands] = _compute_peak_freqs_gpu(psd_tensor, freqs_tensor, band_mask)
-
-        freq_feature_arr[:, 2 * n_bands] = _compute_spectral_entropy_gpu(psd_tensor, total_power)
-        freq_feature_arr[:, 2 * n_bands + 1] = _compute_phase_std_gpu(ts_clean)
-
-        output_features = torch.cat([base_features, freq_feature_arr], dim=1)
-
-    output_features[bad_rois, :] = 0.0
-
-    return output_features.cpu().numpy()
-
-
 def _process_single_subject(
     sub_id: str,
     split: str,
@@ -749,10 +554,7 @@ def _process_single_subject(
             return None
 
         try:
-            if use_gpu and USE_GPU:
-                roi_features = _extract_temporal_gpu(ts_data, tr, add_frequency=add_frequency)
-            else:
-                roi_features = _extract_temporal_vectorized(ts_data, tr, add_frequency=add_frequency)
+            roi_features = _extract_temporal_vectorized(ts_data, tr, add_frequency=add_frequency)
             if roi_features.shape[0] != max_rois or roi_features.shape[1] != features_per_roi:
                 raise ValueError(f"Shape mismatch: {roi_features.shape}")
         except Exception:
@@ -781,7 +583,6 @@ def main(add_frequency: bool = True, n_jobs: int = -1, use_gpu: bool = False) ->
     Args:
         add_frequency: Include frequency features (20 vs 8 per ROI)
         n_jobs: Number of parallel workers (-1 = all cores, default: -1)
-        use_gpu: Whether to use GPU acceleration
     """
     if not MASTER_MANIFEST.exists():
         logger.error("Master manifest missing. Run manifestor.py first.")
@@ -802,7 +603,7 @@ def main(add_frequency: bool = True, n_jobs: int = -1, use_gpu: bool = False) ->
     features_per_roi = len(FEATURE_GROUPS["temporal"]) + (
         len(FEATURE_GROUPS["frequency"]) if add_frequency else 0
     )
-    gpu_info = "GPU" if use_gpu and USE_GPU else "CPU"
+    gpu_info = "GPU" if use_gpu else "CPU"
     logger.info(f"Extracting temporal features for {len(manifest)} subjects (n_jobs={n_jobs}, device={gpu_info})...")
     logger.info(
         f"Features per ROI: {features_per_roi} ({'with' if add_frequency else 'without'} frequency features)"

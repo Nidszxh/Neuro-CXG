@@ -84,6 +84,7 @@ from src.core.config import (
     NUM_LOBES,
     RESULTS_DIR,
 )
+from src.core.hyperparams import GNN_SITE_EMBEDDING_DIM
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
 from src.models.factory import build_model
@@ -108,7 +109,7 @@ def _load_model(checkpoint_path: Path, device: torch.device) -> CausalBrainGNN:
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     state_dict = ckpt["model_state"] if isinstance(ckpt, dict) and "model_state" in ckpt else ckpt
 
-    site_dim = 16 if GNN_USE_SITE_EMBEDDING else 0
+    site_dim = GNN_SITE_EMBEDDING_DIM if GNN_USE_SITE_EMBEDDING else 0
     saved_in_features = state_dict["lin_in.weight"].shape[1]
     node_emb_dim = saved_in_features - GNN_IN_CHANNELS - site_dim
 

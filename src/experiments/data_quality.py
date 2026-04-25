@@ -50,6 +50,7 @@ from src.core.config import (
     GNN_NUM_LAYERS,
     GNN_NUM_HEADS,
     GNN_USE_SITE_EMBEDDING,
+    GNN_SITE_EMBEDDING_DIM,
     GNN_USE_DEMOGRAPHICS,
     GNN_USE_GRL,
     GNN_GRL_ALPHA,
@@ -164,7 +165,7 @@ def experiment_cross_site_auc() -> pd.DataFrame:
 
     checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
     state_dict = checkpoint.get("model_state", checkpoint) if isinstance(checkpoint, dict) else checkpoint
-    site_dim = 16 if GNN_USE_SITE_EMBEDDING else 0
+    site_dim = GNN_SITE_EMBEDDING_DIM if GNN_USE_SITE_EMBEDDING else 0
     saved_in_features = state_dict["lin_in.weight"].shape[1]
     node_emb_dim = saved_in_features - GNN_IN_CHANNELS - site_dim
 
