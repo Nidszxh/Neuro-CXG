@@ -142,7 +142,7 @@ def attach_feature_scaler_from_checkpoint(
     return attached
 
 
-class _LRUCache:
+class _MultiviewCache:
     """Lightweight in-memory LRU cache for multiview graph packages."""
 
     def __init__(self, maxsize: int = 512):
@@ -162,6 +162,10 @@ class _LRUCache:
         if len(self._cache) > self._maxsize:
             self._cache.popitem(last=False)
 
+    def clear(self) -> None:
+        """Clear cache for new training run."""
+        self._cache.clear()
+
 
 _MULTIVIEW_VIEW_ORDER = (
     "base",
@@ -171,7 +175,21 @@ _MULTIVIEW_VIEW_ORDER = (
     "bootstrap_2",
     "high_confidence",
 )
-_MULTIVIEW_CACHE = _LRUCache(maxsize=512)
+_multiview_cache: Optional[_MultiviewCache] = None
+
+
+def get_multiview_cache(maxsize: int = 512) -> _MultiviewCache:
+    """Get or create the multiview cache (per-run scoped)."""
+    global _multiview_cache
+    if _multiview_cache is None:
+        _multiview_cache = _MultiviewCache(maxsize=maxsize)
+    return _multiview_cache
+
+
+def reset_multiview_cache(maxsize: int = 512) -> None:
+    """Reset multiview cache for new training run."""
+    global _multiview_cache
+    _multiview_cache = _MultiviewCache(maxsize=maxsize)
 
 
 def make_loader(
@@ -646,10 +664,13 @@ def _extract_batch_subject_ids(batch, num_graphs: int) -> Optional[List[str]]:
     return None
 
 
-def _load_multiview_package(file_path: Path) -> Optional[Dict[str, torch.Tensor]]:
+def _load_multiview_package(file_path: Path, cache: Optional[_MultiviewCache] = None) -> Optional[Dict[str, torch.Tensor]]:
     """Load and normalize one subject's multiview adjacency package."""
+    if cache is None:
+        cache = get_multiview_cache()
+
     cache_key = str(file_path)
-    cached = _MULTIVIEW_CACHE.get(cache_key)
+    cached = cache.get(cache_key)
     if cached is not None:
         return cached
 
@@ -676,7 +697,7 @@ def _load_multiview_package(file_path: Path) -> Optional[Dict[str, torch.Tensor]
     if "base" not in normalized:
         return None
 
-    _MULTIVIEW_CACHE.set(cache_key, normalized)
+    cache.set(cache_key, normalized)
     return normalized
 
 

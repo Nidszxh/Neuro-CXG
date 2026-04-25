@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import numpy as np
 import torch
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -169,3 +170,41 @@ def evaluate_loader(
 
     metrics = compute_metrics(probs_array, labels_array, threshold=threshold)
     return {"probs": probs_array, "labels": labels_array, **metrics}
+
+
+def fit_per_site_calibrators(
+    probs: np.ndarray,
+    labels: np.ndarray,
+    site_ids: np.ndarray,
+    min_samples: int = 10,
+) -> Dict[int, LogisticRegression]:
+    """Fit one-dimensional Platt calibrators per site using held-out val data."""
+    calibrators: Dict[int, LogisticRegression] = {}
+    for site in np.unique(site_ids):
+        if site < 0:
+            continue
+        mask = site_ids == site
+        if mask.sum() < min_samples:
+            continue
+        if np.unique(labels[mask]).size < 2:
+            continue
+
+        lr = LogisticRegression(C=1.0, solver="lbfgs")
+        lr.fit(probs[mask].reshape(-1, 1), labels[mask])
+        calibrators[int(site)] = lr
+    return calibrators
+
+
+def apply_per_site_calibration(
+    probs: np.ndarray,
+    site_ids: np.ndarray,
+    calibrators: Dict[int, LogisticRegression],
+) -> np.ndarray:
+    """Apply per-site logistic calibration when a calibrator exists for that site."""
+    calibrated = probs.copy()
+    for site, calibrator in calibrators.items():
+        mask = site_ids == site
+        if not np.any(mask):
+            continue
+        calibrated[mask] = calibrator.predict_proba(probs[mask].reshape(-1, 1))[:, 1]
+    return calibrated

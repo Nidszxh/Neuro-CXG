@@ -1127,7 +1127,8 @@ def _run_training_once(
                     epoch=entry['epoch'],
                     metrics={
                         'train_loss': entry['loss'],
-                        'val_loss': 1.0 - entry['auc'],
+                        'val_loss': entry['loss'],  # actual validation loss
+                        'val_inverse_auc': 1.0 - entry['auc'],  # inverse AUC for monitoring
                         'val_auc': entry['auc'],
                         'val_auprc': entry['auprc'],
                         'val_f1': entry['f1'],

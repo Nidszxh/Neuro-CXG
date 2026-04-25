@@ -52,9 +52,6 @@ YOLO_TRAIN_CONFIG = {
 }
 
 # --- CAUSAL GRAPH PARAMETERS ---
-# CAUSAL_LAG = 1  # DEPRECATED: only used in lagged-Pearson fallback path.
-#                 # Use _LAGGED_PEARSON_LAG = 1 inline in construct_causal.py instead.
-#                 # Retained as comment to prevent accidental re-introduction.
 SPARSITY_QUANTILE = 0.70  # Keep top 30% edges (high selectivity - Phase 3)
 # Target graph density: keep only the top GRAPH_DENSITY_TARGET fraction of edges.
 # Literature recommends 10-30% for functional connectivity graphs.
@@ -151,6 +148,7 @@ K_FOLDS = 5
 GNN_NUM_LAYERS = 2
 GNN_SKIP_CONNECTIONS = True
 GNN_USE_SITE_EMBEDDING = True
+GNN_SITE_EMBEDDING_DIM = 16
 GNN_NODE_EMB_DIM = 16
 GNN_USE_DEMOGRAPHICS = True
 GNN_EARLY_STOPPING_PATIENCE = 30
@@ -232,6 +230,8 @@ OPTIMIZE_THRESHOLD = True
 # - "fixed": use EVAL_FIXED_THRESHOLD directly (deployment lock)
 EVAL_THRESHOLD_POLICY = "youden"
 EVAL_FIXED_THRESHOLD = 0.5263  # Kept for backward compatibility
+EVAL_PER_SITE_MIN_SAMPLES = 10  # Minimum samples per site for per-site calibration
+EVAL_SEED = 42  # Random seed for bootstrap/permutation tests
 
 # Site robustness gate derived from cross-site experiment output
 # (`results/experiments/data_quality/cross_site_auc.csv`).
