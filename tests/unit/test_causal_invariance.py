@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import torch
 import pytest
-from src.models.gnn_model import CausalInvarianceLoss
+from src.models.losses import CausalInvarianceLoss
 
 
 class TestCausalInvarianceLoss:
