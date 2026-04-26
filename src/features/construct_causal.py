@@ -61,9 +61,31 @@ _MULTIVIEW_VIEW_ORDER = (
     "high_confidence",
 )
 
-# Tracks which lobe IDs have already emitted a zero-signal warning so that atlas
-# coverage-gap messages appear once per process run rather than once per subject.
-_zero_lobe_warned: set = set()
+
+class _LobeWarningTracker:
+    """Rate-limited warning tracker for lobe coverage gaps.
+
+    Provides per-instance warning instead of global singleton to avoid
+    breaking determinism in parallel runs.
+    """
+
+    def __init__(self, max_warnings_per_lobe: int = 3):
+        self._warned: dict = {}
+        self._max_warnings = max_warnings_per_lobe
+
+    def should_warn(self, lobe_id: int) -> bool:
+        if lobe_id not in self._warned:
+            self._warned[lobe_id] = 0
+        if self._warned[lobe_id] < self._max_warnings:
+            self._warned[lobe_id] += 1
+            return True
+        return False
+
+    def reset(self) -> None:
+        self._warned.clear()
+
+
+_zero_lobe_warned = _LobeWarningTracker()
 
 
 def _empty_sparsification_info() -> Dict[str, object]:
@@ -145,12 +167,11 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
         indices = [i for i in LOBE_MAPPING[lobe_id] if i < num_rois]
         
         if not indices:
-            if lobe_id not in _zero_lobe_warned:
+            if _zero_lobe_warned.should_warn(lobe_id):
                 logger.warning(
                     f"Lobe {lobe_id} ({LOBE_NAMES[lobe_id]}): No matching ROIs in atlas. "
-                    "Using zero-signal. (Subsequent subjects with the same gap suppressed.)"
+                    "Using zero-signal. (Subsequent warnings suppressed.)"
                 )
-                _zero_lobe_warned.add(lobe_id)
             lobe_signals.append(torch.zeros(ts_raw.shape[0], device=ts_raw.device))
             lobe_internal_features.append(torch.tensor([0.0, 0.0], device=ts_raw.device))
             zero_lobes.append(True)
@@ -164,13 +185,12 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
         # the PCA block so that NaN values don't propagate into the lobe signal.
         valid_roi_mask = ~torch.isnan(roi_data).any(dim=0)  # (N_rois_in_lobe,)
         if not valid_roi_mask.any():
-            if lobe_id not in _zero_lobe_warned:
+            if _zero_lobe_warned.should_warn(lobe_id):
                 logger.warning(
                     f"Lobe {lobe_id} ({LOBE_NAMES[lobe_id]}): all {len(indices)} ROIs "
                     "have NaN time series (atlas coverage gap). Using zero-signal fallback. "
-                    "(Subsequent subjects with the same gap suppressed.)"
+                    "(Subsequent warnings suppressed.)"
                 )
-                _zero_lobe_warned.add(lobe_id)
             lobe_signals.append(torch.zeros(ts_raw.shape[0], device=ts_raw.device))
             lobe_internal_features.append(torch.tensor([0.0, 0.0], device=ts_raw.device))
             zero_lobes.append(True)

@@ -11,7 +11,7 @@ References:
 import logging
 
 import numpy as np
-from typing import Dict
+from typing import Dict, Tuple
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

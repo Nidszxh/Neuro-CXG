@@ -61,7 +61,6 @@ GRAPH_DENSITY_TARGET = 0.30  # Keep top 30% of directional edges (~40/132 for 12
 # Phase 1/2 enhancements (Apr 2026)
 # Default to ridge-regularized Granger edges for stronger statistical signal.
 CAUSALITY_METHOD = "lagged_pearson"  # Best performing method  # Options: 'granger', 'ridge_granger', 'ridge_granger_hybrid', 'lagged_pearson', 'partial_corr_glasso'
-# 2026-04-24: GRL_ALPHA changed to 1.0 based on Ablation D results showing +0.05 improvement
 GRANGER_MAX_LAG = 5  # Test lags 1-5 TRs (legacy, kept for backward compatibility)
 GRANGER_MAX_LAG_SECONDS = 10.0  # Test causality up to 10s of history; adjusted by subject TR
 GRANGER_SIGNIFICANCE_LEVEL = 0.05  # Statistical significance threshold

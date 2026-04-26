@@ -199,6 +199,8 @@ def build_pearson_graphs(output_dir: Path) -> bool:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Monkey-patch the module-level constant in construct_causal
+    # NOTE: This is fragile for parallel execution but safe for sequential ablation runs.
+    # TODO: Refactor to use dependency injection.
     import src.features.construct_causal as cc_mod
 
     original_method = cc_mod.CAUSALITY_METHOD

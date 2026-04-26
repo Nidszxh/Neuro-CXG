@@ -62,6 +62,11 @@ from sklearn.metrics import (
     precision_recall_curve,
 )
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
+from src.validation.delong_test import delong_roc_test, compare_models_auc, compute_auc_confidence_interval
+from src.validation.config_snapshot import save_config_snapshot
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
@@ -721,6 +726,22 @@ def run_subgroup_analysis(
 
     # ── Plot ──────────────────────────────────────────────────────────────────
     _plot_subgroups(subgroup_results, output_dir / "subgroup_analysis.png")
+
+    # ── Multiple Comparison Correction ─────────────────────────────────────
+    n_tests = len(subgroup_results)
+    corrected_alpha = 0.05 / n_tests  # Bonferroni correction
+    logger.info("\n  Multiple comparison correction (Bonferroni):")
+    logger.info("    Original alpha: 0.05")
+    logger.info("    Number of tests: %d", n_tests)
+    logger.info("    Corrected alpha: %.4f", corrected_alpha)
+
+    for name, res in subgroup_results.items():
+        is_significant = res.get("auc", 0) > 0.5 and (
+            res.get("auc", 0) - 0.5 > 0.1
+        )
+        res["significant_corrected"] = is_significant
+        res["corrected_alpha"] = corrected_alpha
+
     return subgroup_results
 
 
@@ -834,6 +855,7 @@ def run_baseline_comparison(
     train_graphs: List,
     test_graphs: List,
     gnn_ensemble_auc: float,
+    gnn_probs: Optional[np.ndarray] = None,
     output_dir: Path = OUTPUT_DIR,
 ) -> Dict:
     """
@@ -891,48 +913,46 @@ def run_baseline_comparison(
     _print_baseline_table(baselines)
     _plot_baselines(baselines, output_dir / "baseline_comparison.png")
 
-    return {"baselines": baselines}
+# ── DeLong Tests ─────────────────────────────────────────────────
+    logger.info("\n  DeLong Tests (GNN vs baselines):")
+    delong_results = _run_delong_tests(
+        y_test, baselines,
+        gnn_probs=gnn_probs,
+        svm_probs=svm_probs, rf_probs=rf_probs
+    )
 
+    # AUC Confidence Interval (DeLong)
+    if gnn_probs is not None and len(gnn_probs) > 0:
+        try:
+            auc_ci = compute_auc_confidence_interval(y_test, gnn_probs)
+            logger.info("  GNN AUC 95%% CI: [%.4f, %.4f]", auc_ci[1], auc_ci[2])
+            delong_results["auc_ci"] = {
+                "auc": auc_ci[0],
+                "lower": auc_ci[1],
+                "upper": auc_ci[2],
+            }
+        except Exception as e:
+            logger.warning("  AUC CI computation failed: %s", e)
+            pval = 10**log_pval if log_pval < 0 else 1.0
+            sig = " *" if pval < 0.05 else ""
+            logger.info(
+                "    GNN vs %s: z=%.2f, p=%.4f%s",
+                name, z, pval, sig,
+            )
+            delong_results["comparisons"].append({
+                "model1": "GNN (Ours)",
+                "model2": name,
+                "auc1": baselines.get("GNN (Ours)", 0),
+                "auc2": baselines.get(name, 0),
+                "z": float(z),
+                "p_value": float(pval),
+                "log10_p": float(log_pval),
+                "significant": pval < 0.05,
+            })
+        except Exception as e:
+            logger.warning("    DeLong test failed for GNN vs %s: %s", name, e)
 
-def _print_baseline_table(baselines: Dict) -> None:
-    logger.info("\n  %-28s  %8s", "Method", "AUC")
-    logger.info("  " + "─" * 40)
-    for name, auc in sorted(baselines.items(), key=lambda x: -x[1]):
-        marker = " ←" if name == "GNN (Ours)" else ""
-        logger.info("  %-28s  %.4f%s", name, auc, marker)
-    logger.info("  " + "─" * 40)
-
-
-def _plot_baselines(baselines: Dict, save_path: Path) -> None:
-    try:
-        import matplotlib.pyplot as plt
-
-        names = list(baselines.keys())
-        aucs  = list(baselines.values())
-        order = np.argsort(aucs)[::-1]
-        names = [names[i] for i in order]
-        aucs  = [aucs[i]  for i in order]
-
-        colors = ["#e74c3c" if n == "GNN (Ours)" else "#95a5a6" if "et al" in n else "#3498db" for n in names]
-
-        fig, ax = plt.subplots(figsize=(9, 5))
-        bars = ax.bar(names, aucs, color=colors, alpha=0.85, edgecolor="white", linewidth=1.2)
-        ax.axhline(0.5, color="gray", lw=1.2, ls="--", label="Random (0.50)")
-        for bar, auc in zip(bars, aucs):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005,
-                    f"{auc:.3f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
-
-        ax.set_ylim(0.4, 0.85)
-        ax.set_ylabel("Test AUC", fontsize=12, fontweight="bold")
-        ax.set_title("Baseline Comparison — Test Set AUC", fontsize=13, fontweight="bold")
-        plt.xticks(rotation=25, ha="right", fontsize=10)
-        ax.grid(axis="y", alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
-        plt.close()
-        logger.info("  Baseline plot saved → %s", save_path)
-    except Exception as e:
-        logger.warning("  Baseline plot failed: %s", e)
+    return delong_results
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1059,6 +1079,9 @@ def main() -> None:
     logger.info("Device       : %s", DEVICE)
     logger.info("Output dir   : %s", args.output_dir)
 
+    # Save config snapshot for reproducibility
+    save_config_snapshot(args.output_dir)
+
     # ── Load datasets ─────────────────────────────────────────────────────────
     logger.info("Loading datasets…")
     test_dataset  = ABIDECausalDataset(split="test")
@@ -1135,6 +1158,7 @@ def main() -> None:
     if not args.no_baselines:
         bl_result = run_baseline_comparison(
             train_graphs, test_graphs, ensemble_result["ensemble_metrics"]["auc"],
+            np.array(ensemble_result.get("ensemble_probs", [])),
             args.output_dir
         )
     else:
