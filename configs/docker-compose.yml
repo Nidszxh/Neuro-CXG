@@ -1,0 +1,13 @@
+version: '3.9'
+
+services:
+  neuro-cxg:
+    build: .
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ./data:/data
+      - ./results:/workspace/results
+    working_dir: /workspace
+    command: python src/run_pipeline.py --auto

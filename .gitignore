@@ -33,7 +33,6 @@ data/processed/**
 data/final/**
 data/images/
 data/labels/
-backup83/
 
 # Metadata Exceptions
 !data/metadata/atlas_metadata.json
@@ -59,7 +58,6 @@ yolo26n.pt
 # --- Results & Experiment Tracking ---
 results/experiments/runs/     
 results/experiments/detection/ROI_Detection_v*/  
-results/analysis/seed_stability_C/checkpoint_snapshots/  
 mlruns/
 .mlflow/
 
@@ -91,11 +89,12 @@ logs/
 .coverage
 htmlcov/
 .tox/
-pytest.ini
 
 # --- Misc ---
 .github/
 dump/*
 chats/*
 scripts/*
-docs/internal/   
+docs/internal/
+!scripts/reproduce.sh
+!scripts/verify_seeds.sh

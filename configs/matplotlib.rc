@@ -1,0 +1,32 @@
+# Neuro-CXG Matplotlib Style
+# Publication-quality figure defaults
+
+# DPI settings for publication
+figure.dpi: 100
+savefig.dpi: 300
+savefig.bbox: tight
+
+# Font settings (colorblind-safe, print-friendly)
+font.family: sans-serif
+font.sans-serif: Arial, Helvetica, DejaVu Sans
+font.size: 10
+axes.labelsize: 10
+axes.titlesize: 11
+xtick.labelsize: 9
+ytick.labelsize: 9
+legend.fontsize: 9
+
+# Line widths
+axes.linewidth: 1.0
+lines.linewidth: 1.5
+
+# Plot settings
+axes.grid: False
+axes.spines.top: False
+axes.spines.right: False
+legend.frameon: False
+legend.numpoints: 1
+
+# Save settings
+savefig.format: png
+savefig.transparent: False
