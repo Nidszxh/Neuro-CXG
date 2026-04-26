@@ -1,0 +1,9 @@
+stage,count,drop,loss_pct
+0_phenotype_csv,1112,0,0.0
+1_png_downloaded,1015,97,8.7
+2_all12_detected,1015,0,0.0
+3_time_series_npy,1015,0,0.0
+4_temporal_features,1015,0,0.0
+5_harmonized,1015,0,0.0
+6_causal_graphs,1015,0,0.0
+7_train_dataset,707,308,30.3

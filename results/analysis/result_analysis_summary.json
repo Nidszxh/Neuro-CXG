@@ -1,0 +1,289 @@
+{
+  "n_subjects": 154,
+  "overall_accuracy": 0.7922077922077922,
+  "overall_auc": 0.8715611814345992,
+  "decision_threshold": 0.4277209605801652,
+  "threshold_policy": "youden",
+  "per_site_calibration": {
+    "requested": 0,
+    "applied": 0,
+    "num_sites": 0
+  },
+  "per_site_calibration_requested": {
+    "applied": 0,
+    "num_sites": 0
+  },
+  "youden_analysis": {
+    "threshold": 0.44823147708804284,
+    "accuracy": 0.7922077922077922,
+    "f1": 0.8160919540229885,
+    "sensitivity": 0.8987341772151899,
+    "specificity": 0.68,
+    "n_total": 154,
+    "n_asd": 79,
+    "n_control": 75,
+    "tp": 71,
+    "tn": 51,
+    "fp": 24,
+    "fn": 8
+  },
+  "misclassification": {
+    "FP": {
+      "n_subjects": 26,
+      "mean_age": 19.4,
+      "pct_male": 84.6,
+      "mean_fiq": 107.8,
+      "mean_confidence": 0.613
+    },
+    "FN": {
+      "n_subjects": 6,
+      "mean_age": 17.8,
+      "pct_male": 83.3,
+      "mean_fiq": 100.2,
+      "mean_confidence": 0.685
+    },
+    "TP": {
+      "n_subjects": 73,
+      "mean_age": 15.5,
+      "pct_male": 74.0,
+      "mean_fiq": 110.6,
+      "mean_confidence": 0.723
+    },
+    "TN": {
+      "n_subjects": 49,
+      "mean_age": 16.1,
+      "pct_male": 87.8,
+      "mean_fiq": 102.3,
+      "mean_confidence": 0.775
+    }
+  },
+  "site_effects": {
+    "per_site": [
+      {
+        "site_id": 0,
+        "n_total": 5,
+        "n_asd": 3,
+        "n_control": 2,
+        "auc": 0.8333,
+        "auc_status": "ok",
+        "accuracy": 0.8
+      },
+      {
+        "site_id": 1,
+        "n_total": 4,
+        "n_asd": 2,
+        "n_control": 2,
+        "auc": null,
+        "auc_status": "too_few_samples",
+        "accuracy": 0.75
+      },
+      {
+        "site_id": 2,
+        "n_total": 7,
+        "n_asd": 4,
+        "n_control": 3,
+        "auc": 1.0,
+        "auc_status": "ok",
+        "accuracy": 0.714
+      },
+      {
+        "site_id": 3,
+        "n_total": 4,
+        "n_asd": 2,
+        "n_control": 2,
+        "auc": null,
+        "auc_status": "too_few_samples",
+        "accuracy": 1.0
+      },
+      {
+        "site_id": 4,
+        "n_total": 5,
+        "n_asd": 3,
+        "n_control": 2,
+        "auc": 0.8333,
+        "auc_status": "ok",
+        "accuracy": 0.8
+      },
+      {
+        "site_id": 5,
+        "n_total": 7,
+        "n_asd": 4,
+        "n_control": 3,
+        "auc": 0.5,
+        "auc_status": "ok",
+        "accuracy": 0.714
+      },
+      {
+        "site_id": 6,
+        "n_total": 27,
+        "n_asd": 15,
+        "n_control": 12,
+        "auc": 0.9167,
+        "auc_status": "ok",
+        "accuracy": 0.889
+      },
+      {
+        "site_id": 7,
+        "n_total": 4,
+        "n_asd": 2,
+        "n_control": 2,
+        "auc": null,
+        "auc_status": "too_few_samples",
+        "accuracy": 0.75
+      },
+      {
+        "site_id": 8,
+        "n_total": 5,
+        "n_asd": 2,
+        "n_control": 3,
+        "auc": 1.0,
+        "auc_status": "ok",
+        "accuracy": 0.4
+      },
+      {
+        "site_id": 9,
+        "n_total": 9,
+        "n_asd": 4,
+        "n_control": 5,
+        "auc": 0.75,
+        "auc_status": "ok",
+        "accuracy": 0.778
+      },
+      {
+        "site_id": 10,
+        "n_total": 5,
+        "n_asd": 2,
+        "n_control": 3,
+        "auc": 1.0,
+        "auc_status": "ok",
+        "accuracy": 0.8
+      },
+      {
+        "site_id": 11,
+        "n_total": 4,
+        "n_asd": 3,
+        "n_control": 1,
+        "auc": null,
+        "auc_status": "too_few_samples",
+        "accuracy": 1.0
+      },
+      {
+        "site_id": 12,
+        "n_total": 6,
+        "n_asd": 3,
+        "n_control": 3,
+        "auc": 1.0,
+        "auc_status": "ok",
+        "accuracy": 0.833
+      },
+      {
+        "site_id": 13,
+        "n_total": 7,
+        "n_asd": 4,
+        "n_control": 3,
+        "auc": 1.0,
+        "auc_status": "ok",
+        "accuracy": 1.0
+      },
+      {
+        "site_id": 14,
+        "n_total": 11,
+        "n_asd": 5,
+        "n_control": 6,
+        "auc": 0.5,
+        "auc_status": "ok",
+        "accuracy": 0.545
+      },
+      {
+        "site_id": 15,
+        "n_total": 4,
+        "n_asd": 2,
+        "n_control": 2,
+        "auc": null,
+        "auc_status": "too_few_samples",
+        "accuracy": 0.75
+      },
+      {
+        "site_id": 16,
+        "n_total": 16,
+        "n_asd": 8,
+        "n_control": 8,
+        "auc": 0.875,
+        "auc_status": "ok",
+        "accuracy": 0.875
+      },
+      {
+        "site_id": 17,
+        "n_total": 5,
+        "n_asd": 3,
+        "n_control": 2,
+        "auc": 1.0,
+        "auc_status": "ok",
+        "accuracy": 0.6
+      },
+      {
+        "site_id": 18,
+        "n_total": 11,
+        "n_asd": 4,
+        "n_control": 7,
+        "auc": 0.6786,
+        "auc_status": "ok",
+        "accuracy": 0.636
+      },
+      {
+        "site_id": 19,
+        "n_total": 8,
+        "n_asd": 4,
+        "n_control": 4,
+        "auc": 1.0,
+        "auc_status": "ok",
+        "accuracy": 1.0
+      }
+    ]
+  },
+  "calibration": {
+    "mean_confidence": 0.7196376623376624,
+    "pct_high_confidence": 44.8051948051948,
+    "calibration_bins": [
+      "0.50\u20130.55",
+      "0.55\u20130.60",
+      "0.60\u20130.65",
+      "0.65\u20130.70",
+      "0.70\u20130.75",
+      "0.75\u20130.80",
+      "0.80\u20130.85",
+      "0.85\u20130.90",
+      "0.90\u20130.95"
+    ],
+    "fraction_correct": [
+      0.6111111111111112,
+      0.5294117647058824,
+      0.8,
+      0.6190476190476191,
+      0.7777777777777778,
+      1.0,
+      0.8888888888888888,
+      0.9615384615384616,
+      1.0
+    ]
+  },
+  "severity_correlation": {
+    "FIQ_ASD": {
+      "r": 0.021,
+      "p": 0.8562
+    },
+    "FIQ_All": {
+      "r": -0.054,
+      "p": 0.5057
+    },
+    "Age_ASD": {
+      "r": -0.124,
+      "p": 0.2755
+    },
+    "Age_All": {
+      "r": -0.08,
+      "p": 0.322
+    }
+  },
+  "n_case_studies": 15
+}
