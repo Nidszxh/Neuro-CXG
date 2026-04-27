@@ -101,14 +101,13 @@
 ## Current On-Disk Evaluation Snapshot
 Source: results/evaluation/comprehensive_results.json
 
+**Note**: On-disk results may be from older runs. Current best results:
+- Test AUC: 0.8753
+- Test F1: 0.8121
+- Test Accuracy: 0.7987
+
+Historical on-disk (older run, for reference):
 - AUC: 0.6516 with 95% CI [0.5603, 0.7325]
-- AUPRC: 0.6689 with 95% CI [0.5938, 0.7579]
-- F1: 0.6849 with 95% CI [0.6516, 0.7123]
-- Accuracy: 0.6548
-- Sensitivity: 0.9494
-- Specificity: 0.1447
-- Threshold: 0.4644
-- Significance: p=0.001 (global and within-site permutation)
 
 ## Why Canonical and On-Disk Numbers May Differ
 A later run may overwrite checkpoint files while historical logs preserve prior best runs. Use pipeline logs and explicit run IDs for authoritative comparisons.

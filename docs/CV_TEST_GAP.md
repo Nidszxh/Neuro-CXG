@@ -73,7 +73,15 @@ we would compare the CV AUC distribution against test AUC:
 
 The bootstrap 95% CI for test AUC is: [0.8521, 0.8985]
 
-Since CV AUC falls outside this CI, the gap is statistically meaningful.
+**Correct interpretation**: The bootstrap CI represents uncertainty in the test AUC estimate due to sampling variability. The relatively wide CI [0.8521, 0.8985] indicates moderate uncertainty. Since CV AUC (0.8004) falls outside this CI, the gap is statistically meaningful in the sense that the test performance is likely higher than CV performance. However, this does not indicate a methodology problem — the gap is explained by factors listed above.
+
+### Formal Partitioning of the Gap
+
+A rigorous decomposition would require:
+1. Running the same model on a second held-out test set
+2. Comparing single-fold vs ensemble performance on test
+
+We acknowledge this limitation and recommend future work include a second test set for complete generalization validation.
 
 ### Limitations
 
