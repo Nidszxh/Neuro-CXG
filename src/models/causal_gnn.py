@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import logging
 from torch_geometric.nn import (
     GATv2Conv,
     global_max_pool,
@@ -14,6 +15,8 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import LOBE_TO_NETWORK, NETWORK_TO_LOBES, NUM_NETWORKS, NUM_LOBES
+
+logger = logging.getLogger(__name__)
 
 
 class GradientReversal(torch.autograd.Function):
@@ -87,6 +90,22 @@ class AnatomicalHierarchyPool(nn.Module):
         # Precompute and pad per-network lobe indices to avoid rebuilding tensors
         # in every forward pass.
         max_lobes_per_network = max(len(v) for v in self.network_to_lobes.values())
+        
+        # For 11-lobe mode: ensure lobe indices don't exceed NUM_LOBES-1
+        # This handles the case where Brainstem (lobe 11) was excluded
+        def clamp_lobe_indices(net_idx, lobe_list):
+            return [idx for idx in lobe_list if idx < NUM_LOBES]
+        
+        # Rebuild network_to_lobes to exclude missing lobes
+        if NUM_LOBES < 12:
+            original_network_to_lobes = self.network_to_lobes
+            self.network_to_lobes = {}
+            for net_idx, lobe_list in original_network_to_lobes.items():
+                clamped = clamp_lobe_indices(net_idx, lobe_list)
+                if clamped:  # Only include networks that have valid lobes
+                    self.network_to_lobes[net_idx] = clamped
+            max_lobes_per_network = max(len(v) for v in self.network_to_lobes.values()) if self.network_to_lobes else 1
+        
         lobe_idx_padded = torch.full(
             (self.num_networks, max_lobes_per_network),
             fill_value=-1,
@@ -113,7 +132,7 @@ class AnatomicalHierarchyPool(nn.Module):
         """
         Args:
             h: Node embeddings after GATv2 layers, shape (total_nodes, hidden_dim).
-               total_nodes = num_graphs * NUM_LOBES (fixed 12-node graphs).
+               total_nodes = num_graphs * NUM_LOBES (multi-lobe graphs, configurable per atlas_config).
             batch: Graph-assignment vector, shape (total_nodes,). Maps each node
                    to a graph index in [0, num_graphs).
             num_graphs: Number of graphs in the mini-batch.
@@ -123,10 +142,16 @@ class AnatomicalHierarchyPool(nn.Module):
         """
         expected_nodes = num_graphs * NUM_LOBES
         if h.size(0) != expected_nodes:
-            raise ValueError(
-                "AnatomicalHierarchyPool expects fixed-size graphs with "
-                f"{NUM_LOBES} lobes each: expected {expected_nodes} nodes, got {h.size(0)}"
+            logger.warning(
+                "AnatomicalHierarchyPool expected %d nodes (%d graphs x %d lobes) but got %d; "
+                "falling back to mean pooling for this batch.",
+                expected_nodes,
+                num_graphs,
+                NUM_LOBES,
+                h.size(0),
             )
+            self.last_network_embeddings = None
+            return global_mean_pool(h, batch)
 
         h_3d = h.reshape(num_graphs, NUM_LOBES, self.hidden_dim)
 
@@ -141,6 +166,11 @@ class AnatomicalHierarchyPool(nn.Module):
                 continue
 
             lobe_indices = self.lobe_idx_padded[net_idx, :lobe_count]
+            valid_mask = lobe_indices < h_3d.size(1)
+            if not bool(valid_mask.any()):
+                continue
+            if not bool(valid_mask.all()):
+                lobe_indices = lobe_indices[valid_mask]
             lobe_embs = h_3d[:, lobe_indices, :]
 
             # Level-1 attention: (num_graphs, L, 1) → softmax over L
@@ -165,11 +195,11 @@ class AnatomicalHierarchyPool(nn.Module):
 
 class CausalBrainGNN(torch.nn.Module):
     """
-    GNN for 12-Node Lobe Graphs (Phase 3: Balanced Capacity).
+    GNN for Multi-Lobe Brain Graphs (configurable architecture, 11 or 12 lobes).
 
     Architecture:
     - Dynamic feature input (24 features: 18 temporal+freq + 2 internal + 4 spatial)
-    - 2-3 GAT layers (configurable for 12-node graphs)
+    - 2-3 GAT layers (configurable for multi-lobe graphs)
     - GELU activations (smooth, well-behaved gradients)
     - Residual connections and LayerNorm
     - Anatomical hierarchical pooling (Task 3) or attention / mean+max+sum
@@ -379,6 +409,34 @@ class CausalBrainGNN(torch.nn.Module):
 
     def _encode(self, x, edge_index, edge_attr, batch, site_id, age, sex, fiq):
         """Shared encoder body used by both forward() and _forward_with_embedding()."""
+        if x.dim() != 2:
+            raise ValueError(f"Expected x shape (N, F), got {tuple(x.shape)}")
+
+        num_nodes = int(x.size(0))
+        if num_nodes <= 0:
+            raise ValueError("Received empty node feature tensor")
+
+        if batch is None:
+            raise ValueError("Batch tensor is required for graph pooling")
+        batch = batch.view(-1).long()
+        if batch.numel() != num_nodes:
+            raise ValueError(
+                f"Batch length mismatch: len(batch)={batch.numel()} vs num_nodes={num_nodes}"
+            )
+        if torch.any(batch < 0):
+            raise ValueError("Batch tensor contains negative graph indices")
+
+        if edge_index is None or edge_index.dim() != 2 or int(edge_index.size(0)) != 2:
+            raise ValueError(f"Expected edge_index shape (2, E), got {tuple(edge_index.shape)}")
+        edge_index = edge_index.long()
+        if edge_index.numel() > 0:
+            e_min = int(edge_index.min().item())
+            e_max = int(edge_index.max().item())
+            if e_min < 0 or e_max >= num_nodes:
+                raise ValueError(
+                    f"edge_index out of range: min={e_min}, max={e_max}, num_nodes={num_nodes}"
+                )
+
         preprocessing_mode = str(getattr(self, "_preprocessing_mode", "legacy_global")).strip().lower()
         site_norm_mode = str(getattr(self, "_site_normalization_mode", "global")).strip().lower()
 
@@ -466,7 +524,24 @@ class CausalBrainGNN(torch.nn.Module):
         # 1. Optionally add site embeddings
         if self.use_site_embedding:
             if site_id is not None:
-                site_emb = self.site_embedding(site_id)
+                site_id_safe = site_id.view(-1).long()
+                num_graphs = int(batch.max().item()) + 1
+                if site_id_safe.numel() < num_graphs:
+                    pad = torch.zeros(
+                        num_graphs - site_id_safe.numel(),
+                        device=site_id_safe.device,
+                        dtype=site_id_safe.dtype,
+                    )
+                    site_id_safe = torch.cat([site_id_safe, pad], dim=0)
+                num_sites = int(self.site_embedding.num_embeddings)
+                if torch.any((site_id_safe < 0) | (site_id_safe >= num_sites)):
+                    site_id_safe = site_id_safe.clone()
+                    site_id_safe = torch.where(
+                        (site_id_safe < 0) | (site_id_safe >= num_sites),
+                        torch.zeros_like(site_id_safe),
+                        site_id_safe,
+                    )
+                site_emb = self.site_embedding(site_id_safe)
                 site_per_node = site_emb[batch]
             else:
                 site_per_node = torch.zeros(

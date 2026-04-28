@@ -314,7 +314,17 @@ class ABIDECausalDataset(Dataset):
             else:
                 self._graph_cache.move_to_end(sub_id)  # LRU: mark as recently used
 
-            adj = graph_dict['adj'].clone()  # Should be (12, 12)
+            adj = graph_dict['adj'].clone()  # Should be (NUM_LOBES, NUM_LOBES) or (12, 12) in older graphs
+            
+            # Handle lobe mismatch when switching between 11-lobe and 12-lobe modes
+            # If adj is 12x12 but NUM_LOBES=11, extract only first 11x11 (exclude Brainstem)
+            if adj.shape[0] != NUM_LOBES or adj.shape[1] != NUM_LOBES:
+                if adj.shape == (12, 12) and NUM_LOBES == 11:
+                    logger.debug(f"Subject {sub_id}: Adjacency matrix is 12x12, extracting first {NUM_LOBES}x{NUM_LOBES} (excluding Brainstem)")
+                    adj = adj[:NUM_LOBES, :NUM_LOBES]
+                else:
+                    logger.error(f"Subject {sub_id}: Adjacency matrix shape {adj.shape} incompatible with NUM_LOBES={NUM_LOBES}")
+                    return None
             
             if torch.isnan(adj).any() or torch.isinf(adj).any():
                 logger.error(f"Subject {sub_id}: Adjacency matrix contains NaN/Inf")
@@ -324,13 +334,24 @@ class ABIDECausalDataset(Dataset):
             temporal_features = self._get_subject_temporal(sub_id)
             
             # 2b. Load Internal Features from graph (Coherence + Variance)
-            internal_features = graph_dict.get('internal_features')  # (12, 2)
+            internal_features = graph_dict.get('internal_features')  # (12, 2) or (NUM_LOBES, 2)
             if internal_features is None:
                 logger.warning(f"Subject {sub_id}: Missing internal_features in graph, using zeros")
                 internal_features = torch.zeros((NUM_LOBES, 2), dtype=torch.float32)
             else:
                 # SAFETY: Clean NaN/Inf in internal features
                 internal_features = internal_features.float()
+                
+                # Handle lobe mismatch when switching between 11-lobe and 12-lobe modes
+                # If internal_features has 12 rows but NUM_LOBES=11, extract only first 11 rows (exclude Brainstem)
+                if internal_features.shape[0] != NUM_LOBES:
+                    if internal_features.shape[0] == 12 and NUM_LOBES == 11:
+                        logger.debug(f"Subject {sub_id}: Internal features have 12 lobes, extracting first {NUM_LOBES} (excluding Brainstem)")
+                        internal_features = internal_features[:NUM_LOBES, :]
+                    else:
+                        logger.warning(f"Subject {sub_id}: Internal features shape {internal_features.shape} mismatches NUM_LOBES={NUM_LOBES}, using zeros")
+                        internal_features = torch.zeros((NUM_LOBES, 2), dtype=torch.float32)
+                
                 if torch.isnan(internal_features).any() or torch.isinf(internal_features).any():
                     logger.warning(f"Subject {sub_id}: Internal features contain NaN/Inf, replacing with 0")
                     internal_features = torch.where(
@@ -345,6 +366,15 @@ class ABIDECausalDataset(Dataset):
                 'zero_lobe_mask',
                 torch.zeros(NUM_LOBES, dtype=torch.bool)
             ).bool()
+            
+            # Handle lobe mismatch in zero_lobe_mask when switching between 11-lobe and 12-lobe modes
+            if zero_lobe_mask.shape[0] != NUM_LOBES:
+                if zero_lobe_mask.shape[0] == 12 and NUM_LOBES == 11:
+                    logger.debug(f"Subject {sub_id}: Zero mask is for 12 lobes, extracting first {NUM_LOBES} (excluding Brainstem)")
+                    zero_lobe_mask = zero_lobe_mask[:NUM_LOBES]
+                else:
+                    logger.warning(f"Subject {sub_id}: Zero mask shape {zero_lobe_mask.shape} mismatches NUM_LOBES={NUM_LOBES}, using all-False")
+                    zero_lobe_mask = torch.zeros(NUM_LOBES, dtype=torch.bool)
 
             spatial_missing_mask = self._get_subject_spatial_missing_mask(sub_id)
             if spatial_missing_mask is not None and spatial_missing_mask.numel() == NUM_LOBES:
@@ -449,29 +479,43 @@ class ABIDECausalDataset(Dataset):
 
     def _get_subject_temporal(self, sub_id):
         """
-        Extracts temporal features and reshapes to (12, 8).        
+        Extracts temporal features and reshapes to (NUM_LOBES, NUM_TEMPORAL_FEATURES).
+        Handles both 12-lobe and 11-lobe CSVs (automatically trims Brainstem when needed).
         Returns None if subject not found or features are invalid.
         """
         try:
             row = self.node_attr.loc[sub_id].values
-            
-            # Expected: 12 regions * 8 features = 96 values
-            expected_features = NUM_LOBES * NUM_TEMPORAL_FEATURES
-            
-            if len(row) < expected_features:
+
+            # Handle both old (12-lobe) and new (11-lobe) CSVs
+            features_per_lobe = NUM_TEMPORAL_FEATURES
+            num_lobes_in_row = len(row) // features_per_lobe
+
+            if num_lobes_in_row not in (11, 12):
                 logger.warning(
-                    f"Subject {sub_id}: Insufficient temporal features "
-                    f"({len(row)} < {expected_features})"
+                    f"Subject {sub_id}: Invalid temporal feature count "
+                    f"({len(row)} values, expected {11*features_per_lobe} or {12*features_per_lobe})"
                 )
                 return None
-            
-            features = row[:expected_features].reshape(NUM_LOBES, NUM_TEMPORAL_FEATURES)
-            
+
+            # Reshape based on available lobes and target NUM_LOBES
+            if num_lobes_in_row == 12 and NUM_LOBES == 11:
+                # Old CSV with 12 lobes, trim Brainstem (last lobe)
+                features = row[:11 * features_per_lobe].reshape(11, features_per_lobe)
+            elif num_lobes_in_row == NUM_LOBES:
+                # CSV matches target lobe count
+                features = row.reshape(NUM_LOBES, features_per_lobe)
+            else:
+                logger.warning(
+                    f"Subject {sub_id}: Temporal lobe count mismatch "
+                    f"(CSV has {num_lobes_in_row}, NUM_LOBES={NUM_LOBES})"
+                )
+                return None
+
             # Validate no NaNs
             if np.isnan(features).any():
                 logger.warning(f"Subject {sub_id}: Temporal features contain NaN")
                 return None
-            
+
             return features
             
         except KeyError:
@@ -483,8 +527,8 @@ class ABIDECausalDataset(Dataset):
 
     def _get_subject_spatial(self, sub_id):
         """
-        Extracts spatial features for 12 regions and reshapes to (12, 6).
-        
+        Extracts spatial features for NUM_LOBES regions and reshapes to (NUM_LOBES, NUM_SPATIAL_FEATURES).
+
         Extracts 4 anatomical spatial features per region (conf_std and
         detection_count are intentionally excluded — they are YOLO scanner-quality
         metrics that encode site identity, not brain structure, confirmed by
@@ -494,14 +538,18 @@ class ABIDECausalDataset(Dataset):
         3. z_depth (centroid z-coordinate)
         4. size (bounding box area)
 
+        In 11-lobe mode, skips Brainstem (lobe 11) automatically.
         Returns None if subject not found or features are invalid.
         """
         try:
             spatial_data = []
-            
-            for lobe_id in range(NUM_LOBES):
+
+            # In 11-lobe mode, skip Brainstem (lobe 11, last in LOBE_NAMES)
+            lobes_to_process = NUM_LOBES if NUM_LOBES == 12 else 11
+
+            for lobe_id in range(lobes_to_process):
                 lobe_name = LOBE_NAMES[lobe_id]
-                
+
                 try:
                     # Extract 4 anatomical spatial features (conf_std and
                     # detection_count excluded — encode site/scanner, not anatomy)
@@ -517,17 +565,17 @@ class ABIDECausalDataset(Dataset):
                             f"Subject {sub_id}: Invalid spatial features for {lobe_name}"
                         )
                         return None
-                    
+
                     spatial_data.append(features)
-                    
+
                 except KeyError as e:
                     logger.warning(
                         f"Subject {sub_id}: Missing spatial feature for {lobe_name}: {e}"
                     )
                     return None
-            
+
             spatial_array = np.array(spatial_data)
-            
+
             # Validate final shape
             if spatial_array.shape != (NUM_LOBES, NUM_SPATIAL_FEATURES):
                 logger.error(
@@ -535,7 +583,7 @@ class ABIDECausalDataset(Dataset):
                     f"Expected ({NUM_LOBES}, {NUM_SPATIAL_FEATURES}), got {spatial_array.shape}"
                 )
                 return None
-            
+
             return spatial_array
             
         except Exception as e:

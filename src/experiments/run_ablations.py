@@ -4,14 +4,14 @@ Ablation Studies: Identify Signal Sources for AUC Improvement
 
 Runs five controlled ablations to diagnose what drives the GNN's AUC=0.63:
 
-  A — FlatMLP (no graph structure): 5-fold MLP on flattened 12×28 node features.
+  A — FlatMLP (no graph structure): 5-fold MLP on flattened 12×24 node features.
       If AUC_MLP > AUC_GNN → signal is in features, not topology.
 
-  B — Spatial only (6 features): Zero out temporal+frequency+internal.
+  B — Spatial only (4 features): Zero out temporal+frequency+internal.
       Establishes how much AUC comes from anatomy alone.
 
-  C — Temporal base only (8 features, no frequency): Zero out frequency+internal.
-      Tests whether 12 frequency features add signal or noise.
+  C — Temporal+Spatial (12 features, no frequency): Zero out frequency+internal.
+      Tests whether 10 frequency features add signal or noise.
 
   D — Lagged Pearson edges (vs. Granger): Rebuild graphs with lagged_pearson method.
       If Pearson AUC > Granger AUC → revert causality method.
@@ -54,6 +54,8 @@ from src.core.config import (
     GNN_BATCH_SIZE,
     GNN_DROPOUT,
     GNN_EPOCHS,
+    GNN_GRL_ALPHA,
+    GNN_GRL_ALPHA_MAX,
     GNN_HIDDEN_CHANNELS,
     GNN_IN_CHANNELS,
     GNN_NUM_LAYERS,
@@ -62,6 +64,7 @@ from src.core.config import (
     GNN_EARLY_STOPPING_PATIENCE,
     GNN_MIN_EPOCHS_BEFORE_STOPPING,
     GNN_POOLING,
+    GNN_SITE_LOSS_WEIGHT,
     GNN_WEIGHT_DECAY,
     K_FOLDS,
     NUM_LOBES,
@@ -84,10 +87,10 @@ for _grp, _feats in FEATURE_GROUPS.items():
     _GROUP_SLICES[_grp] = slice(_offset, _offset + len(_feats))
     _offset += len(_feats)
 
-TEMPORAL_SLICE   = _GROUP_SLICES["temporal"]    # indices 0:8
-FREQUENCY_SLICE  = _GROUP_SLICES["frequency"]   # indices 8:20
-INTERNAL_SLICE   = _GROUP_SLICES["internal"]    # indices 20:22
-SPATIAL_SLICE    = _GROUP_SLICES["spatial"]     # indices 22:28
+TEMPORAL_SLICE   = _GROUP_SLICES["temporal"]    # indices 0:8 (8 features)
+FREQUENCY_SLICE  = _GROUP_SLICES["frequency"]   # indices 8:18 (10 features)
+INTERNAL_SLICE   = _GROUP_SLICES["internal"]    # indices 18:20 (2 features)
+SPATIAL_SLICE    = _GROUP_SLICES["spatial"]     # indices 20:24 (4 features)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -150,7 +153,7 @@ class FlatMLP(nn.Module):
         num_nodes: int = NUM_LOBES,
     ):
         super().__init__()
-        flat_dim = num_nodes * in_channels  # 12 × 28 = 336
+        flat_dim = num_nodes * in_channels  # 12 × 24 = 288
         self.net = nn.Sequential(
             nn.Linear(flat_dim, hidden),
             nn.GELU(),
@@ -291,10 +294,16 @@ def run_kfold(
     model_factory,
     ablation_name: str,
     folds: int = K_FOLDS,
+    use_grl: bool = False,
+    grl_alpha_max: float = 1.0,
 ) -> Dict:
     """
     5-fold stratified CV for any dataset/model combination.
     Returns summary dict with per-fold and mean AUC.
+
+    Args:
+        use_grl: Whether to use Gradient Reversal Layer for site debiasing.
+        grl_alpha_max: Maximum GRL alpha value for annealing schedule.
     """
     logger.info(f"\n{'━'*70}")
     logger.info(f"ABLATION {ablation_name}: 5-Fold CV")
@@ -391,10 +400,11 @@ def run_kfold(
             max_lr=GNN_ONECYCLE_MAX_LR,
             patience=GNN_EARLY_STOPPING_PATIENCE,
             min_epochs_before_stopping=GNN_MIN_EPOCHS_BEFORE_STOPPING,
-            use_grl=False,
-            grl_weight=0.0,
+            use_grl=use_grl,
+            grl_weight=GNN_SITE_LOSS_WEIGHT if use_grl else 0.0,
             fold=fold,
             weight_decay=GNN_WEIGHT_DECAY,
+            grl_alpha_max=grl_alpha_max,
         )
 
         auc = best_metrics["auc"]
@@ -455,7 +465,7 @@ def run_ablation_a(base_ds) -> Dict:
 
 
 def run_ablation_b(base_ds) -> Dict:
-    """B — Spatial only: zero temporal + frequency + internal features."""
+    """B — Spatial only: zero temporal + frequency + internal features (4 spatial features)."""
     masked_ds = MaskedDataset(base_ds, keep_groups=["spatial"])
     factory = _gnn_factory_default(
         use_site_embedding=False,
@@ -463,11 +473,11 @@ def run_ablation_b(base_ds) -> Dict:
         use_grl=False,
         edge_gate=True,
     )
-    return run_kfold(masked_ds, factory, ablation_name="B (Spatial only, 6 features)")
+    return run_kfold(masked_ds, factory, ablation_name="B (Spatial only, 4 features)")
 
 
 def run_ablation_c(base_ds) -> Dict:
-    """C — Temporal base only (8 features): no frequency or internal, with spatial."""
+    """C — Temporal+Spatial (12 features, no frequency): zero frequency+internal, keep temporal+spatial."""
     masked_ds = MaskedDataset(base_ds, keep_groups=["temporal", "spatial"])
     factory = _gnn_factory_default(
         use_site_embedding=False,
@@ -513,10 +523,15 @@ def run_ablation_d() -> Dict:
         use_site_embedding=True,
         use_demographics=True,
         use_grl=True,
-        grl_alpha=1.0,
+        grl_alpha=GNN_GRL_ALPHA,  # Use same alpha as main pipeline (0.10)
         edge_gate=True,
     )
-    return run_kfold(pearl_ds, factory, ablation_name="D (Lagged Pearson edges)")
+    return run_kfold(
+        pearl_ds, factory,
+        ablation_name="D (Lagged Pearson edges)",
+        use_grl=True,
+        grl_alpha_max=GNN_GRL_ALPHA_MAX,
+    )
 
 
 def run_ablation_e(base_ds) -> Dict:
@@ -560,15 +575,20 @@ def run_ablation_d2() -> Dict:
         logger.error(f"  Failed to load Ridge Granger dataset: {e}")
         return {}
 
-    # Use same config as Ablation D (which achieved 0.8585)
+    # Use same config as main pipeline (GRL alpha = 0.10)
     factory = _gnn_factory_default(
         use_site_embedding=True,
         use_demographics=True,
         use_grl=True,
-        grl_alpha=1.0,  # KEY: stronger GRL like Ablation D
+        grl_alpha=GNN_GRL_ALPHA,  # Use same alpha as main pipeline (0.10)
         edge_gate=True,
     )
-    return run_kfold(ridge_ds, factory, ablation_name="D2 (Ridge Granger edges)")
+    return run_kfold(
+        ridge_ds, factory,
+        ablation_name="D2 (Ridge Granger edges)",
+        use_grl=True,
+        grl_alpha_max=GNN_GRL_ALPHA_MAX,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

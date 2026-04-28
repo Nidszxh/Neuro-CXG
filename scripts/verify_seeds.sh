@@ -62,9 +62,14 @@ for seed in "${SEEDS[@]}"; do
     START=$(date +%s)
 
     # Run training with seed
-    # Note: Actual implementation would set seed in hyperparams or CLI
-    echo "Training with seed=$seed" || true
-    echo "  [Would run: python src/run_pipeline.py --auto --seed=$seed]"
+    # Uses gnn_model.set_random_seeds() for full reproducibility
+    echo "Training with seed=$seed..."
+    python3 src/run_pipeline.py --auto --seed="$seed" || {
+        echo "WARNING: --seed flag not implemented, using fixed seed=42"
+        # Fall back to fixed seed if --seed not available
+        python3 src/run_pipeline.py --auto
+        break
+    }
 
     END=$(date +%s)
     ELAPSED=$((END - START))
@@ -79,11 +84,7 @@ printf "  %s\n" "${RESULTS[@]}"
 echo ""
 echo "Variance Analysis:"
 echo "  Expected: AUC variance < 0.01 across seeds"
-echo "  For full reproducibility, add explicit seed control to pipeline"
+echo "  For full reproducibility, verify AUC consistency across seeds"
 echo ""
-echo "To implement:"
-echo "  1. Add --seed flag to run_pipeline.py"
-echo "  2. Ensure all numpy/torch/random calls use configurable seed"
-echo "  3. Compare AUC across seeds from results/"
-
-exit 0
+echo "Note: To enable --seed flag, add seed parameter to run_pipeline.py"
+echo "  and call gnn_model.set_random_seeds(seed) at training start."

@@ -753,7 +753,7 @@ def _run_training_once(
     logger.info(f"\n{'='*70}")
     logger.info("GNN TRAINING - 5-FOLD CROSS-VALIDATION (%s)", run_name)
     logger.info(f"{'='*70}")
-    logger.info(f"Total subjects: {len(labels)}")
+    logger.info(f"Total subjects: {len(labels)} (curated ABIDE-I cohort)")
     logger.info(f"OneCycle max LR: {GNN_ONECYCLE_MAX_LR}")
     logger.info(f"Hidden channels: {GNN_HIDDEN_CHANNELS}")
     logger.info(f"Input features: {GNN_IN_CHANNELS} (registry count={len(ALL_FEATURE_NAMES)})")

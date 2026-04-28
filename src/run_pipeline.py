@@ -286,11 +286,11 @@ def clear_old_state():
             f.unlink()
             logger.debug(f"Removed stale metadata: {f.name}")
 
-    # Remove old causal graphs (they are the wrong shape)
+    # Remove old causal graphs (regenerated at current architecture)
     if CAUSAL_GRAPHS_DIR.exists():
         shutil.rmtree(CAUSAL_GRAPHS_DIR)
         CAUSAL_GRAPHS_DIR.mkdir(parents=True)
-        logger.info("Reset Causal Graph directory (cleared old 170x170 matrices)")
+        logger.info("Reset Causal Graph directory (cleared previous causal graphs)")
 
     # Remove old multiview graphs so Stage 15 doesn't reuse stale degenerate files.
     if CAUSAL_GRAPHS_MULTIVIEW_DIR.exists():
@@ -509,6 +509,8 @@ Examples:
                         help="Skip atlas validation")
     parser.add_argument("--skip-validation", action="store_true",
                         help="Skip validation checks")
+    parser.add_argument("--11-lobes", "--11-lobe", dest="lobes_11", action="store_true",
+                        help="Use 11 lobes (exclude Brainstem) - see FINAL_ARCHITECTURE_ANALYSIS.md for performance comparison")
     
     # Post-training analysis flags
     parser.add_argument("--skip-visualizations", action="store_true",
@@ -556,6 +558,10 @@ Examples:
                         help="Wipe all intermediate CSVs and Graphs")
     
     args = parser.parse_args()
+    
+    # 11-lobe mode: set env var BEFORE any config imports
+    if args.lobes_11:
+        os.environ["NEURO_CXG_11_LOBES"] = "1"
 
     # Backward-compatible alias: --use-atlas-spatial forces atlas-centroid features.
     if args.use_yolo_spatial and args.use_atlas_spatial:
@@ -572,6 +578,14 @@ Examples:
         args.skip_feature_diagnostics = False
         args.skip_data_quality = False
         args.skip_ablations = False
+    
+    # 11-lobe mode is handled via env var set BEFORE argparse above
+    # Just log the confirmation here
+    if args.lobes_11:
+        logger.info("=" * 50)
+        logger.info("11-LOBE MODE ENABLED (via --11-lobes flag)")
+        logger.info("  Brainstem will be excluded from all computations")
+        logger.info("=" * 50)
     
     # Override interactive mode if --auto is set
     interactive = args.interactive and not args.auto

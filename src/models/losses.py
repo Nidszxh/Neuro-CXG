@@ -29,9 +29,34 @@ class FocalLoss(nn.Module):
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """Compute focal loss from logits and class targets."""
-        probs = F.softmax(inputs, dim=1)
-        targets_one_hot = F.one_hot(targets, num_classes=inputs.size(1)).float()
-        pt = (probs * targets_one_hot).sum(dim=1)
+        if inputs.dim() != 2:
+            raise ValueError(f"FocalLoss expects logits shape (B, C), got {tuple(inputs.shape)}")
+
+        num_classes = int(inputs.size(1))
+        if num_classes < 2:
+            raise ValueError(f"FocalLoss requires at least 2 classes, got C={num_classes}")
+
+        targets = targets.view(-1).long()
+        if targets.numel() != int(inputs.size(0)):
+            raise ValueError(
+                "FocalLoss target/logit batch mismatch: "
+                f"targets={targets.numel()} logits={int(inputs.size(0))}"
+            )
+
+        # Validate on CPU first so invalid labels produce a clear Python error
+        # instead of an opaque CUDA device-side assert.
+        t_cpu = targets.detach().to(device="cpu")
+        bad = (t_cpu < 0) | (t_cpu >= num_classes)
+        if bool(bad.any()):
+            bad_vals = sorted({int(v) for v in t_cpu[bad].tolist()})
+            raise ValueError(
+                f"FocalLoss received out-of-range targets {bad_vals} for num_classes={num_classes}. "
+                "Expected labels in [0, num_classes-1]."
+            )
+
+        probs = F.softmax(inputs, dim=1).clamp(min=1e-8, max=1.0)
+        targets_one_hot = F.one_hot(targets, num_classes=num_classes).float()
+        pt = (probs * targets_one_hot).sum(dim=1).clamp(min=1e-8, max=1.0)
 
         focal_weight = (1.0 - pt) ** self.gamma
         alpha_weight = (

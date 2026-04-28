@@ -11,9 +11,7 @@ dependencies:
   - pip>=23.0
 
   # Core ML - PyTorch with CUDA 12.1 (cu121)
-  - pytorch==2.9.0
-  - torchvision==0.24.0
-  - torchaudio==2.9.0
+  # Note: torch version is pinned in requirements.txt (avoid redundancy)
   - pytorch-cuda=12.1
 
   # GNN

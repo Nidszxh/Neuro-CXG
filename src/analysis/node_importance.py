@@ -62,8 +62,9 @@ def _aggregate_to_networks(lobe_scores: np.ndarray) -> np.ndarray:
     """
     network_scores = np.zeros(NUM_NETWORKS)
     for net_idx, lobe_list in NETWORK_TO_LOBES.items():
-        if lobe_list:
-            network_scores[net_idx] = np.mean(lobe_scores[lobe_list])
+        valid_lobes = [idx for idx in lobe_list if idx < NUM_LOBES]
+        if valid_lobes:
+            network_scores[net_idx] = np.mean(lobe_scores[valid_lobes])
     return network_scores
 
 

@@ -44,7 +44,56 @@ LOBE_NAMES = {
     10: "Cerebellum",
     11: "Brainstem",
 }
-NUM_LOBES = 12  # Updated from 5 to 12 regions
+import os
+
+# 11-lobe mode: Set USE_11_LOBES=True to exclude Brainstem (see ablation studies for performance comparison)
+# See FINAL_ARCHITECTURE_ANALYSIS.md: 12-lobe test AUC 0.8694 outperforms 11-lobe by +8.74%
+# Check environment variable FIRST (NEURO_CXG_11_LOBES=1), then fall back to config setting
+_USE_11_LOBES_ENV = os.environ.get("NEURO_CXG_11_LOBES", "").strip().lower() == "1"
+
+# Manual override flag - set to True to force 11-lobe mode
+_FORCE_11_LOBES = False  # Set to True to force 11-lobe mode (use env var NEURO_CXG_11_LOBES=1 for reproducibility)
+
+USE_11_LOBES = _USE_11_LOBES_ENV or _FORCE_11_LOBES
+
+if USE_11_LOBES:
+    EXCLUDE_LOBES = frozenset({11})  # Exclude Brainstem
+    NUM_LOBES = 11  # Use 11 lobes
+    # Build 11-lobe names mapping
+    _BASE_NAMES = {
+        0: "Frontal_Superior",
+        1: "Frontal_Orbital",
+        2: "Motor_Premotor",
+        3: "Insula",
+        4: "Cingulate",
+        5: "Limbic",
+        6: "Occipital",
+        7: "Parietal",
+        8: "Temporal",
+        9: "Subcortical",
+        10: "Cerebellum",
+    }
+    LOBE_NAMES = {i: _BASE_NAMES[i] for i in range(11)}
+    # Rebuild LOBE_MAPPING for 11 lobes
+    _BASE_MAPPING = {
+        0: _idx([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+        1: _idx([21, 22, 25, 26, 27, 28]),
+        2: _idx([17, 18, 19, 20, 23, 24]),
+        3: _idx([29, 30, 31, 32]),
+        4: _idx([33, 34, 35, 36, 37, 38, 151, 152, 153, 154, 155, 156]),
+        5: _idx([39, 40, 41, 42, 91, 92, 93, 94]),
+        6: _idx([43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56]),
+        7: _idx([57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70]),
+        8: _idx([79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90]),
+        9: _idx([71, 72, 73, 74, 75, 76, 77, 78, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150]),
+        10: _idx(list(range(95, 121)) + list(range(157, 167))),
+    }
+    LOBE_MAPPING = {i: _BASE_MAPPING[i] for i in range(11)}
+else:
+    EXCLUDE_LOBES = frozenset()
+    NUM_LOBES = 12  # Use all 12 lobes
+
+NUM_ACTIVE_LOBES = NUM_LOBES
 SPATIAL_MIN_REQUIRED_REGIONS = 9  # relaxed gate; final golden filter enforces complete 12-region subjects
 
 # --- FOUR-NETWORK HIERARCHY FOR ANATOMICAL HIERARCHICAL POOLING (Task 3 — DD-011) ---
@@ -80,5 +129,32 @@ NETWORK_TO_LOBES = {
     0: [0, 1, 4, 7, 8],   # DMN
     1: [2, 3, 9],          # Salience
     2: [6, 10],            # Visual/Cerebellar
-    3: [5, 11],            # Limbic
+    3: [5, 11],            # Limbic (Brainstem in 12-lobe mode)
 }
+
+# Filter network mappings for 11-lobe mode (exclude Brainstem lobe 11)
+if USE_11_LOBES:
+    LOBE_TO_NETWORK = {k: v for k, v in LOBE_TO_NETWORK.items() if k < 11}
+    NETWORK_TO_LOBES = {k: [l for l in v if l < 11] for k, v in NETWORK_TO_LOBES.items()}
+
+
+# --- HELPER FUNCTIONS FOR LOBE EXCLUSION ---
+def get_active_lobe_indices(exclude: frozenset = None) -> list:
+    """Return list of active lobe indices excluding specified lobes."""
+    if exclude is None:
+        return list(range(NUM_LOBES))
+    return [i for i in range(NUM_LOBES) if i not in exclude]
+
+
+def get_active_lobe_names(exclude: frozenset = None) -> dict:
+    """Return lobe names dict excluding specified lobes."""
+    if exclude is None:
+        return LOBE_NAMES.copy()
+    return {i: name for i, name in LOBE_NAMES.items() if i not in exclude}
+
+
+def get_active_lobe_mapping(exclude: frozenset = None) -> dict:
+    """Return lobe mapping dict excluding specified lobes."""
+    if exclude is None:
+        return LOBE_MAPPING.copy()
+    return {i: rois for i, rois in LOBE_MAPPING.items() if i not in exclude}

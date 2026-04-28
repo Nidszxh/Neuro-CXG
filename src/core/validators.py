@@ -110,7 +110,7 @@ def validate_training_health(metrics: dict) -> str:
         return "CRITICAL: Random guessing (AUC < 0.52)"
 
     if f1 < F1_BROKEN_THRESHOLD and loss > LOSS_RANDOM_THRESHOLD:
-        return "CRITICAL: Class collapse (F1 ~= 0, Loss ~= 0.693)"
+        return "CRITICAL: Class collapse (F1 ~= 0, Loss > 0.693 random baseline)"
 
     # Weak signal
     if auc < AUC_WEAK_THRESHOLD:
@@ -131,9 +131,9 @@ def log_training_diagnostics(fold: int, epoch: int, metrics: dict) -> None:
 
     logger.info("\nFold %d, Epoch %d Diagnostics:", fold, epoch)
     logger.info("  Health: %s", health)
-    logger.info("  AUC: %.4f (random=0.50, good>=0.70)", metrics["auc"])
-    logger.info("  F1: %.4f (broken<0.01, good>=0.50)", metrics["f1"])
-    logger.info("  Loss: %.4f (random=0.693, good<0.50)", metrics["loss"])
+    logger.info("  AUC: %.4f (random=0.52, weak<0.70, good>=0.70)", metrics["auc"])
+    logger.info("  F1: %.4f (broken<0.01, weak<0.30, acceptable<0.50, good>=0.50, excellent>=0.70)", metrics["f1"])
+    logger.info("  Loss: %.4f (random=0.693, learning=0.65, converged<0.50)", metrics["loss"])
 
     if "cm" in metrics:
         tn, fp, fn, tp = metrics["cm"].ravel()
@@ -189,8 +189,16 @@ def validate_lobe_mapping() -> bool:
             f"LOBE_MAPPING contains duplicate ROI indices (1-indexed): {sorted(set(duplicates))}"
         )
 
-    # Full coverage of 170 AAL ROIs
-    expected = set(range(170))
+    # Full coverage of AAL ROIs
+    # For 12-lobe mode: require all 170 ROIs
+    # For 11-lobe mode: require first 166 ROIs (exclude Brainstem 167-170)
+    from src.core.atlas_config import USE_11_LOBES
+    
+    if USE_11_LOBES:
+        expected = set(range(166))  # Standard 166 AAL ROIs (excluding Brainstem)
+    else:
+        expected = set(range(170))  # All 170 AAL ROIs
+    
     covered = set(all_rois)
     missing = expected - covered
     if missing:
@@ -222,8 +230,8 @@ def get_active_checkpoint_dir() -> Path:
 
 
 def validate_environment() -> bool:
-    """Check if the 12-region architecture is ready for execution."""
-    logger.info("VALIDATING NEURO-CXG 12-REGION ARCHITECTURE")
+    """Check if the multi-lobe architecture is ready for execution."""
+    logger.info(f"VALIDATING NEURO-CXG {NUM_LOBES}-REGION ARCHITECTURE")
 
     for path in [DATA_ROOT, DATA_METADATA, CAUSAL_GRAPHS_DIR]:
         path.mkdir(parents=True, exist_ok=True)

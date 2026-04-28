@@ -844,6 +844,101 @@ def train_one_epoch_with_accumulation(
         if data is None:
             continue
 
+        x_raw = getattr(data, 'x', None)
+        edge_index_raw = getattr(data, 'edge_index', None)
+        batch_raw = getattr(data, 'batch', None)
+        if x_raw is None or edge_index_raw is None or batch_raw is None:
+            logger.warning("Batch %d missing x/edge_index/batch; skipping batch", i)
+            continue
+
+        num_nodes = int(x_raw.size(0)) if x_raw.dim() >= 1 else 0
+        if num_nodes <= 0:
+            logger.warning("Batch %d has zero nodes; skipping batch", i)
+            continue
+
+        b_cpu = batch_raw.view(-1).detach().to(device='cpu').long()
+        if b_cpu.numel() != num_nodes:
+            logger.error(
+                "Skipping batch %d due to batch vector mismatch: len(batch)=%d vs num_nodes=%d",
+                i,
+                int(b_cpu.numel()),
+                num_nodes,
+            )
+            continue
+        if bool((b_cpu < 0).any()):
+            logger.error("Skipping batch %d due to negative graph indices in batch vector", i)
+            continue
+
+        ei_cpu = edge_index_raw.detach().to(device='cpu').long()
+        if ei_cpu.dim() != 2 or int(ei_cpu.size(0)) != 2:
+            logger.error(
+                "Skipping batch %d due to malformed edge_index shape %s",
+                i,
+                tuple(ei_cpu.shape),
+            )
+            continue
+        if ei_cpu.numel() > 0:
+            ei_min = int(ei_cpu.min().item())
+            ei_max = int(ei_cpu.max().item())
+            if ei_min < 0 or ei_max >= num_nodes:
+                logger.error(
+                    "Skipping batch %d due to out-of-range edge_index values [min=%d, max=%d] for num_nodes=%d",
+                    i,
+                    ei_min,
+                    ei_max,
+                    num_nodes,
+                )
+                continue
+
+        # Validate/sanitize targets on CPU before any CUDA kernels run.
+        y_raw = getattr(data, 'y', None)
+        if y_raw is None:
+            logger.warning("Batch %d missing labels; skipping batch", i)
+            continue
+
+        y_cpu = y_raw.view(-1).detach().to(device='cpu').long()
+        num_classes = 2
+        try:
+            if hasattr(model, 'classifier') and len(model.classifier) > 0:
+                num_classes = int(model.classifier[-1].out_features)
+        except Exception:
+            num_classes = 2
+
+        # Common legacy encoding fix: DX_GROUP style {1,2} -> {0,1}.
+        uniq_y = torch.unique(y_cpu)
+        if num_classes == 2 and bool(torch.all((uniq_y == 1) | (uniq_y == 2))):
+            y_cpu = y_cpu - 1
+            logger.warning("Batch %d labels remapped from {1,2} to {0,1}", i)
+
+        invalid_y = (y_cpu < 0) | (y_cpu >= num_classes)
+        if bool(invalid_y.any()):
+            bad_vals = sorted({int(v) for v in y_cpu[invalid_y].tolist()})
+            logger.error(
+                "Skipping batch %d due to invalid class labels %s for num_classes=%d",
+                i,
+                bad_vals,
+                num_classes,
+            )
+            continue
+        data.y = y_cpu
+
+        # Site IDs can also trigger CUDA asserts (embedding/cross-entropy indices).
+        site_raw = getattr(data, 'site_id', None)
+        if site_raw is not None and hasattr(model, 'site_embedding'):
+            site_cpu = site_raw.view(-1).detach().to(device='cpu').long()
+            num_sites = int(model.site_embedding.num_embeddings)
+            invalid_site = (site_cpu < 0) | (site_cpu >= num_sites)
+            if bool(invalid_site.any()):
+                bad_sites = sorted({int(v) for v in site_cpu[invalid_site].tolist()})
+                logger.warning(
+                    "Batch %d had invalid site_id values %s; remapping to 0 (valid range [0, %d])",
+                    i,
+                    bad_sites,
+                    num_sites - 1,
+                )
+                site_cpu[invalid_site] = 0
+            data.site_id = site_cpu
+
         data = data.to(device)
 
         multiview_batches = None
@@ -872,10 +967,24 @@ def train_one_epoch_with_accumulation(
             if site_targets is None:
                 loss = class_loss
             else:
-                site_targets = site_targets.view(-1)
+                site_targets = site_targets.view(-1).long()
+                num_site_classes = int(site_logits.size(1))
+                valid_site_mask = (site_targets >= 0) & (site_targets < num_site_classes)
+
+                if not bool(valid_site_mask.all()):
+                    invalid_vals = torch.unique(site_targets[~valid_site_mask]).detach().cpu().tolist()
+                    logger.warning(
+                        "Skipping invalid site_id values for GRL site loss: %s (valid range [0, %d])",
+                        [int(v) for v in invalid_vals],
+                        num_site_classes - 1,
+                    )
+
                 import torch.nn.functional as _F
-                site_loss = _F.cross_entropy(site_logits, site_targets)
-                loss = class_loss + site_loss_weight * site_loss
+                if bool(valid_site_mask.any()):
+                    site_loss = _F.cross_entropy(site_logits[valid_site_mask], site_targets[valid_site_mask])
+                    loss = class_loss + site_loss_weight * site_loss
+                else:
+                    loss = class_loss
 
         else:
             if multiview_batches is not None:

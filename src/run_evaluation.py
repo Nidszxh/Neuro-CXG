@@ -794,7 +794,7 @@ def _plot_subgroups(subgroups: Dict, save_path: Path) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class FlatMLP(nn.Module):
-    """Simple 3-layer MLP on flattened 12 × 28 = 336 node features."""
+    """Simple 3-layer MLP on flattened 12 × 24 = 288 node features."""
 
     def __init__(self, in_dim: int = NUM_LOBES * GNN_IN_CHANNELS, hidden: int = 128, dropout: float = 0.4):
         super().__init__()
@@ -813,7 +813,7 @@ class FlatMLP(nn.Module):
 
 
 def _collect_flat_features(graphs: List) -> Tuple[np.ndarray, np.ndarray]:
-    """Flatten node feature matrices (12 × 28) → 336-dim vector per subject."""
+    """Flatten node feature matrices (12 × 24) → 288-dim vector per subject."""
     X, y = [], []
     for g in graphs:
         if g is None:
@@ -851,6 +851,41 @@ def _train_mlp(X_train, y_train, X_test, y_test, epochs=80, lr=1e-3, seed=42) ->
     return float(roc_auc_score(y_test, probs))
 
 
+def _print_baseline_table(baselines: Dict[str, float]) -> None:
+    """Print baseline comparison table."""
+    logger.info("\n  Baseline Comparison:")
+    logger.info("  " + "-" * 40)
+    for name, auc in sorted(baselines.items(), key=lambda x: -x[1]):
+        marker = " *" if "Ours" in name else ""
+        logger.info(f"    {name:<25} AUC: {auc:.4f}{marker}")
+    logger.info("  " + "-" * 40)
+
+
+def _plot_baselines(baselines: Dict[str, float], save_path: Path) -> None:
+    """Plot baseline comparison bar chart."""
+    try:
+        import matplotlib.pyplot as plt
+        names = list(baselines.keys())
+        aucs = list(baselines.values())
+        colors = ["#2ecc71" if "Ours" in n else "#3498db" for n in names]
+        
+        fig, ax = plt.subplots(figsize=(10, max(4, len(names) * 0.7)))
+        y = range(len(names))
+        ax.barh(y, aucs, color=colors, alpha=0.85)
+        ax.set_yticks(y)
+        ax.set_yticklabels(names)
+        ax.set_xlabel("AUC")
+        ax.set_xlim(0.5, 1.0)
+        ax.axvline(0.5, color="gray", ls="--", lw=1)
+        ax.grid(axis="x", alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300)
+        plt.close()
+        logger.info(f"  Plot saved → {save_path}")
+    except Exception as e:
+        logger.warning(f"  Baseline plot failed: {e}")
+
+
 def run_baseline_comparison(
     train_graphs: List,
     test_graphs: List,
@@ -859,7 +894,7 @@ def run_baseline_comparison(
     output_dir: Path = OUTPUT_DIR,
 ) -> Dict:
     """
-    Compare GNN against SVM, Random Forest, and flat MLP on (12 × 28) features.
+    Compare GNN against SVM, Random Forest, and flat MLP on (12 × 24) features.
     Also records Heinsfeld et al. 2018 literature reference (AUC≈0.70).
     """
     logger.info("=" * 60)
@@ -913,7 +948,7 @@ def run_baseline_comparison(
     _print_baseline_table(baselines)
     _plot_baselines(baselines, output_dir / "baseline_comparison.png")
 
-# ── DeLong Tests ─────────────────────────────────────────────────
+    # ── DeLong Tests ─────────────────────────────────────────────────
     logger.info("\n  DeLong Tests (GNN vs baselines):")
     delong_results = _run_delong_tests(
         y_test, baselines,
@@ -933,26 +968,60 @@ def run_baseline_comparison(
             }
         except Exception as e:
             logger.warning("  AUC CI computation failed: %s", e)
+
+    return delong_results
+
+
+def _run_delong_tests(
+    y_test: np.ndarray,
+    baselines: Dict[str, float],
+    gnn_probs: Optional[np.ndarray] = None,
+    svm_probs: Optional[np.ndarray] = None,
+    rf_probs: Optional[np.ndarray] = None,
+) -> Dict:
+    """Run DeLong tests comparing GNN vs baseline models."""
+    from src.validation.delong_test import compare_models_auc, delong_roc_test
+
+    results = {
+        "baselines": baselines,
+        "comparisons": [],
+    }
+
+    # Build model scores dict for comparison
+    model_scores = {"GNN (Ours)": gnn_probs} if gnn_probs is not None else {}
+    if svm_probs is not None:
+        model_scores["SVM (RBF)"] = svm_probs
+    if rf_probs is not None:
+        model_scores["Random Forest"] = rf_probs
+
+    if len(model_scores) < 2:
+        return results
+
+    # Run comparisons
+    for name, scores in model_scores.items():
+        if name == "GNN (Ours)":
+            continue
+        try:
+            log_pval, z = delong_roc_test(
+                y_test,
+                model_scores["GNN (Ours)"],
+                scores,
+            )
             pval = 10**log_pval if log_pval < 0 else 1.0
             sig = " *" if pval < 0.05 else ""
-            logger.info(
-                "    GNN vs %s: z=%.2f, p=%.4f%s",
-                name, z, pval, sig,
-            )
-            delong_results["comparisons"].append({
+            logger.info("  GNN vs %s: z=%.2f, p=%.4f%s", name, z, pval, sig)
+            results["comparisons"].append({
                 "model1": "GNN (Ours)",
                 "model2": name,
-                "auc1": baselines.get("GNN (Ours)", 0),
-                "auc2": baselines.get(name, 0),
                 "z": float(z),
                 "p_value": float(pval),
                 "log10_p": float(log_pval),
                 "significant": pval < 0.05,
             })
         except Exception as e:
-            logger.warning("    DeLong test failed for GNN vs %s: %s", name, e)
+            logger.warning("  DeLong test failed for GNN vs %s: %s", name, e)
 
-    return delong_results
+    return results
 
 
 # ══════════════════════════════════════════════════════════════════════════════

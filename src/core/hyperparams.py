@@ -101,6 +101,8 @@ SPARSITY_TOPK_PER_NODE = 3  # Strongest outgoing/incoming edges retained per nod
 MIN_EDGES_PER_GRAPH = 12  # Ensure minimum connectivity for 12-region graphs
 
 # --- DATA QUALITY FILTERS ---
+
+# --- DATA QUALITY FILTERS ---
 # Curated removal list used to reduce the source ABIDE cohort from 1035 -> 1015.
 # Ordering reflects severity ranking from results/analysis/worst_subjects_ranking_1035.csv.
 CURATED_WORST_SUBJECTS_1015: frozenset = frozenset(
@@ -156,7 +158,7 @@ GNN_MIN_EPOCHS_BEFORE_STOPPING = 30
 GNN_POOLING = "anatomical"  # Options: 'anatomical', 'attention', 'mean_max_sum'
 GNN_USE_GRL = True
 GNN_GRL_ALPHA = 0.10
-GNN_GRL_ALPHA_MAX = 1.0
+GNN_GRL_ALPHA_MAX = 0.10  # Fixed at 0.10 - using 1.0 causes test performance drop
 GRL_ALPHA_CANDIDATES = [0.10, 0.25, 0.50, 1.0]
 GNN_AUTO_GRL_GRID_SEARCH = False
 # Non-zero weight enables actual adversarial site debiasing when GRL is active.

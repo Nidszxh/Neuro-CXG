@@ -359,17 +359,17 @@ class AuditCheck:
                 adj = graph_dict['adj']
                 internal_features = graph_dict['internal_features']
                 
-                adj_shape_ok = adj.shape == (12, 12)
-                internal_shape_ok = internal_features.shape == (12, 2)
+                adj_shape_ok = adj.shape == (NUM_LOBES, NUM_LOBES)
+                internal_shape_ok = internal_features.shape == (NUM_LOBES, 2)
                 
                 self.check(
-                    f"Graph {graph_file.name}: adj.shape == (12, 12)",
+                    f"Graph {graph_file.name}: adj.shape == ({NUM_LOBES}, {NUM_LOBES})",
                     adj_shape_ok,
                     f"Got {adj.shape}"
                 )
                 
                 self.check(
-                    f"Graph {graph_file.name}: internal_features.shape == (12, 2)",
+                    f"Graph {graph_file.name}: internal_features.shape == ({NUM_LOBES}, 2)",
                     internal_shape_ok,
                     f"Got {internal_features.shape}"
                 )
