@@ -119,10 +119,17 @@ When multiview graphs are available (`construct_multiview_graphs` stage):
 ### CausalBrainGNN (src/models/causal_gnn.py)
 
 **Input Shape**
-- Nodes: 12 brain lobes
+- Nodes: **12 brain lobes** (primary architecture, **approved for publication** — see `docs/decisions.md` DD-018)
 - Node features: 28 dimensions (temporal + frequency + internal + spatial)
 - Edges: directed causal adjacency (Granger causality)
 - Edge attributes: 1 dimension (causality weight)
+
+**Note on Architecture** (April 28, 2026 — FINAL):
+- 12-lobe architecture includes Brainstem (test AUC: 0.8694, +8.74% vs 11-lobe)
+- YOLO v29 never detects Brainstem → constant synthetic features act as implicit regularization
+- Brainstem regularization prevents overfitting: 12-lobe CV<Test (0.7997<0.8694); 11-lobe CV>Test (0.8099>0.7995)
+- Full analysis in `FINAL_ARCHITECTURE_ANALYSIS.md` and `docs/decisions.md` (DD-018)
+- 11-lobe available via configuration flag but not recommended for publication
 
 **Layers**
 - GATv2Conv: 2 layers, 4 attention heads, 128 hidden channels

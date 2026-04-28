@@ -3,6 +3,9 @@
 ## Overview
 Neuro-CXG applies rigorous subject inclusion/exclusion criteria to ensure data quality and medical validity. This document describes the dataset composition, filtering steps, and reproducibility.
 
+**Architecture Note** (April 28, 2026): 
+This document describes curation for the **12-lobe architecture** (approved for publication). See `docs/decisions.md` (DD-018) for complete architecture comparison and decision rationale.
+
 Scope boundary:
 
 - This page covers cohort construction and quality gates.

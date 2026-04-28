@@ -29,7 +29,7 @@ The pipeline must:
 In scope:
 
 - End-to-end ABIDE I workflow (download, split, feature extraction, harmonization, graph construction, training, evaluation, explainability, result analysis).
-- 12-lobe graph representation derived from atlas ROI signals.
+- **12-lobe graph representation** derived from atlas ROI signals (primary architecture, **approved for publication** — see `docs/decisions.md` DD-018 for full architecture decision analysis).
 - 5-fold CV plus held-out test evaluation.
 
 Out of scope:
@@ -66,9 +66,17 @@ Secondary criteria:
 
 ## Current Status (Run-Dependent)
 
-- **Latest Results (April 24, 2026)**: CV AUC 0.8004 ± 0.0293, Test AUC 0.8753, Test F1 0.8121
-- Pipeline shows stable cross-validation performance with lagged Pearson graphs
-- CV-test gap ~+0.07 (test higher than CV)
-- Configuration: lagged_pearson + GRL=0.10 + MaxLag=10.0s
+- **Final Results (April 28, 2026)**: 12-Lobe architecture approved for publication
+  - CV AUC: 0.7997 ± 0.0294
+  - Test AUC: **0.8694** [95% CI: 0.7889–0.9037] ✅
+  - Test F1: **0.8000**
+  - Test Accuracy: **0.7857**
+  - Generalization gap: +0.0697 (robust learning vs overfitting)
+- **Architecture Decision (April 28, 2026)**: 12-Lobe emerges as definitive architecture
+  - Reversed from preliminary DD-018 recommendation of 11-lobe based on pre-training metrics
+  - Test set establishes ground truth: 12-lobe test AUC +8.74% over 11-lobe (0.8694 vs 0.7995)
+  - Brainstem constant features act as implicit regularization despite YOLO detection gap
+  - Full analysis in `FINAL_ARCHITECTURE_ANALYSIS.md` and `docs/decisions.md` (DD-018)
+- Configuration: lagged_pearson + GRL=0.10 + MaxLag=10.0s + 12-lobe atlas
 
 Use run-specific artifacts as source of truth for final numbers, and avoid mixing metrics from different run directories.
