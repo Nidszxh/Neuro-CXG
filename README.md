@@ -84,7 +84,14 @@ python src/run_result_analysis.py
   - See `FINAL_ARCHITECTURE_ANALYSIS.md` and `docs/decisions.md` (DD-018) for full analysis
 - **Status**: Approved for publication ✅
 
-*Pipeline status: PUBLICATION-READY - 12-lobe architecture with lagged_pearson + GRL=0.10. Full comparative analysis in FINAL_ARCHITECTURE_ANALYSIS.md.*
+**Ablation Studies Complete (April 28, 2026):**
+- 6 core ablations (A-E, D2) validating architecture components
+- 4 paper experiments (LR baseline, GRL effect, harmonization, shuffled edges)
+- All findings documented in `ABLATION_RESULTS.md`
+- Key result: Graph topology critical (-15.4% without), temporal features essential (-37.4% without), site conditioning crucial (-13.3% without)
+- Edge weights negligible (shuffled edges identical to real)
+
+*Pipeline status: PUBLICATION-READY - 12-lobe architecture with lagged_pearson + GRL=0.10. Full comparative analysis in FINAL_ARCHITECTURE_ANALYSIS.md. Ablations documented in ABLATION_RESULTS.md.*
 
 ## Common Execution Modes
 
