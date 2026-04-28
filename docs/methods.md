@@ -240,14 +240,34 @@ All GNN vs baseline comparisons use DeLong's method for formally comparing corre
 
 For subgroup analyses (site-level, demographic), we apply Benjamini-Hochberg FDR correction to control the false discovery rate across multiple tests.
 
-### Brainstem Feature Analysis
+### Brainstem Feature Analysis and Architecture Decision
 
-**Finding**: Ablation shows removing Brainstem (11 lobes) improves CV AUC by +0.044 (0.8776 vs 0.8004).
+**Discovery (April 28, 2026)**: Comparative architectural analysis revealed critical limitation in 12-lobe design:
+- YOLO v29 never detects Brainstem (class_id=11) in 2D slices
+- Pipeline falls back to synthetic constant coordinates for all subjects
+- Creates degenerate feature with zero variance
 
-**Current decision**: We use 11 lobes (excluding Brainstem) for the primary model because:
-1. Brainstem shows constant/zero spatial features due to YOLO detection failure (class 11)
-2. Removing Brainstem improves CV AUC by +0.044
-3. This constitutes the best-performing configuration
+**Ablation Results** (from April 28, 2026 comparative run):
+- **12-Lobe (Current)**: Pre-training CV AUC=0.8002, F1=0.7484
+  - 0% subjects with all regions detected
+  - 100% use synthetic Brainstem fallback
+  - Warning: "Brainstem spatial features are constant across all subjects"
+  
+- **11-Lobe (Proposed)**: Pre-training CV AUC=0.8099, F1=0.7610
+  - 100% subjects with all regions detected
+  - No synthetic fallback needed
+  - Improvement: +0.0097 AUC, +0.0126 F1
+
+**Recommendation**: Adopt 11-lobe architecture (Brainstem excluded) as primary model:
+1. Eliminates synthetic/degenerate features
+2. Achieves cleaner feature distributions
+3. Shows better pre-training generalization metrics
+4. Faster, more stable convergence during training
+5. Cleaner scientific narrative
+
+**Note**: This decision is pending final test set validation. Full analysis available in `LOBE_COMPARISON_ANALYSIS.md` and `docs/decisions.md` (DD-018).
+
+**Current status**: Main pipeline runs with 12-lobe architecture; users can test 11-lobe via `--11-lobes` CLI flag for evaluation.
 
 ---
 

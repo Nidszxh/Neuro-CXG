@@ -13,8 +13,8 @@
     "Motor_Premotor",
     "Frontal_Orbital",
     "Frontal_Superior",
-    "Cingulate",
     "Cerebellum",
+    "Cingulate",
     "Insula"
   ],
   "top_networks": [
@@ -37,23 +37,23 @@
   "gradcam_top5_differential": [
     {
       "region": "Motor_Premotor",
-      "delta": 0.016717219725251198
+      "delta": 0.016692206263542175
     },
     {
       "region": "Frontal_Superior",
-      "delta": 0.014758996665477753
+      "delta": 0.014723492786288261
     },
     {
       "region": "Cingulate",
-      "delta": 0.014755425043404102
+      "delta": 0.01471615582704544
     },
     {
       "region": "Frontal_Orbital",
-      "delta": 0.014096437022089958
+      "delta": 0.014057530090212822
     },
     {
       "region": "Cerebellum",
-      "delta": 0.01348396297544241
+      "delta": 0.013526429422199726
     }
   ],
   "network_embeddings": {
@@ -63,38 +63,38 @@
       32
     ],
     "mean_abs_per_network": [
-      0.33304643630981445,
-      0.34915950894355774,
-      0.3616238534450531,
-      0.3385244309902191
+      0.33349284529685974,
+      0.3494747579097748,
+      0.3620850443840027,
+      0.33898472785949707
     ],
     "saved_path": "/home/nidszxh/Projects/Neuro-CXG/results/explainability/node/network_embeddings_last_batch.npy"
   },
   "top5_differential_edges": [
     {
+      "source": "Insula",
+      "target": "Frontal_Superior",
+      "delta": 0.0008862397898687786
+    },
+    {
       "source": "Motor_Premotor",
       "target": "Occipital",
-      "delta": 0.0008721622729399891
+      "delta": 0.0008856179026506384
     },
     {
       "source": "Motor_Premotor",
       "target": "Parietal",
-      "delta": 0.0008417448152518189
-    },
-    {
-      "source": "Insula",
-      "target": "Frontal_Superior",
-      "delta": 0.0008385564953355836
+      "delta": 0.0008831596923197208
     },
     {
       "source": "Parietal",
       "target": "Motor_Premotor",
-      "delta": 0.0007780518002571334
+      "delta": 0.0008037445194196619
     },
     {
       "source": "Motor_Premotor",
       "target": "Cerebellum",
-      "delta": 0.000736123101451392
+      "delta": 0.0007544185748299591
     }
   ]
 }

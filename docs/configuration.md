@@ -67,7 +67,7 @@ Safety sentinel:
 
 Defines:
 
-- `LOBE_MAPPING`: maps 170 AAL ROIs into 12 lobe nodes.
+- `LOBE_MAPPING`: maps 170 AAL ROIs into **12 lobe nodes** (currently).
 - `LOBE_NAMES`: lobe labels used across extraction, graphs, and plots.
 - Optional hierarchy:
   - `LOBE_TO_NETWORK`
@@ -75,6 +75,34 @@ Defines:
   - `NUM_NETWORKS = 4`
 
 This hierarchy is used when `GNN_POOLING = "anatomical"`.
+
+### Architecture Decision Note (April 28, 2026)
+
+The 12-lobe architecture is under review (see `docs/decisions.md`, DD-018):
+
+**Current Issue**:
+- YOLO v29 never detects Brainstem (lobe_id=11) in 2D slices
+- Pipeline falls back to synthetic constant coordinates for all subjects
+- Creates degenerate feature: "Brainstem spatial features are constant across all subjects"
+
+**11-Lobe Alternative**:
+- Excludes Brainstem entirely via `--11-lobes` flag
+- Achieves 100% region detection coverage (no synthetic fallback)
+- Pre-training metrics improve: AUC +0.0097, F1 +0.0126
+- Cleaner feature space without degenerate features
+
+**Recommended Action for Users**:
+- For research/experimentation: Consider `--11-lobes` flag for cleaner results
+- For publication: Decision pending final test set evaluation (see `LOBE_COMPARISON_ANALYSIS.md`)
+
+**Configuration Change Required**:
+If switching to 11-lobe architecture:
+```python
+# In src/core/atlas_config.py
+LOBE_MAPPING = {...}  # Exclude Brainstem mapping
+NUM_LOBES = 11  # Changed from 12
+GNN_IN_CHANNELS = 198  # Changed from 216 (18 temporal × 11 lobes)
+```
 
 ## 4) Hyperparameters (`src/core/hyperparams.py`)
 

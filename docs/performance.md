@@ -134,8 +134,37 @@ EVAL_THRESHOLD_POLICY = "youden"
 Key findings:
 - **lagged_pearson + GRL=0.10 achieves best test performance** despite slightly lower CV
 - ridge_granger has higher CV but lower test, suggesting potential overfitting
-- GRL=1.0 works in ablation script but NOT in main pipeline (different GRL implementation)
+- GRL=1.0 causes test performance drop (both ablation and main pipeline)
 - CV doesn't always predict test performance
+- Ablation D & D2 now use same GRL alpha (0.10) as main pipeline
+
+### Architecture Exploration (April 28, 2026): 12-Lobe vs 11-Lobe
+
+Comparative study evaluating whether Brainstem region should be included (12-lobe) or excluded (11-lobe) from architecture:
+
+**Pre-Training Model Validation Results:**
+
+| Architecture | CV AUC | F1 | Feature Completeness | Status |
+|--------------|--------|-----|---------------------|--------|
+| **12-Lobe** (Current) | 0.8002 | 0.7484 | 0% (synthetic fallback) | ❌ Degenerate |
+| **11-Lobe** (Proposed) | **0.8099** | **0.7610** | **100% (all detected)** | ✓ Clean |
+| **Improvement** | +0.0097 | +0.0126 | N/A | 11-Lobe wins |
+
+**Key Discovery**:
+- YOLO v29 never detects Brainstem (class_id=11) in 2D slices
+- 12-lobe pipeline falls back to synthetic constant coordinates for all subjects
+- Results in zero-variance feature: "Brainstem spatial features are constant across all subjects"
+- 11-lobe architecture achieves 100% region detection, no synthetic fallback
+
+**Fold-Level Performance (Partial)**:
+- Fold 0: 11-lobe AUC +0.0072 (0.7888 vs 0.7816)
+- Fold 1: 12-lobe AUC +0.0262 (0.7623 vs 0.7361) but with higher variance
+- Fold 2: 12-lobe converges at epoch 24, 11-lobe at epoch 83 (slower convergence in 11-lobe for this fold)
+
+**Recommendation**: 
+- **Primary**: Adopt 11-lobe as default (cleaner features, better pre-training metrics)
+- **Status**: Decision pending test set validation
+- **Full Analysis**: See `LOBE_COMPARISON_ANALYSIS.md` and `docs/decisions.md` (DD-018)
 
 **Final Recommended Configuration:**
 ```python

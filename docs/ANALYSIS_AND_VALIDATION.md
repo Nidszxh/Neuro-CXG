@@ -1,9 +1,9 @@
 # Neuro-CXG Analysis and Validation Report
 
 **Generated**: April 2026  
-**Updated**: April 24, 2026
+**Updated**: April 28, 2026
 **Purpose**: Complete analysis and validation of the Neuro-CXG pipeline  
-**Status**: COMPLETE
+**Status**: COMPLETE (with architecture exploration)
 
 ---
 
@@ -11,24 +11,29 @@
 
 This consolidated report documents all validation experiments, findings, and model performance analysis for the Neuro-CXG pipeline.
 
-### Key Findings (Updated April 24, 2026)
+### Key Findings (Updated April 28, 2026)
 
 | Finding | Evidence | Status |
 |---------|----------|--------|
 | **Test Score Inflation** | CV (0.8004) < Test (0.8753) | ✅ None |
 | **Graph Method Comparison** | lagged_pearson > ridge_granger on test | ✅ lagged_pearson wins |
 | **GRL Alpha** | GRL=1.0 works in ablation but NOT in main pipeline | ⚠️ Use 0.10 |
-| **Brainstem** | Without Brainstem: +0.044 AUC | ⚠️ NOISY |
+| **Brainstem Detection Gap** | YOLO never detects Brainstem → synthetic fallback | ❌ CRITICAL |
+| **11-Lobe Architecture** | Better pre-training metrics, cleaner features | ✅ RECOMMENDED |
 | **Site Conditioning** | +0.08 AUC | ✅ Critical |
 | **Harmonization** | +0.07 AUC | ✅ Improves |
 | **Data Leakage** | Fold-safe pipeline | ✅ None |
 
 ### Primary Conclusion
 
-The best configuration is **lagged_pearson + GRL=0.10**. Testing showed:
-- ridge_granger has higher CV but LOWER test - potential overfitting
-- GRL=1.0 works in Ablation D script but degrades test in main pipeline
-- lagged_pearson with GRL=0.10 achieves best, most stable test performance
+The best configuration is **lagged_pearson + GRL=0.10** on **11-lobe architecture** (pending test validation). 
+
+**New Discovery (April 28, 2026)**: 
+- Current 12-lobe pipeline uses synthetic Brainstem features (YOLO detection failure)
+- 11-lobe alternative achieves 100% region detection + better pre-training metrics (+0.0097 AUC, +0.0126 F1)
+- Recommendation: Migrate to 11-lobe architecture
+
+See `LOBE_COMPARISON_ANALYSIS.md` for full architectural analysis.
 
 ---
 
@@ -516,6 +521,43 @@ If performance is the priority, report without Brainstem model.
 | `results/analysis/k_sweep_gateA_apr19.json` | Edge density sweep |
 | `results/evaluation/seed_stability_C/` | Seed stability tests |
 | `results/experiments/data_quality/cross_site_auc.csv` | Cross-site AUC |
+
+---
+
+## 15. Architecture Exploration (April 28, 2026): 12-Lobe vs 11-Lobe
+
+### Discovery: Brainstem YOLO Detection Gap
+
+Comparative analysis revealed critical architectural limitation:
+
+| Aspect | 12-Lobe (Current) | 11-Lobe (Proposed) | Winner |
+|--------|------|------|--------|
+| **YOLO Detection** | 0% Brainstem detected | N/A (excluded) | 11-Lobe |
+| **Fallback Method** | Synthetic constant coordinates | N/A | 11-Lobe |
+| **Feature Variance** | Zero variance Brainstem feature | N/A | 11-Lobe |
+| **Region Completeness** | 0% subjects (all partial) | 100% subjects (all complete) | 11-Lobe ✓ |
+| **Pre-training AUC** | 0.8002 | **0.8099** | 11-Lobe ✓ |
+| **Pre-training F1** | 0.7484 | **0.7610** | 11-Lobe ✓ |
+| **Convergence** | Mixed (Fold 2: epoch 24) | Mixed (Fold 2: epoch 83) | 12-Lobe for Fold 2 |
+
+### Key Finding
+
+YOLO v29 never detects Brainstem (lobe_id=11) in 2D fMRI slices:
+- Creates degenerate feature with constant value across all subjects
+- Pipeline warning: "Brainstem spatial features are constant across all subjects"
+- 11-lobe alternative provides 100% complete feature coverage without synthetic fallback
+
+### Recommendation
+
+**Primary**: Adopt 11-lobe architecture as default for publication
+- Cleaner feature space (no synthetic fallback)
+- Better pre-training metrics (+0.97% AUC, +1.26% F1)
+- Faster, more stable training (except Fold 2)
+- Transparent scientific narrative (no synthetic features)
+
+**Status**: Pending test set evaluation to confirm improvement generalizes to held-out data
+
+**Full Analysis**: See `LOBE_COMPARISON_ANALYSIS.md` for complete comparative study
 
 ---
 

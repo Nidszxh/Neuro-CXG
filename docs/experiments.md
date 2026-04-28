@@ -31,6 +31,9 @@ Programmatic comparison helper:
 |---|---|---|---|---|
 | pipeline_20260309_194459 | Canonical full run | GATv2 + fold-safe harmonization, GRL-disabled posture | pipeline log, checkpoints, evaluation JSON | Reference run used in reporting baselines |
 | pipeline_20260309_195751 | Follow-up comparison run | Similar stack with different fold behavior | pipeline log, checkpoints | Used as non-canonical comparison run |
+| pipeline_20260424_191537 | Configuration optimization run | lagged_pearson + GRL=0.10 (optimal) | pipeline log, checkpoints, evaluation JSON | Best test performance: AUC 0.8753, F1 0.8121 |
+| 12lobes_20260428 | 12-Lobe architecture baseline | Current: 12 lobes with Brainstem (synthetic fallback) | Pipeline log `12lobes.txt`, partial CV results | Reveals Brainstem YOLO detection gap |
+| 11lobes_20260428 | 11-Lobe architecture exploration | Proposed: 11 lobes (Brainstem excluded) | Pipeline log `11lobes.txt`, partial CV results | Better pre-training metrics, cleaner features |
 | eval_latest | Held-out evaluation refresh | Ensemble scoring over fold checkpoints | `results/evaluation/comprehensive_results.json` | Includes bootstrap CI + permutation tests |
 | explain_latest | Explainability refresh | Node/edge/feature attribution phases | `results/explainability/summary.json` | Attribution exports and summary JSON |
 | structural_dropout | Task 1 (DD-009) | `structural_dropout_prob=0.30`, `edge_contrastive_weight=0.05` | training/evaluation outputs | Run after `gnn_training` changes |

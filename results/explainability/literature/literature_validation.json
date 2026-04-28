@@ -26,18 +26,18 @@
       ]
     },
     {
+      "index": 10,
+      "name": "Cerebellum",
+      "networks": [
+        "Subcortical"
+      ]
+    },
+    {
       "index": 4,
       "name": "Cingulate",
       "networks": [
         "DMN",
         "Salience"
-      ]
-    },
-    {
-      "index": 10,
-      "name": "Cerebellum",
-      "networks": [
-        "Subcortical"
       ]
     },
     {
@@ -150,6 +150,6 @@
     "Subcortical": 0.125,
     "FPC": 0.2857
   },
-  "summary": "Top-6 important regions: Motor_Premotor, Frontal_Orbital, Frontal_Superior, Cingulate, Cerebellum, Insula.\nThese overlap with 6/7 known ASD-relevant networks: DMN, Social, Salience, Sensorimotor, Subcortical, FPC.",
+  "summary": "Top-6 important regions: Motor_Premotor, Frontal_Orbital, Frontal_Superior, Cerebellum, Cingulate, Insula.\nThese overlap with 6/7 known ASD-relevant networks: DMN, Social, Salience, Sensorimotor, Subcortical, FPC.",
   "top_n": 6
 }

@@ -95,10 +95,16 @@ Output contract:
 
 ### Graph Builder (`src/features/construct_causal.py`)
 
-- Aggregates ROI signals to 12 lobe-level time series.
+- Aggregates ROI signals to **12 lobe-level time series** (current; 11 under evaluation).
 - Builds directed adjacency matrices with configured causal method.
 - Applies sparsification and minimum-edge constraints.
 - Saves per-subject graph packages under `data/processed/causal_graphs/`.
+
+**Note** (April 28, 2026): The 12-lobe architecture is under evaluation. See `docs/decisions.md` (DD-018) and `LOBE_COMPARISON_ANALYSIS.md` for:
+- Current 12-lobe issue: Brainstem never detected by YOLO → synthetic fallback
+- 11-lobe alternative: Brainstem excluded → cleaner features → better pre-training metrics
+
+Users can test 11-lobe via `--11-lobes` CLI flag.
 
 ### Causal Inference Core (`src/features/causal_inference.py`)
 

@@ -71,7 +71,11 @@
 2. **Graph contribution**: Edge features contribute minimal discriminative value (~3% of improvement)
 3. **Spatial features**: Near-random predictive power regardless of source (YOLO vs atlas)
 4. **Brainstem features**: Noisy; removal improves AUC by +0.044
+   - **New Finding (April 28, 2026)**: YOLO v29 never detects Brainstem in 2D slices; pipeline uses synthetic fallback coordinates
+   - Comparative analysis shows 11-lobe architecture (Brainstem excluded) achieves better pre-training metrics
+   - See `LOBE_COMPARISON_ANALYSIS.md` and `docs/decisions.md` (DD-018) for full findings
 5. **Causality interpretation**: Directed functional connectivity, NOT true causal inference in the philosophical sense
+6. **Architecture under review**: Current 12-lobe model uses synthetic Brainstem features. 11-lobe alternative recommended pending test set validation.
 
 ## Ethical Considerations
 

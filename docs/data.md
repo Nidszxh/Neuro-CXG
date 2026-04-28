@@ -1,5 +1,21 @@
 # Data
 
+## Important Note: Architecture Under Review (April 28, 2026)
+
+**Current Status**: The 12-lobe architecture documented below is under evaluation. Comparative analysis (April 28, 2026) revealed:
+
+- **12-Lobe (Current)**: YOLO v29 never detects Brainstem → synthetic fallback coordinates → degenerate constant feature
+- **11-Lobe (Proposed)**: Excludes Brainstem → 100% region detection → cleaner features → better pre-training metrics (+0.0097 AUC, +0.0126 F1)
+
+**See**: `LOBE_COMPARISON_ANALYSIS.md` (full analysis) and `docs/decisions.md` (DD-018) for architecture rationale and recommendations.
+
+**Impact on This Document**: References to "12 lobes" and feature dimensions (216 channels) assume current 12-lobe architecture. If architecture switches to 11-lobe:
+- Feature dimensions change: 216 → 198 (18 temporal × 11 lobes)
+- Graph node count changes: 12 → 11 nodes
+- Brainstem-related filters and masks are removed
+
+---
+
 ## Scope
 
 This document describes the runtime data model used by the current source code:

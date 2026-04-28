@@ -2,7 +2,7 @@
 NEURO-CXG  –  PHASE 8.4 CLINICAL VALIDATION REPORT
 ========================================================================
 
-Top-6 important regions: Motor_Premotor, Frontal_Orbital, Frontal_Superior, Cingulate, Cerebellum, Insula.
+Top-6 important regions: Motor_Premotor, Frontal_Orbital, Frontal_Superior, Cerebellum, Cingulate, Insula.
 These overlap with 6/7 known ASD-relevant networks: DMN, Social, Salience, Sensorimotor, Subcortical, FPC.
 
 ------------------------------------------------------------------------
@@ -11,8 +11,8 @@ TOP-6 REGIONS RANKED BY MODEL IMPORTANCE
   1. Motor_Premotor             (networks: Salience, Sensorimotor, FPC)
   2. Frontal_Orbital            (networks: DMN, Social)
   3. Frontal_Superior           (networks: DMN, FPC)
-  4. Cingulate                  (networks: DMN, Salience)
-  5. Cerebellum                 (networks: Subcortical)
+  4. Cerebellum                 (networks: Subcortical)
+  5. Cingulate                  (networks: DMN, Salience)
   6. Insula                     (networks: Social, Salience)
 
 ------------------------------------------------------------------------
