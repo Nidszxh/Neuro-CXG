@@ -132,6 +132,8 @@ NETWORK_TO_LOBES = {
     3: [5, 11],            # Limbic (Brainstem in 12-lobe mode)
 }
 
+from typing import Optional, List, Dict, Any
+
 # Filter network mappings for 11-lobe mode (exclude Brainstem lobe 11)
 if USE_11_LOBES:
     LOBE_TO_NETWORK = {k: v for k, v in LOBE_TO_NETWORK.items() if k < 11}
@@ -139,21 +141,21 @@ if USE_11_LOBES:
 
 
 # --- HELPER FUNCTIONS FOR LOBE EXCLUSION ---
-def get_active_lobe_indices(exclude: frozenset = None) -> list:
+def get_active_lobe_indices(exclude: Optional[frozenset] = None) -> List[int]:
     """Return list of active lobe indices excluding specified lobes."""
     if exclude is None:
         return list(range(NUM_LOBES))
     return [i for i in range(NUM_LOBES) if i not in exclude]
 
 
-def get_active_lobe_names(exclude: frozenset = None) -> dict:
+def get_active_lobe_names(exclude: Optional[frozenset] = None) -> Dict[int, str]:
     """Return lobe names dict excluding specified lobes."""
     if exclude is None:
         return LOBE_NAMES.copy()
     return {i: name for i, name in LOBE_NAMES.items() if i not in exclude}
 
 
-def get_active_lobe_mapping(exclude: frozenset = None) -> dict:
+def get_active_lobe_mapping(exclude: Optional[frozenset] = None) -> Dict[int, List[str]]:
     """Return lobe mapping dict excluding specified lobes."""
     if exclude is None:
         return LOBE_MAPPING.copy()

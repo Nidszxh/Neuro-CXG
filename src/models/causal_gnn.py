@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import logging
+from typing import Optional, Dict, List, Any
 from torch_geometric.nn import (
     GATv2Conv,
     global_max_pool,
@@ -64,8 +65,8 @@ class AnatomicalHierarchyPool(nn.Module):
         self,
         hidden_dim: int,
         num_networks: int = NUM_NETWORKS,
-        lobe_to_network: dict = None,
-        network_to_lobes: dict = None,
+        lobe_to_network: Optional[Dict[int, int]] = None,
+        network_to_lobes: Optional[Dict[int, List[int]]] = None,
     ):
         super().__init__()
         self.hidden_dim = hidden_dim

@@ -41,7 +41,7 @@ def _log_exclusions_once():
         _exclusion_logged = True
 
 
-def _load_csv_cached(csv_path: Path, index_col: str = None) -> pd.DataFrame:
+def _load_csv_cached(csv_path: Path, index_col: Optional[str] = None) -> pd.DataFrame:
     """Load CSV and cache to Feather when available for faster subsequent reads."""
     cache_path = csv_path.with_suffix(".feather")
 
@@ -635,7 +635,7 @@ class ABIDECausalDataset(Dataset):
 
         return self._site_mapping.get(site_name, 0)  # Default to site 0 if unknown
 
-    def _augment_graph(self, data, rng: np.random.Generator = None):
+    def _augment_graph(self, data, rng: Optional[np.random.Generator] = None):
         """
         Applies light augmentation to training graphs (feature noise, edge dropout).
         Only applied to training set to improve generalization.
