@@ -1,0 +1,69 @@
+# Git
+.git/
+.gitignore
+
+# Data (will be mounted at runtime)
+data/
+data_raw/
+data_raw_bak/
+
+# Model checkpoints
+models/
+*.pt
+*.pth
+
+# Results
+results/
+*.csv
+*.json
+*.png
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+*.egg
+venv/
+.venv/
+env/
+ENV/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Development artifacts
+chats/
+dump/
+*.log
+
+# Documentation builds
+docs/_build/
+site/
+
+# Test coverage
+.coverage
+htmlcov/
+*.cover
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# YOLO weights (should be downloaded, not in repo)
+yolo*.pt
+*.weights
+
+# Temp files
+*.tmp
+*.bak
+*~

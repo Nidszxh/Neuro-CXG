@@ -82,6 +82,19 @@ Optional/extended stage keys:
 - `data_quality_experiments`
 - `ablation_studies`
 
+## Component Responsibility Table
+
+| Layer | Component | Primary files |
+|-------|-----------|---------------|
+| **Orchestration** | Stage registry, runner | `src/pipeline/registry.py`, `src/run_pipeline.py` |
+| **Configuration** | Paths, hyperparams, feature registry | `src/core/paths.py`, `src/core/hyperparams.py`, `src/core/feature_registry.py` |
+| **Data Ingestion** | Download, split, manifest | `src/data/abide_download.py`, `src/data/split.py`, `src/data/manifestor.py` |
+| **Feature Build** | Spatial extraction, temporal extraction, harmonization | `src/features/extract_spatial.py`, `src/features/extract_temporal.py`, `src/features/fold_safe_harmonization.py` |
+| **Graph Build** | Causal inference, graph construction | `src/features/construct_causal.py`, `src/features/causal_inference.py` |
+| **Model & Training** | GNN model, factory, training utilities | `src/models/causal_gnn.py`, `src/models/factory.py`, `src/models/gnn_model.py`, `src/models/training_utils.py` |
+| **Reporting** | Evaluation, explainability, result analysis | `src/run_evaluation.py`, `src/run_explainability.py`, `src/run_result_analysis.py` |
+| **Validation** | Pre-flight checks, audit, diagnostics | `src/core/validators.py`, `src/validation/audit_check.py`, `src/validation/pipeline_checks.py` |
+
 ## Data Contracts
 
 ### 1) Subject time series
@@ -156,3 +169,136 @@ The architecture intentionally fails fast on unsafe inputs:
 - Subject alignment and graph integrity checks in `ABIDECausalDataset`
 
 These checks are designed to prevent silent leakage, degenerate training runs, and brittle outputs.
+
+---
+
+## Model Architecture
+
+### Core Model: CausalBrainGNN
+
+The model is defined in `src/models/causal_gnn.py` and instantiated by `src/models/factory.py`.
+
+**Input Shape:**
+- Nodes: 12 brain lobes (12-lobe architecture)
+- Node features: 24 dimensions (8 temporal + 10 frequency + 2 internal + 4 spatial)
+- Edges: directed causal adjacency (lagged Pearson correlation)
+- Edge attributes: 1 dimension (causality weight)
+
+**Architecture Details:**
+- **Backbone**: GATv2Conv (2 layers, 2 attention heads, 32 hidden channels)
+- **Activation**: GELU
+- **Skip connections**: residual add between layers
+- **Edge gating**: weight incoming messages by edge attributes
+
+**Pooling Modes (configurable):**
+- `"attention"`: learnable node attention (default, stable)
+- `"mean_max_sum"`: concatenation of mean, max, and sum pooled embeddings
+- `"anatomical"`: 2-level hierarchy (lobes → networks → graph), with `AnatomicalHierarchyPool`
+
+**Domain Adaptation:**
+- Gradient Reversal Layer (GRL) for site-adversarial debiasing
+- Site embedding + demographic conditioning inputs
+- Configured via `GNN_GRL_ALPHA = 0.10` (conservative, NOT 1.0)
+
+**Output:**
+- Logits: shape `(batch_size, 2)` for binary classification (ASD vs Control)
+- Optional: embeddings for explainability
+
+---
+
+## Loss Functions
+
+### Primary Loss: FocalLoss
+
+Purpose: Address class imbalance and hard-example mining in binary classification.
+
+**Algorithm:**
+1. Compute softmax probabilities from logits
+2. One-hot encode targets
+3. Extract class probability: $p_t = \text{softmax}(logits)[class]$
+4. Focal weight: $(1 - p_t)^{\gamma}$ — upweight hard negatives
+5. Alpha weight: per-class balance factor
+6. Combined loss: $\text{CrossEntropy} \times \text{alpha\_weight} \times \text{focal\_weight}$
+
+**Default Configuration:**
+- `FOCAL_LOSS_ALPHA = 0.50` — class 1 weight (ASD)
+- `FOCAL_LOSS_GAMMA = 1.5` — focusing parameter
+- `pos_weight` = computed class imbalance ratio
+
+**Rationale:** ABIDE dataset has mild imbalance (~59% ASD / ~41% Control). Focal loss emphasizes hard samples during training and outperforms standard cross-entropy.
+
+### Auxiliary Losses
+
+When multiview graphs are available and pass quality gates:
+
+**CausalInvarianceLoss:**
+- Purpose: Ensure consistent predictions across different causal graph estimates
+- Type: NT-Xent loss
+- Temperature τ = 0.07
+- Weight: 0.15
+
+**SpatialInvarianceLoss:**
+- Purpose: Guard against site-specific spatial artifacts
+- Ensures residual site variance after adversarial training is minimized
+
+**EdgeStructureContrastiveLoss:**
+- Purpose: Enforce edge structure as primary classification signal
+- Type: NT-Xent loss between full-feature and edge-only embeddings
+- Temperature τ = 0.5
+- Weight: 0.05
+
+---
+
+## Training Loop Patterns
+
+### 5-Fold Cross-Validation
+
+```python
+from src.features.graph_factory import ABIDECausalDataset
+from sklearn.model_selection import StratifiedKFold
+
+dataset = ABIDECausalDataset(split='train')
+manifest = dataset.manifest
+
+for fold_id in range(5):
+    train_idx = manifest[manifest['fold'] != fold_id].index
+    val_idx = manifest[manifest['fold'] == fold_id].index
+    
+    # Load fold-specific harmonized features
+    fold_features = pd.read_csv(f'data/metadata/harmonized_folds_cv/harmonized_fold_{fold_id}.csv')
+    
+    train_fold(fold_id, train_idx, val_idx, fold_features)
+```
+
+### OneCycle LR Schedule
+
+- `max_lr`: 0.002 (configurable)
+- `pct_start`: 0.2 (20% of epochs increase, 80% decrease)
+- High initial LR → explore loss landscape; gradual decrease → converge
+
+### Early Stopping
+
+- `patience`: 30 epochs
+- `mode`: max (maximize validation AUC)
+- Monitors validation AUC; stops if no improvement within patience
+
+### Checkpointing
+
+- Saves best model per fold by validation AUC
+- Stores: model state, optimizer state, epoch, metrics
+- Loads with strict=False for backward compatibility
+
+---
+
+## Component Change Rules
+
+When updating a component, keep these invariants synchronized:
+
+| If You Change... | Then You Must Also Update... |
+|------------------|---------------------------|
+| Stage behavior | `src/pipeline/registry.py` + runner logic |
+| Feature channels | `src/core/feature_registry.py` + `ABIDECausalDataset` shape checks |
+| Training prerequisites | `validate_gnn_training_inputs()` in `src/core/validators.py` |
+| Output artifact names | Sentinels in `registry.py` + docs |
+| Lobe mapping | `src/core/atlas_config.py` + downstream feature consumers |
+| Config constants | All importing modules (use config.py facade) |

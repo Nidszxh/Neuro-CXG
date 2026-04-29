@@ -299,12 +299,32 @@ if __name__ == "__main__":
     save_atlas_metadata()
     
     # Load Phenotypic data
+    import hashlib
+    import urllib.request
+
+    EXPECTED_PHENO_MD5 = "033f8aac3da1066ff26fc52d027b3964"
+
+    def verify_phenotype_md5(path):
+        with open(path, "rb") as f:
+            file_hash = hashlib.md5(f.read()).hexdigest()
+        if file_hash != EXPECTED_PHENO_MD5:
+            logger.error(f"Phenotype MD5 mismatch! Expected {EXPECTED_PHENO_MD5}, got {file_hash}")
+            logger.error("The upstream CPAC pipeline may have updated the preprocessing artifacts.")
+            return False
+        logger.info("Phenotype checksum verified.")
+        return True
+
     if not PHENO_PATH.exists():
         logger.info("Downloading Phenotypic data...")
-        import urllib.request
         url = "https://s3.amazonaws.com/fcp-indi/data/Projects/ABIDE_Initiative/Phenotypic_V1_0b_preprocessed1.csv"
         urllib.request.urlretrieve(url, PHENO_PATH)
         logger.info("Phenotypic data downloaded.")
+        if not verify_phenotype_md5(PHENO_PATH):
+            raise RuntimeError("Downloaded phenotype file failed checksum validation.")
+    else:
+        logger.info("Phenotypic file exists, verifying checksum...")
+        if not verify_phenotype_md5(PHENO_PATH):
+            logger.warning("Existing phenotype file failed checksum validation. Proceeding with caution.")
 
     df = pd.read_csv(PHENO_PATH)
     # Strip whitespace from FILE_ID to prevent match failures

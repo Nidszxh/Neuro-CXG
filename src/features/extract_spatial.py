@@ -341,5 +341,23 @@ def extract_spatial():
     logger.info(f"Saved to {OUTPUT_PATH}")
 
 
+import hashlib
+
+EXPECTED_YOLO_MD5 = "5d59f2e558381dc6736a60cf0cc620e4"
+
+def verify_yolo_weights():
+    if not MODEL_PATH.exists():
+        logger.error(f"YOLO weights not found at {MODEL_PATH}")
+        return False
+    with open(MODEL_PATH, "rb") as f:
+        file_hash = hashlib.md5(f.read()).hexdigest()
+    if file_hash != EXPECTED_YOLO_MD5:
+        logger.warning(f"YOLO weights MD5 mismatch! Expected {EXPECTED_YOLO_MD5}, got {file_hash}")
+        logger.warning("This introduces upstream non-determinism. Use the official versioned weights.")
+        return False
+    logger.info("YOLO weights checksum verified.")
+    return True
+
 if __name__ == "__main__":
+    verify_yolo_weights()
     extract_spatial()

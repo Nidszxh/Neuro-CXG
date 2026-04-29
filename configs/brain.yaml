@@ -1,7 +1,12 @@
 # Neuro-CXG YOLO dataset config
-# Used by src/pipelines/roi_detection.py via CONFIG_BRAIN_YAML
+# Used by src/features/extract_spatial.py via CONFIG_BRAIN_YAML
+#
+# The 'path' field is resolved relative to the working directory when running
+# inside Docker (WORKDIR=/workspace) or from the project root.
+# Override at runtime with the NEURO_CXG_DATA_ROOT environment variable;
+# see src/core/paths.py for how PROJECT_ROOT is derived.
 
-path: /home/nidszxh/Projects/Neuro-CXG/data/final
+path: ./data/final
 train: train/images
 val: val/images
 test: test/images

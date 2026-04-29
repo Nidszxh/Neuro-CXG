@@ -537,6 +537,8 @@ Examples:
                         help="Skip data quality experiment stage")
     parser.add_argument("--skip-ablations", action="store_true",
                         help="Skip ablation study stage")
+    parser.add_argument("--skip-paper-figures", action="store_true",
+                        help="Skip paper figure generation stage")
     parser.add_argument("--full-src", action="store_true",
                         help="Run all optional extended stages (audit + diagnostics + experiments)")
     parser.add_argument("--visualizations-only", action="store_true",
@@ -544,6 +546,10 @@ Examples:
     parser.add_argument("--analysis-only", action="store_true",
                         help="Only run post-training analysis stages (vis, eval, explain, results)")
     
+    parser.add_argument("--config-hash", type=str, default=None,
+                        help="Expected 8-character config hash to enforce reproducibility")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Global random seed for reproducibility")
     parser.add_argument("--skip-diagnostics", action="store_true",
                         help="Skip comprehensive health check")
     parser.add_argument("--skip-comprehensive-validation", action="store_true",
@@ -578,6 +584,7 @@ Examples:
         args.skip_feature_diagnostics = False
         args.skip_data_quality = False
         args.skip_ablations = False
+        args.skip_paper_figures = False
     
     # 11-lobe mode is handled via env var set BEFORE argparse above
     # Just log the confirmation here
@@ -606,6 +613,16 @@ Examples:
     if not validate_environment():
         logger.error("Environment validation failed. Check config.py and data paths.")
         sys.exit(1)
+
+    from src.validation.config_snapshot import get_config_hash
+    current_hash = get_config_hash()
+    logger.info(f"Current Config Hash: {current_hash}")
+    if args.config_hash:
+        if args.config_hash != current_hash:
+            logger.error(f"Config hash mismatch! Expected {args.config_hash}, got {current_hash}")
+            sys.exit(1)
+        else:
+            logger.info("Config hash match confirmed.")
 
     logger.info("Environment validation passed")
 
@@ -692,6 +709,7 @@ Examples:
         "feature_diagnostics": not args.skip_feature_diagnostics and graphs_ready_or_planned,
         "data_quality_experiments": not args.skip_data_quality and graphs_ready_or_planned and harmonized_ready_or_planned,
         "ablation_studies": not args.skip_ablations and checkpoints_ready_or_planned,
+        "paper_figures": not args.skip_paper_figures and checkpoints_ready_or_planned,
     }
 
     stage_reasons = {
@@ -765,7 +783,9 @@ Examples:
         elif stage_meta.key == "dev_audit":
             name = "Developer Code Audit"
 
-        stage_args = list(stage_meta.args) if stage_meta.args else None
+        stage_args = list(stage_meta.args) if stage_meta.args else []
+        if stage_meta.key == "gnn_training":
+            stage_args.extend(["--seed", str(args.seed)])
         stages[stage_meta.key] = {
             "name": name,
             "should_run": stage_should_run.get(stage_meta.key, False),

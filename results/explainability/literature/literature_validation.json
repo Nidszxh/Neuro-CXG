@@ -1,6 +1,21 @@
 {
   "top_regions": [
     {
+      "index": 0,
+      "name": "Frontal_Superior",
+      "networks": [
+        "DMN",
+        "FPC"
+      ]
+    },
+    {
+      "index": 6,
+      "name": "Occipital",
+      "networks": [
+        "Visual"
+      ]
+    },
+    {
       "index": 2,
       "name": "Motor_Premotor",
       "networks": [
@@ -18,34 +33,21 @@
       ]
     },
     {
-      "index": 0,
-      "name": "Frontal_Superior",
-      "networks": [
-        "DMN",
-        "FPC"
-      ]
-    },
-    {
-      "index": 10,
-      "name": "Cerebellum",
-      "networks": [
-        "Subcortical"
-      ]
-    },
-    {
-      "index": 4,
-      "name": "Cingulate",
-      "networks": [
-        "DMN",
-        "Salience"
-      ]
-    },
-    {
       "index": 3,
       "name": "Insula",
       "networks": [
         "Social",
         "Salience"
+      ]
+    },
+    {
+      "index": 7,
+      "name": "Parietal",
+      "networks": [
+        "DMN",
+        "Sensorimotor",
+        "Visual",
+        "FPC"
       ]
     }
   ],
@@ -55,7 +57,7 @@
       "regions_found": [
         "Frontal_Superior",
         "Frontal_Orbital",
-        "Cingulate"
+        "Parietal"
       ],
       "total_in_network": 5,
       "network_regions": [
@@ -84,8 +86,7 @@
       "hit": true,
       "regions_found": [
         "Motor_Premotor",
-        "Insula",
-        "Cingulate"
+        "Insula"
       ],
       "total_in_network": 4,
       "network_regions": [
@@ -98,7 +99,8 @@
     "Sensorimotor": {
       "hit": true,
       "regions_found": [
-        "Motor_Premotor"
+        "Motor_Premotor",
+        "Parietal"
       ],
       "total_in_network": 2,
       "network_regions": [
@@ -107,8 +109,11 @@
       ]
     },
     "Visual": {
-      "hit": false,
-      "regions_found": [],
+      "hit": true,
+      "regions_found": [
+        "Occipital",
+        "Parietal"
+      ],
       "total_in_network": 2,
       "network_regions": [
         "Occipital",
@@ -116,10 +121,8 @@
       ]
     },
     "Subcortical": {
-      "hit": true,
-      "regions_found": [
-        "Cerebellum"
-      ],
+      "hit": false,
+      "regions_found": [],
       "total_in_network": 3,
       "network_regions": [
         "Subcortical",
@@ -131,7 +134,8 @@
       "hit": true,
       "regions_found": [
         "Frontal_Superior",
-        "Motor_Premotor"
+        "Motor_Premotor",
+        "Parietal"
       ],
       "total_in_network": 3,
       "network_regions": [
@@ -144,12 +148,12 @@
   "overlap_scores": {
     "DMN": 0.375,
     "Social": 0.25,
-    "Salience": 0.4286,
-    "Sensorimotor": 0.1429,
-    "Visual": 0.0,
-    "Subcortical": 0.125,
-    "FPC": 0.2857
+    "Salience": 0.25,
+    "Sensorimotor": 0.3333,
+    "Visual": 0.3333,
+    "Subcortical": 0.0,
+    "FPC": 0.5
   },
-  "summary": "Top-6 important regions: Motor_Premotor, Frontal_Orbital, Frontal_Superior, Cerebellum, Cingulate, Insula.\nThese overlap with 6/7 known ASD-relevant networks: DMN, Social, Salience, Sensorimotor, Subcortical, FPC.",
+  "summary": "Top-6 important regions: Frontal_Superior, Occipital, Motor_Premotor, Frontal_Orbital, Insula, Parietal.\nThese overlap with 6/7 known ASD-relevant networks: DMN, Social, Salience, Sensorimotor, Visual, FPC.",
   "top_n": 6
 }

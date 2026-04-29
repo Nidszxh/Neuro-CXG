@@ -24,17 +24,12 @@ from src.core.config import (
     CHECKPOINT_DIR, DEVICE, GNN_IN_CHANNELS,
     ALL_FEATURE_NAMES,
     GNN_HIDDEN_CHANNELS,
-    GNN_DROPOUT,
     GNN_WEIGHT_DECAY,
-    GNN_NUM_HEADS,
-    GNN_NUM_LAYERS,
-    GNN_POOLING,
     GNN_USE_GRL,
     GNN_GRL_ALPHA,
     GNN_AUTO_GRL_GRID_SEARCH,
     GRL_ALPHA_CANDIDATES,
     GNN_SITE_LOSS_WEIGHT,
-    GNN_EDGE_GATE,
     GNN_ONECYCLE_MAX_LR,
     GNN_ONECYCLE_WARMUP_FRACTION,
     GNN_EARLY_STOPPING_PATIENCE,
@@ -62,7 +57,6 @@ from src.core.config import (
     EVAL_FIXED_THRESHOLD,
     GNN_USE_SITE_EMBEDDING,
     GNN_USE_DEMOGRAPHICS,
-    GNN_NODE_EMB_DIM,
     NUM_LOBES,
     NUM_SPATIAL_FEATURES,
     CAUSAL_GRAPHS_DIR,
@@ -73,6 +67,7 @@ from src.core.config import (
     DATA_METADATA,
     RESULTS_TRAINING_DIR,
     HARMONIZED_FOLDS_DIR,
+    GNN_SEED,
 )
 from src.core.validators import summarize_graph_degeneracy_from_edge_index
 from src.models.training_utils import (
@@ -99,112 +94,9 @@ except ImportError:
     logger.warning("FeatureAttributionAnalyzer unavailable (requires Captum)")
 
 
-# ── TASK 2: Causal Invariance Loss (DD-010) ──────────────────────────────────────
-
-class CausalInvarianceLoss(nn.Module):
-    """
-    NT-Xent contrastive loss across multiple causal graph views of the same subject.
-
-    Rationale (DD-010 / Root Cause 2): A single noisy Granger estimate per subject
-    means one bad estimation fails entirely.  Multi-view construction generates 6
-    views per subject (base, extended_lag, 3 bootstraps, high_confidence).  This
-    loss enforces that graph embeddings are invariant across views of the same
-    subject, making the classifier robust to estimation noise.
-
-    Positive pairs:  different views of the SAME subject.
-    Negative pairs:  views from DIFFERENT subjects.
-    Temperature τ = 0.07 (tight, following SimCLR convention for small batches).
-    """
-
-    _VIEW_ORDER = (
-        "base",
-        "extended_lag",
-        "bootstrap_0",
-        "bootstrap_1",
-        "bootstrap_2",
-        "high_confidence",
-    )
-
-    def __init__(self, temperature: float = 0.07):
-        super().__init__()
-        self.temperature = temperature
-
-    def forward(self, embeddings_list: list) -> torch.Tensor:
-        """
-        Args:
-            embeddings_list: List of V tensors each of shape (B, D), one per view.
-                             B graphs must correspond to the same subjects across views.
-        Returns:
-            Scalar NT-Xent invariance loss.
-        """
-        V = len(embeddings_list)
-        if V < 2:
-            return torch.tensor(0.0, device=embeddings_list[0].device, requires_grad=True)
-
-        B = embeddings_list[0].size(0)
-        if B < 2:
-            return torch.tensor(0.0, device=embeddings_list[0].device, requires_grad=True)
-
-        # Normalize all views
-        zs = [F.normalize(e, dim=1) for e in embeddings_list]
-
-        # Symmetric NT-Xent across ALL view pairs
-        pair_losses = []
-        labels = torch.arange(B, device=zs[0].device)
-        for i in range(V):
-            for j in range(i + 1, V):
-                sim_ij = torch.mm(zs[i], zs[j].t()) / self.temperature  # (B, B)
-                pair_losses.append(F.cross_entropy(sim_ij, labels))
-                pair_losses.append(F.cross_entropy(sim_ij.t(), labels))
-
-        if not pair_losses:
-            return torch.tensor(0.0, device=zs[0].device, requires_grad=True)
-
-        return torch.stack(pair_losses).mean()
-
-
-# ── TASK 4: Spatial Invariance Loss (DD-012) ─────────────────────────────────────
-
-class SpatialInvarianceLoss(nn.Module):
-    """
-    Gradient reversal applied to the spatial feature slice of node features.
-
-    Rationale (DD-012 / Root Cause 4): Even after removing conf_std and
-    detection_count, the remaining spatial features (x, y, z_depth, size) can
-    carry residual site-correlated variance from scanner FOV differences.
-    A reversed gradient on the spatial channels penalises the encoder for
-    extracting site-predictive information from spatial coordinates.
-
-    Args:
-        spatial_start_idx: First column index of the spatial feature block in x.
-                           Default: GNN_IN_CHANNELS - NUM_SPATIAL_FEATURES.
-        num_sites: Number of acquisition sites for the site classifier head.
-        reversal_weight: Gradient reversal strength (λ). Default 0.1.
-    """
-
-    def __init__(self, spatial_start_idx: int, num_sites: int = 20, reversal_weight: float = 0.1):
-        super().__init__()
-        self.spatial_start_idx = spatial_start_idx
-        self.reversal_weight = reversal_weight
-        self.site_head = nn.Sequential(
-            nn.Linear(NUM_SPATIAL_FEATURES, 16),
-            nn.GELU(),
-            nn.Linear(16, num_sites),
-        )
-
-    def forward(self, x: torch.Tensor, site_targets: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: Node feature matrix (N, F).
-            site_targets: Integer site labels per node (N,).
-        Returns:
-            Scalar site classification loss on reversed-gradient spatial features.
-        """
-        from src.models.causal_gnn import GradientReversal
-        spatial = x[:, self.spatial_start_idx:]
-        spatial_rev = GradientReversal.apply(spatial, self.reversal_weight)
-        site_logits = self.site_head(spatial_rev)
-        return F.cross_entropy(site_logits, site_targets)
+# ── LOSS IMPORTS ────────────────────────────────────────────────────────────────
+# CausalInvarianceLoss and SpatialInvarianceLoss are defined in src.models.losses
+from src.models.losses import CausalInvarianceLoss, SpatialInvarianceLoss
 
 
 # UTILITY FUNCTIONS
@@ -681,7 +573,7 @@ def _run_training_once(
     from src.features.graph_factory import ABIDECausalDataset
     from src.features.graph_factory import _load_csv_cached
 
-    _set_global_seed(42)
+    _set_global_seed(GNN_SEED)
 
     # Prime CSV/Feather caches before the dataset constructor reads them.
     _load_csv_cached(MASTER_MANIFEST)
@@ -713,9 +605,6 @@ def _run_training_once(
             "site_auc_count": 0,
         }
     
-    # Compute class weights (informational)
-    class_weights = compute_class_weights(labels)
-
     graph_quality = _assess_graph_degeneracy(dataset)
     logger.info(
         "Graph quality: degenerate=%d/%d (%.1f%%; edge<threshold or dead-lobe), threshold=%d, mean_edges=%.2f, mean_dead_lobes=%.2f",
@@ -920,7 +809,7 @@ def _run_training_once(
         logger.info(f"FOLD {fold+1}/{K_FOLDS}")
         logger.info(f"{'='*70}")
 
-        _set_global_seed(42 + fold)  # deterministic per-fold model initialisation
+        _set_global_seed(GNN_SEED + fold)  # deterministic per-fold model initialisation
         fold_start_time = time.time()
 
         # Enforce fold-specific harmonized features (no global fallback).
@@ -1414,5 +1303,19 @@ def run_training():
 
 # CLI
 
+def parse_args():
+    import argparse
+    parser = argparse.ArgumentParser(description="Neuro-CXG GNN Training")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed (default: uses GNN_SEED from config)")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    args = parse_args()
+    
+    # Apply seed override if provided
+    if args.seed is not None:
+        GNN_SEED = args.seed
+        logger.info(f"Using CLI-provided seed: {GNN_SEED}")
+    
     run_training()

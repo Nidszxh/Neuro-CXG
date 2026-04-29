@@ -146,6 +146,13 @@ STAGES: List[Stage] = [
     Stage("dev_audit", "Developer Audit", "src.validation.dev_audit", None),
     Stage("data_quality_experiments", "Data Quality Experiments", "src.experiments.data_quality", RESULTS_DATA_QUALITY_DIR),
     Stage("ablation_studies", "Ablation Studies", "src.experiments.run_ablations", RESULTS_ABLATIONS_DIR),
+    Stage(
+        "paper_figures",
+        "Generate Paper Figures",
+        "src.analysis.generate_paper_figures",
+        RESULTS_DIR / "paper_figures",
+        dependencies=["evaluation", "explainability", "result_analysis"],
+    ),
 ]
 
 

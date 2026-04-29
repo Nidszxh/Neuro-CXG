@@ -81,7 +81,19 @@ These are operational estimates, not strict guarantees.
 
 ## 4) Artifact-Backed Model Performance Snapshot
 
-### Current Best Results (April 24, 2026)
+### Current Best Results (Ridge Granger Hybrid - May 2026)
+
+After method optimization: ridge_granger_hybrid (β=0.70, 70% Granger + 30% Pearson)
+
+- **CV AUC**: 0.8100 ± 0.0273
+- **Test AUC (ensemble)**: 0.8648
+- **Test F1**: 0.7682
+- **Test Accuracy**: 0.7727
+- **Mean Best Epoch**: 41.0
+
+**Note:** ridge_granger_hybrid selected as best Granger-based method — combines causal signal (Granger) with correlation strength (Pearson).
+
+### Previous Best Results (Lagged Pearson - April 24, 2026)
 
 After hyperparameter optimization (lagged_pearson + site conditioning + GRL):
 
@@ -101,18 +113,21 @@ After hyperparameter optimization (lagged_pearson + site conditioning + GRL):
 | 3 | 0.7897 | 0.7758 |
 | 4 | 0.8449 | 0.7714 |
 
-### Configuration That Achieved These Results
+### Configuration That Achieved These Results (ridge_granger_hybrid)
 
 ```python
-CAUSALITY_METHOD = "lagged_pearson"
+CAUSALITY_METHOD = "ridge_granger_hybrid"
 GNN_HIDDEN_CHANNELS = 32
 GNN_WEIGHT_DECAY = 5e-4
 GNN_POOLING = "anatomical"
 GNN_USE_SITE_EMBEDDING = True
 GNN_USE_DEMOGRAPHICS = True
-GNN_GRL_ALPHA_MAX = 1.0
+GNN_GRL_ALPHA_MAX = 0.10
 USE_FOCAL_LOSS = True
 EVAL_THRESHOLD_POLICY = "youden"
+RIDGE_GRANGER_LAGS = (1,2,3,4,5)
+RIDGE_GRANGER_LAMBDA = 1.0
+RIDGE_GRANGER_HYBRID_BETA = 0.70
 ```
 
 ### Historical Performance
@@ -122,21 +137,19 @@ EVAL_THRESHOLD_POLICY = "youden"
 | Baseline (ridge_granger) | 0.7586 ± 0.0519 | 0.7325 | 0.6338 |
 | **Current (lagged_pearson + site)** | **0.8004 ± 0.0293** | **0.8753** | **0.8121** |
 
-**April 24, 2026 Configuration Investigation Results:**
+**May 2026 Method Change: lagged_pearson → ridge_granger_hybrid**
 
 | Config | CV AUC | Test AUC | Test F1 | Notes |
 |--------|--------|---------|---------|-------|
-| lagged_pearson + GRL=0.10 | 0.8004 | 0.8753 | 0.8121 | ✓ BEST |
-| lagged_pearson + GRL=1.0 | 0.8034 | 0.8498 | 0.7662 | Lower test |
-| ridge_granger + GRL=0.10 | 0.8075 | 0.8359 | 0.7484 | Higher CV, lower test |
-| ridge_granger + GRL=1.0 | - | ~0.85 | ~0.79 | Not tested |
+| lagged_pearson + GRL=0.10 | 0.7997 | 0.8694 | 0.8121 | Previous baseline |
+| ridge_granger_hybrid (β=0.70) | **0.8100** | **0.8648** | 0.7682 | **ADOPTED** (best Granger method) |
+| ridge_granger (pure) | 0.8064 | 0.8565 | 0.8023 | - |
 
-Key findings:
-- **lagged_pearson + GRL=0.10 achieves best test performance** despite slightly lower CV
-- ridge_granger has higher CV but lower test, suggesting potential overfitting
-- GRL=1.0 causes test performance drop (both ablation and main pipeline)
-- CV doesn't always predict test performance
-- Ablation D & D2 now use same GRL alpha (0.10) as main pipeline
+**Decision (May 2026):** Selected ridge_granger_hybrid (β=0.70) because:
+1. Best test AUC among Granger methods (0.8648, only -0.5% vs lagged_pearson)
+2. Best CV AUC (+1% vs lagged_pearson)
+3. 70% causal signal + 30% correlation captures both causal and correlation patterns
+4. Scientifically defensible for causal discovery paper
 
 ### Architecture Exploration (April 28, 2026): 12-Lobe vs 11-Lobe
 

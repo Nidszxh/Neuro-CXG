@@ -1314,7 +1314,9 @@ def adaptive_sparsification(
     return adj_matrix, fallback_info
 
 
-def construct_graph(subject_id: str, split: str, tr: float = 2.0) -> Tuple[bool, Dict[str, object]]:
+def construct_graph(subject_id: str, split: str, tr: float = 2.0, method: str = None, output_dir: Path = None) -> Tuple[bool, Dict[str, object]]:
+    method = method or CAUSALITY_METHOD
+    output_dir = output_dir or CAUSAL_GRAPHS_DIR
     """
     Construct causal graph for a single subject.
     
@@ -1328,7 +1330,7 @@ def construct_graph(subject_id: str, split: str, tr: float = 2.0) -> Tuple[bool,
     """
 
     ts_path = DATA_FINAL / split / "time_series" / f"{subject_id}_ts.npy"
-    output_path = CAUSAL_GRAPHS_DIR / f"{subject_id}_graph.pt"
+    output_path = output_dir / f"{subject_id}_graph.pt"
     
     if not ts_path.exists():
         logger.debug(f"Time series not found for {subject_id}")
@@ -1923,7 +1925,7 @@ def main_multiview():
     Usage (via pipeline registry with --multiview flag, or directly):
         python -m src.features.construct_causal --multiview
     """
-    from src.core.config import CAUSAL_GRAPHS_MULTIVIEW_DIR, MASTER_MANIFEST, GRANGER_MAX_LAG_SECONDS
+    from src.core.config import CAUSAL_GRAPHS_MULTIVIEW_DIR, MASTER_MANIFEST
 
     logger.info("=" * 70)
     logger.info("MULTI-VIEW CAUSAL GRAPH CONSTRUCTION (Task 2 — DD-010)")

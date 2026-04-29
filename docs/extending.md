@@ -127,7 +127,8 @@ pytest tests/unit/
 Any extension that changes runtime behavior should update these pages in the same change:
 
 - `docs/architecture.md`
-- `docs/components.md`
 - `docs/configuration.md`
-- `docs/usage.md`
-- `docs/failure-modes.md`
+- `docs/setup.md`
+- `docs/operations.md`
+- `docs/evaluation.md`
+- `README.md` (if important)

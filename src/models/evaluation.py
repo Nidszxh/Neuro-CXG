@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import numpy as np
 import torch
@@ -208,3 +208,38 @@ def apply_per_site_calibration(
             continue
         calibrated[mask] = calibrator.predict_proba(probs[mask].reshape(-1, 1))[:, 1]
     return calibrated
+
+
+def resolve_threshold(
+    probs: np.ndarray,
+    labels: np.ndarray,
+    policy: str = "youden",
+    fixed_value: float = 0.5,
+) -> tuple[float, float]:
+    """Resolve the classification threshold and its corresponding score based on a policy.
+
+    Args:
+        probs: Predicted positive-class probabilities.
+        labels: Ground-truth binary labels.
+        policy: Threshold selection policy ("f1", "youden", or "fixed").
+        fixed_value: The threshold to use if policy is "fixed".
+
+    Returns:
+        A tuple of (best_threshold, score).
+    """
+    policy = str(policy).strip().lower()
+    if policy == "fixed":
+        thr = float(np.clip(fixed_value, 0.0, 1.0))
+        if probs.size == 0 or labels.size == 0 or np.unique(labels).size < 2:
+            return thr, 0.0
+        fpr, tpr, thresholds = roc_curve(labels, probs)
+        if thresholds.size == 0:
+            return thr, 0.0
+        idx = int(np.argmin(np.abs(thresholds - thr)))
+        j = tpr - fpr
+        return thr, float(j[idx])
+    elif policy == "youden":
+        return youden_threshold(probs, labels)
+    else:
+        # Default fallback is F1 maximization
+        return optimal_threshold(probs, labels)

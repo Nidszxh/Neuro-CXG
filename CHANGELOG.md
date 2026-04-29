@@ -5,7 +5,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased] — 2026-04-28
+## [Unreleased] — 2026-04-29
+
+### Causality Method Finalization: lagged_pearson → ridge_granger_hybrid (β=0.70)
+
+**Rationale:** Hybrid combines 70% Granger Causality (true causal signal) + 30% Lagged Pearson (correlation strength).
+
+**Results Comparison:**
+
+| Method | CV AUC | Test AUC | Methodological Strength |
+|--------|--------|----------|-------------------------|
+| lagged_pearson | 0.7997 ± 0.0294 | **0.8694** | Correlation (not causal) |
+| ridge_granger_hybrid (β=0.70) | **0.8100 ± 0.0273** | **0.8648** | 70% Causality + 30% Correlation |
+| ridge_granger (pure) | 0.8064 ± 0.0314 | 0.8565 | Pure Granger Causality |
+
+**Decision:** Selected ridge_granger_hybrid because:
+- Best test AUC among Granger methods (0.8648, only -0.5% vs lagged_pearson)
+- Best CV AUC (+1% vs lagged_pearson)
+- Combines causal methodology with correlation strength
+- Overlapping 95% CIs indicate no statistically significant difference
+
+---
+
+## 2026-04-28
 
 ### Comprehensive Ablation Study: 12-Lobe Architecture Validation (COMPLETE)
 

@@ -33,7 +33,10 @@ def get_config_snapshot(module: Any = None) -> Dict[str, str]:
         if k.isupper() and not k.startswith("_"):
             try:
                 val = getattr(module, k)
-                snapshot[k] = str(val)
+                if isinstance(val, (set, frozenset)):
+                    snapshot[k] = str(sorted(list(val)))
+                else:
+                    snapshot[k] = str(val)
             except Exception:
                 snapshot[k] = "<error>"
 
@@ -85,3 +88,87 @@ def load_config_snapshot(snapshot_path: Path) -> Dict[str, str]:
     """Load config snapshot from file."""
     with open(snapshot_path) as f:
         return json.load(f)
+
+
+def compare_snapshots(snapshot_a: Dict[str, str], snapshot_b: Dict[str, str]) -> Dict[str, tuple]:
+    """Compare two config snapshots and return differences.
+
+    Args:
+        snapshot_a: First config snapshot (from load_config_snapshot)
+        snapshot_b: Second config snapshot
+
+    Returns:
+        Dict of key -> (value_a, value_b, delta) for changed keys
+    """
+    differences = {}
+
+    all_keys = set(snapshot_a.keys()) | set(snapshot_b.keys())
+
+    for key in sorted(all_keys):
+        val_a = snapshot_a.get(key, "<missing>")
+        val_b = snapshot_b.get(key, "<missing>")
+
+        if val_a != val_b:
+            differences[key] = (val_a, val_b, _compute_delta(val_a, val_b))
+
+    return differences
+
+
+def _compute_delta(val_a: str, val_b: str) -> str:
+    """Compute human-readable delta between two values."""
+    try:
+        num_a = float(val_a)
+        num_b = float(val_b)
+        delta = num_b - num_a
+        if abs(delta) < 0.001:
+            return "~0"
+        return f"{delta:+.4f}"
+    except (ValueError, TypeError):
+        return f"→ {val_b}"
+
+
+def print_snapshot_diff(differences: Dict[str, tuple], file=None) -> None:
+    """Pretty-print snapshot differences.
+
+    Args:
+        differences: Output from compare_snapshots
+        file: Optional file handle for output
+    """
+    if not differences:
+        print("No differences found", file=file)
+        return
+
+    print("=" * 80, file=file)
+    print("CONFIG SNAPSHOT DIFFERENCES", file=file)
+    print("=" * 80, file=file)
+
+    for key, (val_a, val_b, delta) in sorted(differences.items()):
+        print(f"\n{key}:", file=file)
+        print(f"  A: {val_a}", file=file)
+        print(f"  B: {val_b}", file=file)
+        print(f"  Δ: {delta}", file=file)
+
+    print("\n" + "=" * 80, file=file)
+    print(f"Total: {len(differences)} changed parameters", file=file)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Compare config snapshots")
+    parser.add_argument("snapshot_a", type=Path, help="First snapshot JSON file")
+    parser.add_argument("snapshot_b", type=Path, help="Second snapshot JSON file")
+    parser.add_argument("--output", type=Path, default=None, help="Output file (optional)")
+
+    args = parser.parse_args()
+
+    snap_a = load_config_snapshot(args.snapshot_a)
+    snap_b = load_config_snapshot(args.snapshot_b)
+
+    diffs = compare_snapshots(snap_a, snap_b)
+
+    output_file = open(args.output, "w") if args.output else None
+    print_snapshot_diff(diffs, file=output_file)
+    if output_file:
+        output_file.close()
+        print(f"\nDiff saved to {args.output}")

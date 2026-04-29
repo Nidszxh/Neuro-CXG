@@ -33,7 +33,7 @@ from src.core.config import (
     EVAL_THRESHOLD_POLICY,
     EVAL_FIXED_THRESHOLD,
 )
-from src.models.evaluation import evaluate_loader, optimal_threshold
+from src.models.evaluation import evaluate_loader, optimal_threshold, resolve_threshold
 
 logger = logging.getLogger(__name__)
 
@@ -1059,29 +1059,6 @@ def train_one_epoch_with_accumulation(
     return total_loss / max(num_batches, 1)
 
 
-def _find_optimal_threshold(y_true: np.ndarray, y_probs: np.ndarray) -> tuple:
-    policy = str(EVAL_THRESHOLD_POLICY).strip().lower()
-    if policy == "fixed":
-        thr = float(np.clip(EVAL_FIXED_THRESHOLD, 0.0, 1.0))
-        if y_true.size == 0 or y_probs.size == 0 or np.unique(y_true).size < 2:
-            return thr, 0.0
-        fpr, tpr, thresholds = roc_curve(y_true, y_probs)
-        if thresholds.size == 0:
-            return thr, 0.0
-        idx = int(np.argmin(np.abs(thresholds - thr)))
-        j = tpr - fpr
-        return thr, float(j[idx])
-    if policy == "youden":
-        if y_true.size == 0 or y_probs.size == 0 or np.unique(y_true).size < 2:
-            return 0.5, 0.0
-        fpr, tpr, thresholds = roc_curve(y_true, y_probs)
-        if thresholds.size == 0:
-            return 0.5, 0.0
-        j = tpr - fpr
-        best_idx = int(np.argmax(j))
-        best_threshold = float(thresholds[best_idx]) if np.isfinite(thresholds[best_idx]) else 0.5
-        return best_threshold, float(j[best_idx])
-    return optimal_threshold(y_probs, y_true)
 
 
 @torch.no_grad()
@@ -1173,7 +1150,7 @@ def train_fold_with_onecycle(
         scheduler.step()
 
         metrics = _evaluate_model(model, val_loader, device, threshold=0.5)
-        opt_threshold, _ = _find_optimal_threshold(metrics['labels'], metrics['probs'])
+        opt_threshold, _ = resolve_threshold(metrics["probs"], metrics["labels"], EVAL_THRESHOLD_POLICY, EVAL_FIXED_THRESHOLD)
         metrics_opt = _evaluate_model(model, val_loader, device, threshold=opt_threshold)
 
         epoch_metrics = {

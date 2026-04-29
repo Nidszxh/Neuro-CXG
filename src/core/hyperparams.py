@@ -51,6 +51,9 @@ YOLO_TRAIN_CONFIG = {
     "mixup": 0.0,
 }
 
+# GNN training seed for reproducibility
+GNN_SEED = 42
+
 # --- CAUSAL GRAPH PARAMETERS ---
 SPARSITY_QUANTILE = 0.70  # Keep top 30% edges (high selectivity - Phase 3)
 # Target graph density: keep only the top GRAPH_DENSITY_TARGET fraction of edges.
@@ -60,7 +63,7 @@ GRAPH_DENSITY_TARGET = 0.30  # Keep top 30% of directional edges (~40/132 for 12
 
 # Phase 1/2 enhancements (Apr 2026)
 # Default to ridge-regularized Granger edges for stronger statistical signal.
-CAUSALITY_METHOD = "lagged_pearson"  # Best performing method  # Options: 'granger', 'ridge_granger', 'ridge_granger_hybrid', 'lagged_pearson', 'partial_corr_glasso'
+CAUSALITY_METHOD = "ridge_granger_hybrid"  # Hybrid: 70% ridge_granger + 30% lagged_pearson  # Options: 'granger', 'ridge_granger', 'ridge_granger_hybrid', 'lagged_pearson', 'partial_corr_glasso'
 GRANGER_MAX_LAG = 5  # Test lags 1-5 TRs (legacy, kept for backward compatibility)
 GRANGER_MAX_LAG_SECONDS = 10.0  # Test causality up to 10s of history; adjusted by subject TR
 GRANGER_SIGNIFICANCE_LEVEL = 0.05  # Statistical significance threshold

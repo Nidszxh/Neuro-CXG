@@ -439,28 +439,17 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
         youden_metrics["f1"],
     )
 
-    policy = str(EVAL_THRESHOLD_POLICY).strip().lower()
-    if policy not in {"f1", "youden", "fixed"}:
-        logger.warning(
-            "Unknown EVAL_THRESHOLD_POLICY=%r; falling back to 'f1'",
-            EVAL_THRESHOLD_POLICY,
-        )
-        policy = "f1"
-
-    if policy == "fixed":
-        threshold = float(np.clip(EVAL_FIXED_THRESHOLD, 0.0, 1.0))
-        metrics = _full_metrics(ens_probs, labels, threshold=threshold)
-        logger.info("  Fixed threshold: %.4f", threshold)
-    elif policy == "youden":
-        threshold = youden_thr
-        metrics = youden_metrics
-    else:
-        threshold = f1_threshold
-        metrics = f1_metrics
-
+    from src.models.evaluation import resolve_threshold
+    threshold, _ = resolve_threshold(ens_probs, labels, policy=EVAL_THRESHOLD_POLICY, fixed_value=EVAL_FIXED_THRESHOLD)
+    metrics = _full_metrics(ens_probs, labels, threshold=threshold)
     metrics = dict(metrics)
     metrics["threshold"] = threshold
     ci = _bootstrap_ci(ens_probs, labels, threshold=threshold)
+    
+    policy = str(EVAL_THRESHOLD_POLICY).strip().lower()
+    if policy not in {"f1", "youden", "fixed"}:
+        policy = "f1"
+        
     logger.info("  Selected threshold policy: %s (threshold=%.4f)", policy, threshold)
 
     # Per-fold results table using cached predictions

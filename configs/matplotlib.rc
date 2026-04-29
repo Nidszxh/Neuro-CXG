@@ -1,32 +1,141 @@
 # Neuro-CXG Matplotlib Style
-# Publication-quality figure defaults
+# Publication-quality figure defaults for journal submission
 
-# DPI settings for publication
+# =============================================================================
+# DPI AND FIGURE SETTINGS
+# =============================================================================
 figure.dpi: 100
+figure.figsize: 7, 5
+figure.constrained_layout.use: True
+
+# Save settings - high DPI for publication
 savefig.dpi: 300
 savefig.bbox: tight
-
-# Font settings (colorblind-safe, print-friendly)
-font.family: sans-serif
-font.sans-serif: Arial, Helvetica, DejaVu Sans
-font.size: 10
-axes.labelsize: 10
-axes.titlesize: 11
-xtick.labelsize: 9
-ytick.labelsize: 9
-legend.fontsize: 9
-
-# Line widths
-axes.linewidth: 1.0
-lines.linewidth: 1.5
-
-# Plot settings
-axes.grid: False
-axes.spines.top: False
-axes.spines.right: False
-legend.frameon: False
-legend.numpoints: 1
-
-# Save settings
 savefig.format: png
 savefig.transparent: False
+savefig.pad_inches: 0.1
+
+# =============================================================================
+# FONT SETTINGS - COMPATIBLE WITH MAJOR JOURNALS
+# =============================================================================
+# Primary: serif (most journals accept), fallback to sans-serif
+font.family: serif
+font.serif: Times New Roman, Georgia, DejaVu Serif
+font.size: 10
+font.titleweight: bold
+
+# Axis labels
+axes.labelsize: 10
+axes.titlesize: 11
+axes.labelweight: normal
+
+# Tick labels
+xtick.labelsize: 9
+ytick.labelsize: 9
+xtick.direction: out
+ytick.direction: out
+
+# Legend
+legend.fontsize: 9
+legend.frameon: True
+legend.framealpha: 0.8
+legend.numpoints: 1
+legend.scatterpoints: 1
+
+# =============================================================================
+# COLOR CYCLES - COLORBLIND-SAFE AND GRAYSCALE-DISTINGUISHABLE
+# =============================================================================
+# Okabe-Ito color palette (colorblind-safe, 8 colors)
+axes.prop_cycle: cycler('color', ['#0072B2', '#D55E00', '#CC79A7', '#009E73', '#F0E442', '#56B4E9', '#E69F00', '#000000'])
+
+# Alternative: Viridis for heatmaps (perceptually uniform, colorblind-safe)
+# Set via code: plt.set_cmap('viridis')
+
+# =============================================================================
+# LINE AND MARKER SETTINGS
+# =============================================================================
+lines.linewidth: 1.5
+lines.markersize: 5
+lines.markeredgewidth: 0.5
+
+# Error bars
+errorbar.capsize: 3
+errorbar.capthick: 1
+
+# =============================================================================
+# AXIS AND SPINE SETTINGS
+# =============================================================================
+axes.linewidth: 1.0
+axes.spines.top: False
+axes.spines.right: False
+axes.spines.left: linewidth 1.0
+axes.spines.bottom: linewidth 1.0
+
+# Grid - minimal for scientific figures
+axes.grid: True
+axes.grid.alpha: 0.3
+axes.grid.linestyle: --
+axes.grid.linewidth: 0.5
+
+# Axis limits - prevent scientific notation for small values
+axes.formatter.useoffset: False
+axes.formatter.limits: -7, 7
+
+# =============================================================================
+# PLOT STYLING
+# =============================================================================
+# Box plots
+boxplot.flierprops.marker: o
+boxplot.flierprops.markerfacecolor: gray
+boxplot.flierprops.markeredgecolor: gray
+boxplot.flierprops.markersize: 3
+boxplot.boxprops.linewidth: 1.0
+boxplot.whiskerprops.linewidth: 1.0
+boxplot.capprops.linewidth: 1.0
+
+# Violin plots
+violin.plot準.showmeans: False
+violin.plot準.showmedians: True
+violin.plot準.showextrema: True
+
+# Bar plots
+bar.width: 0.6
+bar.edgecolor: black
+bar.linewidth: 0.5
+
+# =============================================================================
+# HEATMAP AND IMAGE SETTINGS
+# =============================================================================
+# Image interpolation
+image.interpolation: bilinear
+image.cmap:RdBu_r
+
+# Colormap limits - symmetric for signed data
+image.clim: auto
+
+# =============================================================================
+# SUBPLOT SETTINGS
+# =============================================================================
+figure.subplot.left: 0.10
+figure.subplot.right: 0.95
+figure.subplot.bottom: 0.12
+figure.subplot.top: 0.88
+figure.subplot.wspace: 0.25
+figure.subplot.hspace: 0.30
+
+# =============================================================================
+# USAGE INSTRUCTIONS
+# =============================================================================
+# To use this style:
+#   import matplotlib.pyplot as plt
+#   plt.style.use('/path/to/configs/matplotlib.rc')
+#
+# For specific journal requirements:
+#   - Nature: sans-serif (Helvetica/Arial), single column 89mm, double 183mm
+#   - Science: sans-serif, 1-column 5.5cm, 2-column 12cm
+#   - IEEE: Times, 85mm single, 170mm double
+#   - NeuroImage: Arial, 90mm single, 180mm double
+#
+# Override per-figure:
+#   fig.set_size_inches(3.5, 2.5)  # Single column
+#   fig.set_size_inches(7.0, 4.0)  # Double column

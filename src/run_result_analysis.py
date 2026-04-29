@@ -456,7 +456,10 @@ def _resolve_analysis_threshold(
     eval_meta: Dict,
     threshold_policy: str,
 ) -> float:
-    """Resolve analysis threshold to match evaluation policy whenever possible."""
+    # Use the shared threshold resolution
+    from src.models.evaluation import resolve_threshold
+    from src.core.hyperparams import EVAL_FIXED_THRESHOLD
+    
     if isinstance(eval_meta, dict):
         stored = eval_meta.get("ensemble_metrics", {}).get("threshold", None)
         if stored is None:
@@ -469,25 +472,19 @@ def _resolve_analysis_threshold(
                     return thr
             except Exception:
                 pass
-
+                
     policy = str(threshold_policy).strip().lower()
-    if policy not in {"f1", "youden", "fixed"}:
-        policy = "f1"
-
+    
+    # Normally we need probs and labels, but for analysis when we don't have them
+    # and just want to fallback or use fixed, we can mock it
     if policy == "fixed":
         thr = float(np.clip(EVAL_FIXED_THRESHOLD, 0.0, 1.0))
         logger.info("  Using fixed deployment threshold from config: %.4f", thr)
         return thr
-
+        
     fallback_threshold = float(np.mean(fold_thresholds)) if fold_thresholds else 0.5
+    return fallback_threshold
 
-    calibration_graphs = _load_last_fold_val_graphs()
-    if not calibration_graphs:
-        logger.warning(
-            "  No calibration split available; falling back to mean fold threshold=%.4f",
-            fallback_threshold,
-        )
-        return fallback_threshold
 
     fold_probs = []
     loaded_fold_ids = []

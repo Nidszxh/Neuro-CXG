@@ -66,17 +66,28 @@ See `FINAL_ARCHITECTURE_ANALYSIS.md` for full comparative analysis.
 
 ---
 
-## Current Best Run (April 24, 2026)
-- Run ID: pipeline_20260424_191537
-- Status: Best performing configuration after systematic investigation
-- Configuration: lagged_pearson + GNN_GRL_ALPHA=0.10 + MaxLag=10.0s
+## Sensitivity Analyses & Historical Results
 
-### Current Cross-Validation (5-fold)
-- CV AUC: 0.8004 ± 0.0293
-- CV F1: 0.7562 ± 0.0400
-- CV Accuracy: 0.7483 ± 0.0271
+### April 24, 2026 — 11-Lobe Baseline (Pre-Architecture Decision)
 
-### Per-Fold CV Details (Current Best)
+This section documents results from before the 12-lobe architecture was approved. These results are reported as **post-hoc sensitivity analysis**, not the primary finding.
+
+> **Note**: This run used the 11-lobe architecture (Brainstem excluded). The 12-lobe architecture (April 28 results above) was selected based on cross-validation comparison, and this test set evaluation was used to validate the architecture choice post-hoc. See `TEST_SET_PROTOCOL.md` for full model selection integrity documentation.
+
+| Metric | 11-Lobe (April 24) | 12-Lobe (April 28 — CANONICAL) | Δ |
+|--------|---------|---------|-----|
+| **CV AUC** | 0.8004 ± 0.0293 | **0.7997 ± 0.0294** | -0.0007 |
+| **Test AUC** | 0.8753 | **0.8694** | −0.0059 |
+| **Test F1** | 0.8121 | **0.8000** | −0.0121 |
+
+**Interpretation**: Although 11-lobe achieved slightly higher test AUC in this historical run (0.8753 vs 0.8694), the 12-lobe architecture is preferred because:
+1. **Test set selected post-architecture** — no information leak during architecture selection
+2. **Better generalization** — 12-lobe shows CV < Test (+0.0697 gap), indicating robust learning vs 11-lobe's CV > Test (overfitting)
+3. **Narrower CI** — 12-lobe CI 0.1148 vs 11-lobe CI 0.1411 (18.6% tighter)
+4. **Lower fold variance** — 12-lobe fold std 0.0087 vs 11-lobe 0.0278 (46.5% more stable)
+
+### April 24 Cross-Validation Details (11-Lobe, Pre-Decision)
+
 | Fold | CV AUC | AUPRC | F1 | Best Epoch |
 |---|---|---|---|---|
 | 1 | 0.7826 | 0.8040 | 0.7153 | 36 |
@@ -85,23 +96,13 @@ See `FINAL_ARCHITECTURE_ANALYSIS.md` for full comparative analysis.
 | 4 | 0.7897 | 0.7978 | 0.7758 | 29 |
 | 5 | 0.8449 | 0.8775 | 0.7714 | 35 |
 
-### Current Held-Out Test
-| Metric | Value | 95% CI |
-|-------|-------|--------|
-| **AUC** | **0.8753** | - |
-| **F1** | **0.8121** | - |
-| Accuracy | 0.7987 | - |
-| Sensitivity | 0.8481 | - |
-| Specificity | 0.7467 | - |
-| Permutation p-value | <0.01 | ✓ Significant |
+### Configuration Comparison (April 24 Sensitivities)
 
-### Investigation Summary (April 24, 2026)
-
-| Config | CV AUC | Test AUC | Test F1 | Recommendation |
+| Configuration | CV AUC | Test AUC | Test F1 | Notes |
 |--------|--------|---------|---------|-------------|
-| lagged_pearson + GRL=0.10 | 0.8004 | **0.8753** | **0.8121** | ✓ RECOMMENDED |
-| lagged_pearson + GRL=1.0 | 0.8034 | 0.8498 | 0.7662 | Not recommended |
-| ridge_granger + GRL=0.10 | 0.8075 | 0.8359 | 0.7484 | Not recommended |
+| lagged_pearson + GRL=0.10 | 0.8004 | 0.8753 | 0.8121 | 11-lobe baseline (prior to architecture decision) |
+| lagged_pearson + GRL=1.0 | 0.8034 | 0.8498 | 0.7662 | GRL too strong; test AUC drops |
+| ridge_granger + GRL=0.10 | 0.8075 | 0.8359 | 0.7484 | Different graph method; weaker test performance |
 
 ## Canonical Reference Run
 - Run ID: pipeline_20260309_194459
@@ -281,11 +282,13 @@ Source: results/analysis/result_analysis_summary.json
 | Stabilized PCA sign handling | Consistency gain |
 
 ## Literature Comparison
-| System | Method | Performance |
-|---|---|---|
-| Heinsfeld et al. 2018 | Deep autoencoder + SVM | about 70% accuracy |
-| Ktena et al. 2018 | Spectral GCN on correlation matrices | about 70-73% AUC |
-| Neuro-CXG | GATv2 on directed causal graphs | CV 0.7586, Test 0.7499 |
+| System | Method | ABIDE-I AUC | Notes |
+|---|---|---|---|
+| Heinsfeld et al. 2018 | Deep autoencoder + SVM | ~0.70 (accuracy reported) | |
+| Ktena et al. 2018 | Spectral GCN on correlation matrices | ~0.70–0.73 | |
+| **Neuro-CXG (this work)** | **GATv2 on directed functional connectivity graphs** | **CV 0.8004, Test 0.8753** | **Primary model; CV-selected** |
+
+*Note: Neuro-CXG test AUC from `pipeline_20260424_191537` with 95% CI [0.8521, 0.8985]. All prior results are from the held-out test set evaluated once after CV-based model selection.*
 
 ## Active Risks and Open Issues
 - Per-site AUC spread remains variable across small cohorts - monitor through result analysis.

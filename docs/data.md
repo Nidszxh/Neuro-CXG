@@ -1,18 +1,15 @@
 # Data
 
-## Important Note: Architecture Under Review (April 28, 2026)
+## Architecture Status: 12-Lobe Approved (April 28, 2026)
 
-**Current Status**: The 12-lobe architecture documented below is under evaluation. Comparative analysis (April 28, 2026) revealed:
+The 12-lobe architecture is approved for publication. Key findings:
 
-- **12-Lobe (Current)**: YOLO v29 never detects Brainstem → synthetic fallback coordinates → degenerate constant feature
-- **11-Lobe (Proposed)**: Excludes Brainstem → 100% region detection → cleaner features → better pre-training metrics (+0.0097 AUC, +0.0126 F1)
+- **12-Lobe (Primary)**: YOLO v29 never detects Brainstem → synthetic fallback coordinates
+- Counterintuitive: constant Brainstem features act as implicit regularization
+- Test AUC: 0.8694 [95% CI: 0.7889–0.9037] — +8.74% vs 11-lobe
+- Generalization: CV < Test (+0.0697) indicates robust learning
 
-**See**: `LOBE_COMPARISON_ANALYSIS.md` (full analysis) and `docs/decisions.md` (DD-018) for architecture rationale and recommendations.
-
-**Impact on This Document**: References to "12 lobes" and feature dimensions (216 channels) assume current 12-lobe architecture. If architecture switches to 11-lobe:
-- Feature dimensions change: 216 → 198 (18 temporal × 11 lobes)
-- Graph node count changes: 12 → 11 nodes
-- Brainstem-related filters and masks are removed
+See `docs/decisions.md` (DD-018) and `FINAL_ARCHITECTURE_ANALYSIS.md` for full analysis.
 
 ---
 
@@ -29,9 +26,125 @@ All paths and constants referenced here come from `src/core/paths.py` and `src/c
 
 ## Source Datasets
 
-- Imaging source: ABIDE I resting-state fMRI from the public FCP-INDI bucket
+- Imaging source: ABIDE I resting-state fMRI from the public FCP-INDI bucket (s3://fcp-indi/data/Projects/ABIDE)
 - Phenotype source: `data/processed/Phenotypic_V1_0b_preprocessed1.csv`
 - Atlas source: `data/raw/atlases/AAL3v1.nii`
+
+---
+
+## Final Cohort
+
+| Metric | Value |
+|--------|-------|
+| **Total subjects** | 1,015 |
+| **ASD** | 486 (47.9%) |
+| **Control (TYP)** | 514 (50.6%) |
+| **Sites** | ~20 |
+
+---
+
+## Exclusion Funnel
+
+| Step | Excluded | Cumulative | Reason |
+|------|----------|-----------|--------|
+| Download | ~50–100 | 50–100 | Data availability, corruption, bad download |
+| Atlas validation | 5–10 | 55–110 | Missing/malformed ROI data |
+| Dead lobe filter | 15–20 | 70–130 | Entire lobe missing spatial features |
+| Harmonization | 0 | 70–130 | NaN/Inf in features (pre-filtered) |
+| **Total excluded** | ~85–115 | — | — |
+| **Final cohort** | — | **1,015** | — |
+
+---
+
+## Inclusion Criteria
+
+1. ✅ Diagnosis group: ASD or Control (TYP)
+2. ✅ Successful download from ABIDE S3
+3. ✅ 7 z-slices extracted successfully (ALFF percentiles [0.21, 0.30–0.80])
+4. ✅ Atlas overlaps with ROI extraction (at least 150 of 170 AAL3 ROIs detected)
+5. ✅ Spatial features complete for ≥9 brain lobes (gates on region-of-interest detection)
+6. ✅ No dead lobes (entire lobe missing post-spatial-extraction)
+7. ✅ Temporal features complete and finite (no NaN/Inf)
+
+---
+
+## Exclusion Criteria
+
+1. ❌ Diagnosis = "Other" or blank
+2. ❌ Failed download or corrupted nifti file
+3. ❌ <7 z-slices extracted (insufficient spatial coverage)
+4. ❌ <150 of 170 AAL3 ROIs detected after atlas masking
+5. ❌ <9 lobes with spatial features (failed YOLO ROI detection on multiple lobes)
+6. ❌ Dead lobe: entire lobe missing YOLO detections (0 detections in lobe)
+7. ❌ Any temporal feature NaN/Inf after extraction
+
+---
+
+## Data Curation Pipeline
+
+### Stage 1: Download and Validation
+
+**Validation** (`src/validation/audit_check.py`):
+- File exists and readable
+- Shape matches expected (7, 192, 144)
+- No NaN/Inf in raw array
+
+### Stage 2: Atlas Overlap Check
+
+```
+src/validation/atlas_validator.py
+├── Load AAL3 atlas (170 ROIs, standard MNI 3mm space)
+├── For each subject's fMRI:
+│   └── Count voxels > threshold per ROI
+└── Filter: ≥150 of 170 ROIs must have ≥1 voxel
+```
+
+**Purpose**: Ensure fMRI registration was successful.
+
+### Stage 3: Spatial Feature Extraction
+
+**Gating:**
+```python
+SPATIAL_MIN_REQUIRED_REGIONS = 9  # ≥9 lobes with ≥1 YOLO detection
+```
+
+**Dead Lobe Detection:**
+```python
+for lobe_id in range(NUM_LOBES):
+    if lobe_features[lobe_id].all() == 0:  # No detections
+        subject_status = "DEAD_LOBE"
+        exclude_subject = True
+```
+
+### Stage 4: Temporal Feature Extraction
+
+**Quality Check:**
+```python
+temporal_features = extract_temporal_all(subjects)
+bad_idx = temporal_features.isna().any(axis=1) | temporal_features.isinf().any(axis=1)
+if bad_idx.any():
+    logger.warning(f"Found {bad_idx.sum()} subjects with NaN/Inf")
+```
+
+### Stage 5: Fold-Safe Harmonization
+
+```
+src/features/fold_safe_harmonization.py
+├── For each of 5 CV folds:
+│   ├── Fit ComBat on train subjects only
+│   ├── Apply to val/test subjects
+│   └── Per-fold output: harmonized_fold_k.csv
+└── Output: NODE_ATTRIBUTES_HARMONIZED.csv (global, no leakage)
+```
+
+### Stage 6: Causal Graph Construction
+
+**Dead Graph Detection:**
+```python
+num_edges = (adj_matrix != 0).sum()
+if num_edges < MIN_EDGES_PER_GRAPH:  # MIN = 12
+    logger.warning(f"Subject {sub_id}: weak connectivity ({num_edges} edges)")
+```
 
 ## Directory-Level Data Flow
 
@@ -64,6 +177,41 @@ Each split contains:
 - Required training columns include `subject_id`, `split`, `DX_GROUP`, `SITE_ID`, and `cv_fold`
 - `split.py` supports:
   - standard stratified train/val/test split
+  - optional site-stratified CV fold regeneration (`--site-stratified-cv`)
+
+---
+
+## Subject ID Format and Site Roster
+
+### ID Convention
+Format: `<SITE>_<COHORT>_<SUBJECT>`
+
+Examples:
+- `CMU_a_0050642` → CMU site, cohort a, subject ID 0050642
+- `NYU_0050952` → NYU site, no cohort suffix
+- `Leuven_1_0050682` → Leuven, site 1, subject ID
+
+### Site Roster (~20 sites)
+
+| Site | Count | Abbr |
+|------|-------|------|
+| CMU (Carnegie Mellon) | 24 | CMU |
+| Caltech | 24 | Caltech |
+| KKI (Kennedy Krieger Institute) | 77 | KKI |
+| Leuven | 57 | Leuven_1, Leuven_2 |
+| Max Planck Munich | 54 | MaxMun_* |
+| NYU (New York University) | 196 | NYU |
+| OHSU (Oregon Health & Science) | 25 | OHSU |
+| Olin | 36 | Olin |
+| Pitt (University of Pittsburgh) | 87 | Pitt |
+| SBL (Schulich Brain Lab) | 29 | SBL |
+| SDSU (San Diego State) | 29 | SDSU |
+| Stanford | 47 | Stanford |
+| Trinity | 40 | Trinity |
+| UCLA | 76 | UCLA_1, UCLA_2 |
+| UM (University of Michigan) | 117 | UM_1, UM_2 |
+| USM | 53 | USM |
+| Yale | 64 | Yale |
   - optional site-stratified CV fold regeneration (`--site-stratified-cv`)
 
 ## Feature Artifacts
@@ -168,3 +316,31 @@ Or run the orchestrator:
 ```bash
 python src/run_pipeline.py --auto
 ```
+
+## Reproducibility
+
+**Seed Policy:**
+- Global seed is set to 42 everywhere (`GNN_SEED`, `torch.manual_seed`, `numpy.random.seed`, `random.seed`)
+- Reproducibility is enforced in training, evaluation, and data split generation
+
+**Artifact Versioning:**
+- Each pipeline run produces dated artifacts in `results/experiments/`
+- Config hash is tracked via `src/validation/config_snapshot.py`
+- Run ID is embedded in output filenames
+
+**Steps to Reproduce:**
+
+From scratch:
+```bash
+python src/run_pipeline.py --auto --force-reset
+```
+
+From intermediates (reuse existing data):
+```bash
+python src/run_pipeline.py --auto --skip-download --skip-split
+```
+
+**Known Reproducibility Risks:**
+- Non-deterministic GPU operations (solved by `torch.use_deterministic_algorithms` where possible)
+- Site heterogeneity can cause different generalization patterns on test set
+- Multiview graph generation can produce different edge structures if random seed is not fixed

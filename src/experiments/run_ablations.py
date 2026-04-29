@@ -206,12 +206,8 @@ def build_pearson_graphs(output_dir: Path) -> bool:
     # TODO: Refactor to use dependency injection.
     import src.features.construct_causal as cc_mod
 
-    original_method = cc_mod.CAUSALITY_METHOD
-    original_dir = cc_mod.CAUSAL_GRAPHS_DIR
 
     try:
-        cc_mod.CAUSALITY_METHOD = "lagged_pearson"
-        cc_mod.CAUSAL_GRAPHS_DIR = output_dir
         logger.info(f"  Method override : {original_method} → lagged_pearson")
         logger.info(f"  Output dir      : {output_dir}")
 
@@ -222,7 +218,7 @@ def build_pearson_graphs(output_dir: Path) -> bool:
         manifest = pd.read_csv(MASTER_MANIFEST)
         success, failed = 0, 0
         for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Building Pearson graphs"):
-            result = cc_mod.construct_graph(row["subject_id"], row["split"])
+            result = cc_mod.construct_graph(row["subject_id"], row["split"], method="lagged_pearson", output_dir=output_dir)
             if result:
                 success += 1
             else:
@@ -232,8 +228,7 @@ def build_pearson_graphs(output_dir: Path) -> bool:
         return success > 0
 
     finally:
-        cc_mod.CAUSALITY_METHOD = original_method
-        cc_mod.CAUSAL_GRAPHS_DIR = original_dir
+        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -255,12 +250,8 @@ def build_ridge_granger_graphs(output_dir: Path) -> bool:
     # Monkey-patch the module-level constant in construct_causal
     import src.features.construct_causal as cc_mod
 
-    original_method = cc_mod.CAUSALITY_METHOD
-    original_dir = cc_mod.CAUSAL_GRAPHS_DIR
 
     try:
-        cc_mod.CAUSALITY_METHOD = "ridge_granger"
-        cc_mod.CAUSAL_GRAPHS_DIR = output_dir
         logger.info(f"  Method override : {original_method} → ridge_granger")
         logger.info(f"  Output dir      : {output_dir}")
 
@@ -271,7 +262,7 @@ def build_ridge_granger_graphs(output_dir: Path) -> bool:
         manifest = pd.read_csv(MASTER_MANIFEST)
         success, failed = 0, 0
         for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Building Ridge Granger graphs"):
-            result = cc_mod.construct_graph(row["subject_id"], row["split"])
+            result = cc_mod.construct_graph(row["subject_id"], row["split"], method="ridge_granger", output_dir=output_dir)
             if result:
                 success += 1
             else:
@@ -281,8 +272,7 @@ def build_ridge_granger_graphs(output_dir: Path) -> bool:
         return success > 0
 
     finally:
-        cc_mod.CAUSALITY_METHOD = original_method
-        cc_mod.CAUSAL_GRAPHS_DIR = original_dir
+        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────

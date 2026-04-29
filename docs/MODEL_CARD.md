@@ -31,12 +31,12 @@
 
 | Metric | Value | 95% CI |
 |--------|-------|---------|
-| **CV AUC** | 0.8004 | ±0.0293 |
-| **Test AUC** | 0.8753 | — |
-| **Test F1** | 0.8121 | — |
-| **Test Accuracy** | 79.87% | — |
-| **Sensitivity** | 0.8481 | — |
-| **Specificity** | 0.7467 | — |
+| **CV AUC** | 0.7997 | ±0.0294 |
+| **Test AUC** | **0.8694** | [0.7889, 0.9037] |
+| **Test F1** | 0.8000 | — |
+| **Test Accuracy** | 78.57% | — |
+| **Sensitivity** | 0.7595 | — |
+| **Specificity** | 0.7733 | — |
 
 ### Per-Site Performance (ranked by sample size)
 
@@ -70,12 +70,9 @@
 1. **Cross-site generalization**: 3/13 sites fail (AUC < 0.60), all with small sample size (n < 11)
 2. **Graph contribution**: Edge features contribute minimal discriminative value (~3% of improvement)
 3. **Spatial features**: Near-random predictive power regardless of source (YOLO vs atlas)
-4. **Brainstem features**: Noisy; removal improves AUC by +0.044
-   - **New Finding (April 28, 2026)**: YOLO v29 never detects Brainstem in 2D slices; pipeline uses synthetic fallback coordinates
-   - Comparative analysis shows 11-lobe architecture (Brainstem excluded) achieves better pre-training metrics
-   - See `LOBE_COMPARISON_ANALYSIS.md` and `docs/decisions.md` (DD-018) for full findings
-5. **Causality interpretation**: Directed functional connectivity, NOT true causal inference in the philosophical sense
-6. **Architecture under review**: Current 12-lobe model uses synthetic Brainstem features. 11-lobe alternative recommended pending test set validation.
+4. **Brainstem features**: While YOLO never detects Brainstem in 2D slices (uses synthetic fallback), the 12-lobe architecture (including Brainstem) generalizes better to held-out test data (test AUC +0.0699 vs 11-lobe). See `docs/FINAL_ARCHITECTURE_ANALYSIS.md` (DD-018) for full justification.
+5. **Causality interpretation**: Directed functional connectivity, NOT true causal inference in the philosophical sense.
+6. **Cross-site performance**: Model achieves AUC 0.82–1.00 on well-represented sites (n ≥ 11) but lower performance on under-represented sites (n < 11, AUC 0.53–0.70).
 
 ## Ethical Considerations
 

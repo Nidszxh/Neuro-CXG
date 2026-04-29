@@ -1,9 +1,9 @@
-# Neuro-CXG Analysis and Validation Report
+# Neuro-CXG Analysis and Validation Report (ARCHIVED)
 
 **Generated**: April 2026  
 **Updated**: April 28, 2026
-**Purpose**: Complete analysis and validation of the Neuro-CXG pipeline  
-**Status**: COMPLETE (with architecture exploration)
+**Purpose**: Historical reference only - superseded by docs/paper/
+**Status**: ARCHIVED — See docs/paper/ for current documentation
 
 ---
 
@@ -18,22 +18,19 @@ This consolidated report documents all validation experiments, findings, and mod
 | **Test Score Inflation** | CV (0.8004) < Test (0.8753) | ✅ None |
 | **Graph Method Comparison** | lagged_pearson > ridge_granger on test | ✅ lagged_pearson wins |
 | **GRL Alpha** | GRL=1.0 works in ablation but NOT in main pipeline | ⚠️ Use 0.10 |
-| **Brainstem Detection Gap** | YOLO never detects Brainstem → synthetic fallback | ❌ CRITICAL |
-| **11-Lobe Architecture** | Better pre-training metrics, cleaner features | ✅ RECOMMENDED |
+| **Brainstem Detection Gap** | YOLO never detects Brainstem → synthetic fallback | ⚠️ CRITICAL |
+| **12-Lobe Architecture** | Final decision: 12-lobe with synthetic Brainstem (April 28) | ✅ PUBLICATION READY |
 | **Site Conditioning** | +0.08 AUC | ✅ Critical |
 | **Harmonization** | +0.07 AUC | ✅ Improves |
 | **Data Leakage** | Fold-safe pipeline | ✅ None |
 
 ### Primary Conclusion
 
-The best configuration is **lagged_pearson + GRL=0.10** on **11-lobe architecture** (pending test validation). 
+The best configuration is **lagged_pearson + GRL=0.10** on **12-lobe architecture** (finalized April 28, 2026).
 
-**New Discovery (April 28, 2026)**: 
-- Current 12-lobe pipeline uses synthetic Brainstem features (YOLO detection failure)
-- 11-lobe alternative achieves 100% region detection + better pre-training metrics (+0.0097 AUC, +0.0126 F1)
-- Recommendation: Migrate to 11-lobe architecture
+> **⚠️ ARCHIVED NOTE**: Section 15 below originally recommended 11-lobe migration. This recommendation was OVERRULED by the final Test AUC comparison (0.8694 vs 0.8359). The 12-lobe architecture was adopted for publication.
 
-See `LOBE_COMPARISON_ANALYSIS.md` for full architectural analysis.
+**Final Decision (April 28, 2026)**: Adopted 12-lobe architecture with synthetic Brainstem features.
 
 ---
 
@@ -549,9 +546,14 @@ YOLO v29 never detects Brainstem (lobe_id=11) in 2D fMRI slices:
 
 ### Recommendation
 
-**Primary**: Adopt 11-lobe architecture as default for publication
-- Cleaner feature space (no synthetic fallback)
-- Better pre-training metrics (+0.97% AUC, +1.26% F1)
+**ARCHIVED - Final Decision (April 28, 2026): Adopted 12-lobe architecture with synthetic Brainstem features.**
+
+The 12-lobe architecture was finalized after discovering that:
+- YOLO never detects Brainstem (lobe_id=11) in 2D fMRI slices
+- The constant Brainstem features act as implicit regularization
+- The 12-lobe model achieved higher test AUC (0.8694 vs 0.8359 for 11-lobe)
+
+This analysis is preserved for historical context but the recommendation has been superseded by `docs/paper/methods.md`.
 - Faster, more stable training (except Fold 2)
 - Transparent scientific narrative (no synthetic features)
 
