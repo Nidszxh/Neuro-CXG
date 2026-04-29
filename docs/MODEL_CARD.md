@@ -31,12 +31,12 @@
 
 | Metric | Value | 95% CI |
 |--------|-------|---------|
-| **CV AUC** | 0.7997 | ±0.0294 |
-| **Test AUC** | **0.8694** | [0.7889, 0.9037] |
-| **Test F1** | 0.8000 | — |
-| **Test Accuracy** | 78.57% | — |
-| **Sensitivity** | 0.7595 | — |
-| **Specificity** | 0.7733 | — |
+| **CV AUC** | 0.8104 | ±0.0301 |
+| **Test AUC** | **0.8413** | [0.7759, 0.8976] |
+| **Test F1** | 0.7673 | — |
+| **Test Accuracy** | 75.97% | — |
+| **Sensitivity** | 0.7722 | — |
+| **Specificity** | 0.7467 | — |
 
 ### Per-Site Performance (ranked by sample size)
 

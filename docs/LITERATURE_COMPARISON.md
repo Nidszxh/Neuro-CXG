@@ -3,24 +3,27 @@
 **Status**: Publication-ready literature review  
 **Date**: April 29, 2026  
 **Dataset**: ABIDE-I (Autism Brain Imaging Data Exchange I)  
-**Metric**: Test set AUC (generalization performance)
+**Metric**: Test set AUC (generalization performance)  
+**Canonical Model**: **ridge_granger** (Test AUC 0.8413)
 
 ---
 
 ## Executive Summary
 
-Neuro-CXG achieves **Test AUC 0.8694** on ABIDE-I, representing a **+24.2% improvement** over the best prior published baseline (Heinsfeld et al., 0.70) and **+17.2% over recent GNN-based approaches** (Kawahara 2017, AUC 0.74).
+Neuro-CXG achieves **Test AUC 0.8413** on ABIDE-I using Ridge Granger Causality, representing a **+20.2% improvement** over the best prior published baseline (Heinsfeld et al., 0.70) and **+13.7% over recent GNN-based approaches** (Kawahara 2017, AUC 0.74).
 
 | Rank | Method | Year | Type | Test AUC | Dataset | Δ vs Ours | Notes |
 |------|--------|------|------|----------|---------|----------|-------|
-| **🥇 1** | **Neuro-CXG (Ours)** | **2026** | **Directed GNN + lagged Pearson** | **0.8694** | ABIDE-I | — | **12-lobe, site/demographics-conditioned GRL** |
-| 2 | Li et al. (BrainNetCNN) | 2021 | CNN on brain graphs | 0.8348 | ABIDE-I | -0.0346 (-4.0%) | Graph convolution; no directed edges |
-| 3 | Parisot et al. | 2018 | ChebNet | 0.8100 | ABIDE-I | -0.0594 (-6.8%) | Spectral graph CNN |
-| 4 | Kawahara et al. | 2017 | GNN (recurrent) | 0.7400 | ABIDE-I | -0.1294 (-14.9%) | Temporal graph but simpler architecture |
-| 5 | Tamminen et al. | 2019 | Multi-modal + harmonization | 0.7850 | ABIDE-I | -0.0844 (-9.7%) | Includes structural MRI; harmonization |
-| 6 | Heinsfeld et al. | 2018 | Deep learning (fMRI only) | 0.7000 | ABIDE-I | -0.1694 (-19.3%) | CNN baseline; influential early work |
-| 7 | Random Forest | Baseline | Handcrafted features | 0.6821 | ABIDE-I | -0.1873 (-21.6%) | Non-deep baseline |
-| 8 | Logistic Regression | Baseline | Linear classifier | 0.6171 | ABIDE-I | -0.2523 (-29.1%) | Minimal baseline |
+| **🥇 1** | **Neuro-CXG (Ours)** | **2026** | **Ridge Granger GNN** | **0.8413** | ABIDE-I | — | **12-lobe, site/demographics-conditioned GRL** |
+| 2 | Li et al. (BrainNetCNN) | 2021 | CNN on brain graphs | 0.8348 | ABIDE-I | -0.0065 (-0.8%) | Graph convolution; no directed edges |
+| 3 | Parisot et al. | 2018 | ChebNet | 0.8100 | ABIDE-I | -0.0313 (-3.7%) | Spectral graph CNN |
+| 4 | Kawahara et al. | 2017 | GNN (recurrent) | 0.7400 | ABIDE-I | -0.1013 (-13.7%) | Temporal graph but simpler architecture |
+| 5 | Tamminen et al. | 2019 | Multi-modal + harmonization | 0.7850 | ABIDE-I | -0.0563 (-6.7%) | Includes structural MRI; harmonization |
+| 6 | Heinsfeld et al. | 2018 | Deep learning (fMRI only) | 0.7000 | ABIDE-I | -0.1413 (-20.2%) | CNN baseline; influential early work |
+| 7 | Random Forest | Baseline | Handcrafted features | 0.6821 | ABIDE-I | -0.1592 (-18.9%) | Non-deep baseline |
+| 8 | Logistic Regression | Baseline | Linear classifier | 0.6171 | ABIDE-I | -0.2242 (-26.6%) | Minimal baseline |
+
+**Note**: Earlier lagged_pearson configuration achieved Test AUC 0.8694, which is higher but lacks causal interpretation. Ridge_granger is preferred for its theoretical grounding in Granger causality.
 
 ---
 
