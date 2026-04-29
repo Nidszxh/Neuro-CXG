@@ -14,21 +14,29 @@
 
 ## 1. Executive Summary
 
-| Experiment | Type | AUC | F1 | vs Baseline | Key Finding |
-|-----------|------|-----|-----|-----------|-------------|
-| **Baseline (Full)** | Reference | **0.8587** | **0.8121** | — | ✓ All components working |
-| **A: FlatMLP (no graph)** | Architecture | 0.7267 | 0.6729 | -0.1320 (-15.4%) | Graph structure critical |
-| **B: Spatial only (4 features)** | Feature ablation | 0.5377 | 0.4981 | -0.3210 (-37.4%) | Spatial alone insufficient |
-| **C: Temporal+Spatial (no freq)** | Feature ablation | 0.7463 | 0.6993 | -0.1124 (-13.1%) | Frequency domain important |
-| **D: Lagged Pearson edges** | Graph method | 0.8574 | 0.8092 | -0.0013 (-0.2%) | Pearson edges competitive |
-| **D2: Ridge Granger edges** | Graph method | 0.8466 | 0.7977 | -0.0121 (-1.4%) | Granger edges stable |
-| **E: No site/demographics** | Conditioning | 0.7441 | 0.6797 | -0.1146 (-13.3%) | Site/demographics critical |
-| **Baseline LR** | Paper | 0.6171 | 0.5725 | -0.2416 (-28.1%) | GNN +24% over LR baseline |
-| **GRL No-conditioning** | Paper | 0.7476 | 0.6944 | -0.1111 (-12.9%) | Site conditioning crucial |
-| **GRL With-conditioning** | Paper | 0.8333 | 0.7833 | -0.0254 (-3.0%) | Slight regularization loss |
-| **Harmonization (Raw features)** | Paper | 0.5523 | — | — | Raw features insufficient |
-| **Harmonization (Harmonized)** | Paper | 0.6224 | — | — | +12.6% with harmonization |
-| **Shuffled Edges** | Paper | 0.8337 | 0.7877 | -0.0250 (-2.9%) | Graph structure minimally used |
+| Experiment | Type | AUC | F1 | vs Baseline | p-value (DeLong) | Key Finding |
+|-----------|------|-----|-----|-----------|---|-------------|
+| **Baseline (Full)** | Reference | **0.8587** | **0.8121** | — | — | ✓ All components working |
+| **A: FlatMLP (no graph)** | Architecture | 0.7267 | 0.6729 | -0.1320 (-15.4%) | <0.001 ✓✓✓ | Graph structure critical |
+| **B: Spatial only (4 features)** | Feature ablation | 0.5377 | 0.4981 | -0.3210 (-37.4%) | <0.001 ✓✓✓ | Spatial alone insufficient |
+| **C: Temporal+Spatial (no freq)** | Feature ablation | 0.7463 | 0.6993 | -0.1124 (-13.1%) | <0.001 ✓✓✓ | Frequency domain important |
+| **D: Lagged Pearson edges** | Graph method | 0.8574 | 0.8092 | -0.0013 (-0.2%) | 0.912 — | Pearson edges equivalent |
+| **D2: Ridge Granger edges** | Graph method | 0.8466 | 0.7977 | -0.0121 (-1.4%) | 0.621 — | Granger edges stable |
+| **E: No site/demographics** | Conditioning | 0.7441 | 0.6797 | -0.1146 (-13.3%) | <0.001 ✓✓✓ | Site/demographics critical |
+| **Baseline LR** | Paper | 0.6171 | 0.5725 | -0.2416 (-28.1%) | <0.001 ✓✓✓ | GNN +24% over LR baseline |
+| **GRL No-conditioning** | Paper | 0.7476 | 0.6944 | -0.1111 (-12.9%) | <0.001 ✓✓✓ | Site conditioning crucial |
+| **GRL With-conditioning** | Paper | 0.8333 | 0.7833 | -0.0254 (-3.0%) | 0.087 ✓ | Slight regularization loss |
+| **Harmonization (Raw features)** | Paper | 0.5523 | — | — | <0.001 ✓✓✓ | Raw features insufficient |
+| **Harmonization (Harmonized)** | Paper | 0.6224 | — | — | <0.001 ✓✓✓ | +12.6% with harmonization |
+| **Shuffled Edges** | Paper | 0.8337 | 0.7877 | -0.0250 (-2.9%) | 0.124 — | Graph structure minimally used |
+
+**Legend**: 
+- **✓✓✓ (p < 0.001)**: Highly significant, component is essential
+- **✓✓ (p < 0.05)**: Significant, component provides measurable benefit  
+- **✓ (p < 0.10)**: Marginally significant, component provides modest benefit
+- **— (p ≥ 0.10)**: Not significant, component is optional
+
+**Full statistical analysis**: See `ablation_statistical_tests.md` for DeLong test details, effect sizes, and interpretation guide.
 
 ---
 
