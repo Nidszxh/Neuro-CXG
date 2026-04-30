@@ -36,12 +36,25 @@ data/metadata/node_features_3d.feather
 data/metadata/node_features_3d_harmonized.feather
 data/metadata/harmonized_folds_cv/harmonized_fold_*.feather
 
+# --- Large Data CSVs (LEAKED: removed from git history 2026-04-30) ---
+*.backup
+data/metadata/node_attributes_temporal.csv
+data/metadata/node_attributes_harmonized.csv
+data/metadata/node_features_3d.csv
+data/metadata/node_features_3d_harmonized.csv
+data/metadata/harmonized_folds_cv/harmonized_fold_[0-4].csv
+data/metadata/harmonized_folds_cv/fold[0-4]_train_lobes.csv
+data/metadata/harmonized_folds_cv/fold[0-4]_val_lobes.csv
+
 # --- Config Noise (LEAKED: removed from git history 2026-04-30) ---
 hash1.json
 hash2.json
 
 # --- Training History (LEAKED: removed from git history 2026-04-30) ---
 results/experiments/training/training_history_fold*.json
+
+# --- Subject Analysis (LEAKED: removed from git history 2026-04-30) ---
+results/subject_analysis/
 
 # --- Project Data Directories ---
 data/raw/**
@@ -50,20 +63,16 @@ data/final/**
 data/images/
 data/labels/
 
-# Metadata Exceptions (CSV/JSON only — no binary files)
+# Metadata Exceptions (CSV/JSON only — NO large data CSVs)
 !data/metadata/atlas_metadata.json
 !data/metadata/roi_centroids.json
 !data/metadata/master_manifest.csv
-!data/metadata/node_attributes_*.csv
 !data/metadata/active_subject_ids.txt
-!data/metadata/harmonized_folds_cv/*.csv
+!data/metadata/harmonized_folds_cv/fold_unseen_site_audit.csv
+!data/metadata/harmonized_folds_cv/harmonization_variance_retention.csv
 !data/metadata/download_log.csv
-!data/metadata/harmonization_variance_retention.csv
-!data/metadata/fold_unseen_site_audit.csv
 !data/metadata/phenotypic_manifest_1015.csv
 !data/metadata/subject_ids_1015.txt
-!data/metadata/node_features_3d.csv
-!data/metadata/node_features_3d_harmonized.csv  
 
 # --- Models & Weights ---
 models/**
@@ -79,8 +88,8 @@ yolo26n.pt
 !models/**/*.json
 
 # --- Results & Experiment Tracking ---
-results/experiments/runs/     
-results/experiments/detection/ROI_Detection_v*/  
+results/experiments/runs/
+results/experiments/detection/ROI_Detection_v*/
 mlruns/
 .mlflow/
 
@@ -120,5 +129,8 @@ chats/*
 scripts/*
 docs/internal/
 temp/
+DOCSY/
+patch_*.py
+results/analysis/per_subject_predictions.csv
 !scripts/reproduce.sh
 !scripts/verify_seeds.sh
