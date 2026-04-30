@@ -45,6 +45,8 @@ data/metadata/node_features_3d_harmonized.csv
 data/metadata/harmonized_folds_cv/harmonized_fold_[0-4].csv
 data/metadata/harmonized_folds_cv/fold[0-4]_train_lobes.csv
 data/metadata/harmonized_folds_cv/fold[0-4]_val_lobes.csv
+data/metadata/test_node_attributes_temporal.csv
+data/metadata/node_attributes_temporal.roi_coverage.json
 
 # --- Config Noise (LEAKED: removed from git history 2026-04-30) ---
 hash1.json
