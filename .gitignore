@@ -25,7 +25,23 @@ dist/
 *.zip
 *.tar*
 *.7z
-*.feather        
+*.feather
+
+# --- Metadata Cache Files (LEAKED: removed from git history 2026-04-30) ---
+*.feather
+data/metadata/master_manifest.feather
+data/metadata/node_attributes_harmonized.feather
+data/metadata/node_attributes_temporal.feather
+data/metadata/node_features_3d.feather
+data/metadata/node_features_3d_harmonized.feather
+data/metadata/harmonized_folds_cv/harmonized_fold_*.feather
+
+# --- Config Noise (LEAKED: removed from git history 2026-04-30) ---
+hash1.json
+hash2.json
+
+# --- Training History (LEAKED: removed from git history 2026-04-30) ---
+results/experiments/training/training_history_fold*.json
 
 # --- Project Data Directories ---
 data/raw/**
@@ -34,13 +50,20 @@ data/final/**
 data/images/
 data/labels/
 
-# Metadata Exceptions
+# Metadata Exceptions (CSV/JSON only — no binary files)
 !data/metadata/atlas_metadata.json
 !data/metadata/roi_centroids.json
 !data/metadata/master_manifest.csv
 !data/metadata/node_attributes_*.csv
-!data/metadata/active_subject_ids.txt     
-!data/metadata/harmonized_folds_cv/*.csv  
+!data/metadata/active_subject_ids.txt
+!data/metadata/harmonized_folds_cv/*.csv
+!data/metadata/download_log.csv
+!data/metadata/harmonization_variance_retention.csv
+!data/metadata/fold_unseen_site_audit.csv
+!data/metadata/phenotypic_manifest_1015.csv
+!data/metadata/subject_ids_1015.txt
+!data/metadata/node_features_3d.csv
+!data/metadata/node_features_3d_harmonized.csv  
 
 # --- Models & Weights ---
 models/**
@@ -96,5 +119,6 @@ dump/*
 chats/*
 scripts/*
 docs/internal/
+temp/
 !scripts/reproduce.sh
 !scripts/verify_seeds.sh
