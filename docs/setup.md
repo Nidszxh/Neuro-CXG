@@ -1,6 +1,12 @@
 # Setup
 
-## Prerequisites
+This guide covers installation, CLI usage, end-to-end workflow, and ABIDE data acquisition.
+
+---
+
+## Part A — Installation
+
+### Prerequisites
 
 | Resource | Minimum | Recommended |
 |----------|---------|-------------|
@@ -10,128 +16,57 @@
 | **GPU** | None (CPU OK) | CUDA 12.1, 8GB VRAM |
 | **Disk** | 200 GB | 500 GB SSD |
 
-## 1) Create And Activate A Virtual Environment
+### Numbered Install Steps
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
+1. **Create and activate virtual environment**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
 
-## 2) Install Dependencies
+2. **Install dependencies**
+   ```bash
+   pip install --upgrade pip
+   pip install -r requirements.txt
+   ```
+   `requirements.txt` includes: PyTorch/torchvision/torchaudio, torch-geometric, nilearn/nibabel/neuroHarmonize, ultralytics (YOLO), scikit-learn/scipy/statsmodels, captum (explainability), pytest/pytest-cov
 
-```bash
-pip install --upgrade pip
-pip install -r requirements.txt
-```
+3. **Validate runtime environment**
+   ```bash
+   python -c "from src.core.config import validate_environment; validate_environment()"
+   ```
+   This validates core paths and lobe mapping invariants before pipeline execution.
 
-`requirements.txt` is pinned and includes:
+4. **Run a dry pipeline plan**
+   ```bash
+   python src/run_pipeline.py --dry-run
+   ```
+   Dry-run confirms stage planning logic, skip decisions, and current artifact readiness without executing stages.
 
-- PyTorch / torchvision / torchaudio
-- torch-geometric
-- nilearn / nibabel / neuroHarmonize
-- ultralytics (YOLO)
-- scikit-learn / scipy / statsmodels
-- captum (explainability)
-- pytest / pytest-cov
+5. **Optional fast sanity checks**
+   ```bash
+   pytest tests/unit/
+   python -m src.features.extract_temporal --n-jobs 1 --no-frequency
+   ```
 
-## 3) Validate The Runtime Environment
+### Troubleshooting Table
 
-```bash
-python -c "from src.core.config import validate_environment; validate_environment()"
-```
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `torch.cuda.is_available()` returns false | CUDA not properly configured | Verify NVIDIA driver and CUDA runtime; ensure active environment has expected torch build; continue on CPU for functional testing if needed |
+| Training fails with missing harmonized fold files | Harmonization stage not run | Run `python -m src.features.fold_safe_harmonization`; verify files exist under `data/metadata/harmonized_folds_cv/` |
+| Atlas validation or split/manifests fail | Missing input files | Verify `data/raw/atlases/AAL3v1.nii` and `data/processed/Phenotypic_V1_0b_preprocessed1.csv` exist; rerun split/manifest stages through orchestrator |
+| YOLO weights not found for spatial extraction | YOLO training stage not completed | Run label generation and ROI training stages, or switch to atlas-based spatial extraction path for debugging |
 
-This check validates core paths and lobe mapping invariants before pipeline execution.
+### Reproducibility Rules
 
-## 4) Run A Dry Pipeline Plan
-
-```bash
-python src/run_pipeline.py --dry-run
-```
-
-Dry-run confirms stage planning logic, skip decisions, and current artifact readiness without executing stages.
-
-## 5) Optional Fast Sanity Checks
-
-```bash
-pytest tests/unit/
-python -m src.features.extract_temporal --n-jobs 1 --no-frequency
-```
-
-## First Real Run Patterns
-
-```bash
-# Full non-interactive execution
-python src/run_pipeline.py --auto
-
-# Reuse existing download/split artifacts
-python src/run_pipeline.py --auto --skip-download --skip-split
-
-# Analysis stages only (requires trained checkpoints)
-python src/run_pipeline.py --analysis-only
-```
-
-## Troubleshooting
-
-### 1) CUDA not detected
-
-Symptom:
-
-- `torch.cuda.is_available()` is false
-
-Actions:
-
-- verify NVIDIA driver and CUDA runtime
-- ensure the active environment has the expected torch build
-- continue on CPU for functional testing if needed
-
-### 2) Missing training prerequisites
-
-Symptom:
-
-- training fails with missing harmonized fold files
-
-Actions:
-
-- run harmonization stage:
-
-```bash
-python -m src.features.fold_safe_harmonization
-```
-
-- verify files exist under `data/metadata/harmonized_folds_cv/`
-
-### 3) Atlas or manifest errors
-
-Symptom:
-
-- atlas validation or split/manifests fail
-
-Actions:
-
-- verify `data/raw/atlases/AAL3v1.nii`
-- verify `data/processed/Phenotypic_V1_0b_preprocessed1.csv`
-- rerun split/manifest stages through the orchestrator
-
-### 4) YOLO weights not found for spatial extraction
-
-Symptom:
-
-- `extract_spatial.py` reports missing model weights
-
-Actions:
-
-- run label generation and ROI training stages
-- or switch to atlas-based spatial extraction path for debugging
-
-## Reproducibility Rules
-
-- Import constants from `src/core/config.py`; avoid hardcoded paths and dimensions.
-- Keep `FEATURE_GROUPS`, `ALL_FEATURE_NAMES`, and `GNN_IN_CHANNELS` in sync when changing features.
-- Keep fold-safe behavior intact (train-fit/apply discipline in harmonization and training).
+- Import constants from `src/core/config.py`; avoid hardcoded paths and dimensions
+- Keep `FEATURE_GROUPS`, `ALL_FEATURE_NAMES`, and `GNN_IN_CHANNELS` in sync when changing features
+- Keep fold-safe behavior intact (train-fit/apply discipline in harmonization and training)
 
 ---
 
-## Usage
+## Part B — CLI Usage
 
 ### Primary Entry Point
 
@@ -143,26 +78,19 @@ python src/run_pipeline.py
 
 By default, `run_pipeline.py` is interactive. Use `--auto` for non-interactive execution.
 
-### Core Pipeline Commands
+### Run Mode Table
 
-```bash
-# Show stage plan only
-python src/run_pipeline.py --dry-run
-
-# Full non-interactive run
-python src/run_pipeline.py --auto
-
-# Reuse existing downloaded and split data
-python src/run_pipeline.py --auto --skip-download --skip-split
-
-# Run only post-training analysis stages
-python src/run_pipeline.py --analysis-only
-```
+| Mode | Command | What It Does | Expected Outputs |
+|------|---------|--------------|------------------|
+| Dry-run | `python src/run_pipeline.py --dry-run` | Show stage plan without execution | Stage plan printout |
+| Full non-interactive | `python src/run_pipeline.py --auto` | Execute all stages | All stage artifacts |
+| Reuse data | `python src/run_pipeline.py --auto --skip-download --skip-split` | Skip download/split stages | Feature → graph → train → report |
+| Analysis only | `python src/run_pipeline.py --analysis-only` | Run reporting stages only | Evaluation/explainability results |
 
 ### High-Impact Flags
 
-| Flag | What It Changes | When To Use |
-|------|-----------------|-------------|
+| Flag | Effect | When To Use |
+|------|--------|-------------|
 | `--auto` | Run all stages non-interactively | Production runs |
 | `--skip-download` | Skip ABIDE download | Already have data |
 | `--skip-split` | Skip train/val/test split | Reuse existing split |
@@ -170,6 +98,81 @@ python src/run_pipeline.py --analysis-only
 | `--site-stratified-cv` | Regenerate cv_fold by site | Cross-site robustness |
 | `--force-reset` | Clear intermediates | Full rebuild |
 | `--analysis-only` | Run reporting only | With existing checkpoints |
+| `--regenerate-features` | Rebuild feature/graph without full reset | Fast iteration |
+| `--visualizations-only` | Run visualization stage only | Generate plots |
+| `--skip-evaluation` | Skip evaluation stage | Faster runs |
+| `--skip-explainability` | Skip explainability stage | Faster runs |
+
+### Stage-Level Script Commands
+
+**Data:**
+```bash
+python -m src.data.abide_download
+python -m src.data.split
+python -m src.data.split --site-stratified-cv
+```
+
+**Labels and detection:**
+```bash
+python -m src.pipelines.generate_labels
+python -m src.pipelines.roi_detection
+```
+
+**Features and harmonization:**
+```bash
+python -m src.features.extract_spatial
+python -m src.features.extract_spatial_atlas
+python -m src.features.extract_temporal --n-jobs -1
+python -m src.features.fold_safe_harmonization
+```
+
+**Graph construction:**
+```bash
+python -m src.features.construct_causal --n-jobs -1
+python -m src.features.construct_causal --multiview
+```
+
+**Training:**
+```bash
+python -m src.models.gnn_model
+```
+
+**Post-training reporting:**
+```bash
+python src/run_evaluation.py
+python src/run_explainability.py
+python src/run_result_analysis.py
+```
+
+### Script-Specific Options
+
+#### `run_evaluation.py`
+
+| Flag | Effect |
+|------|--------|
+| `--no-permutation` | Skip permutation test |
+| `--n-permutations 200` | Set permutation count |
+| `--no-baselines` | Skip baseline comparisons |
+| `--no-subgroups` | Skip subgroup analysis |
+| `--output-dir results/evaluation_custom` | Custom output directory |
+
+#### `run_explainability.py`
+
+| Flag | Effect |
+|------|--------|
+| `--fold 2` | Use specific fold for explainability |
+| `--phases node edge` | Run only node and edge phases |
+| `--no-masking` | Skip edge masking |
+| `--output-dir results/explainability_custom` | Custom output directory |
+
+#### `run_result_analysis.py`
+
+| Flag | Effect |
+|------|--------|
+| `--n-cases 3` | Number of case studies |
+| `--no-heatmap` | Skip heatmap generation |
+| `--no-severity` | Skip severity analysis |
+| `--output-dir results/analysis_custom` | Custom output directory |
 
 ### Expected Output Artifacts Per Stage
 
@@ -187,110 +190,54 @@ python src/run_pipeline.py --analysis-only
 | evaluation | `results/evaluation/comprehensive_results.json` | JSON | Test metrics, bootstrap CI |
 | explainability | `results/explainability/summary.json` | JSON | Node/edge importance |
 
-### Stage-Level Script Commands
+### Typical Workflow Patterns
 
+**Full rebuild:**
 ```bash
-# Data
-python -m src.data.abide_download
-python -m src.data.split
-
-# Labels and detection
-python -m src.pipelines.generate_labels
-python -m src.pipelines.roi_detection
-
-# Features and harmonization
-python -m src.features.extract_spatial
-python -m src.features.extract_temporal --n-jobs -1
-python -m src.features.fold_safe_harmonization
-
-# Graph construction
-python -m src.features.construct_causal --n-jobs -1
-python -m src.features.construct_causal --multiview
-
-# Training
-python -m src.models.gnn_model
-```
-
-### Post-Training Commands
-
-```bash
-python src/run_evaluation.py
-python src/run_explainability.py
-python src/run_result_analysis.py
-```
-
-### Script-Specific Options
-
-#### Evaluation
-
-```bash
-python src/run_evaluation.py --no-permutation
-python src/run_evaluation.py --n-permutations 200
-python src/run_evaluation.py --no-baselines --no-subgroups
-python src/run_evaluation.py --output-dir results/evaluation_custom
-```
-
-#### Explainability
-
-```bash
-python src/run_explainability.py --fold 2
-python src/run_explainability.py --phases node edge
-python src/run_explainability.py --no-masking
-python src/run_explainability.py --output-dir results/explainability_custom
-```
-
-#### Result Analysis
-
-```bash
-python src/run_result_analysis.py --n-cases 3
-python src/run_result_analysis.py --no-heatmap
-python src/run_result_analysis.py --no-severity
-python src/run_result_analysis.py --output-dir results/analysis_custom
-```
-
-### Typical Workflows
-
-```bash
-# Full rebuild from current workspace state
 python src/run_pipeline.py --auto --force-reset
+```
 
-# Recompute only analysis from existing checkpoints
+**Analysis-only (with existing checkpoints):**
+```bash
 python src/run_pipeline.py --analysis-only
+```
 
-# Enable multiview artifacts for invariance experiments
+**Multiview (invariance experiments):**
+```bash
 python src/run_pipeline.py --auto --multiview
+```
+
+**Site-stratified CV:**
+```bash
+python -m src.data.split --site-stratified-cv
+python -m src.features.fold_safe_harmonization
+python -m src.models.gnn_model
 ```
 
 ---
 
-## Walkthrough
+## Part C — End-to-End Walkthrough
 
-### End-to-End Sequence
+### Numbered Sequence with Verification Checkpoints
 
 **Step 0: Preflight**
-
 ```bash
 pip install -r requirements.txt
 python -c "from src.core.config import validate_environment; validate_environment()"
 python src/run_pipeline.py --dry-run
 ```
-
-Expected: environment validation passes, dry-run prints stage plan without execution.
+Expected: Environment validation passes, dry-run prints stage plan without execution.
 
 **Step 1: Build Data, Features, Graphs, and Train**
-
 ```bash
-# Standard non-interactive run
 python src/run_pipeline.py --auto
-
-# Faster iteration (reuse existing download/split)
+```
+Or faster iteration (reuse existing download/split):
+```bash
 python src/run_pipeline.py --auto --skip-download --skip-split
 ```
 
 **Step 2: Checkpoint Verification**
-
-Verify core artifacts exist:
-
 ```bash
 ls data/metadata/master_manifest.csv
 ls data/metadata/node_attributes_harmonized.csv
@@ -298,45 +245,37 @@ ls data/metadata/harmonized_folds_cv/harmonized_fold_0.csv
 ls data/processed/causal_graphs | head
 ls models/checkpoints/best_model_fold0.pt
 ```
-
-Expected: manifest and harmonized metadata present, per-subject graph files present, fold checkpoints present.
+Expected: Manifest and harmonized metadata present, per-subject graph files present, fold checkpoints present.
 
 **Step 3: Run Post-Training Reports**
-
 ```bash
 python src/run_evaluation.py
 python src/run_explainability.py
 python src/run_result_analysis.py
 ```
-
 Or via orchestrator:
-
 ```bash
 python src/run_pipeline.py --analysis-only
 ```
 
 **Step 4: Verify Reporting Artifacts**
-
 ```bash
 ls results/evaluation/comprehensive_results.json
 ls results/explainability/summary.json
 ls results/analysis/result_analysis_summary.json
 ```
+Expected: All three summary JSON artifacts exist.
 
-Expected: all three summary JSON artifacts exist.
+### Optional Branch Commands
 
-### Optional Branches
-
-#### Site-Stratified CV Protocol
-
+**Site-Stratified CV Protocol:**
 ```bash
 python -m src.data.split --site-stratified-cv
 python -m src.features.fold_safe_harmonization
 python -m src.models.gnn_model
 ```
 
-#### Multiview Graph Path
-
+**Multiview Graph Path:**
 ```bash
 python src/run_pipeline.py --auto --multiview
 ```
@@ -352,12 +291,17 @@ python src/run_evaluation.py --no-permutation
 
 # Skip slow edge masking
 python src/run_explainability.py --no-masking
+
+# Check training prerequisites
+python -c "from src.core.config import validate_gnn_training_inputs; validate_gnn_training_inputs()"
+
+# Validate pipeline
+python -m src.validation.pipeline_checks
 ```
 
 ### Minimal Reproducible Command Set
 
 For a compact reproducible run with existing data:
-
 ```bash
 python src/run_pipeline.py --auto --skip-download --skip-split
 python src/run_evaluation.py
@@ -367,29 +311,49 @@ python src/run_result_analysis.py
 
 ---
 
-## ABIDE Data Acquisition
+## Part D — ABIDE Data Acquisition
 
-### Primary Download Method
+### Primary S3 Download Method
 
-ABIDE I data is hosted on the FCP-INDI S3 bucket:
+**Bucket:** `indiana-public-data` (public access, no credentials required)  
+**Region:** `us-east-1`  
+**Prefix:** `ABIDE_Initiative/`
 
 ```bash
 python -m src.data.abide_download
 ```
 
 This script:
-- Connects to fcp-indi bucket: `s3://fcp-indi/resources/project-specific/ABIDE/`
+- Connects to the public S3 bucket
 - Downloads preprocessed fMRI time series and phenotype CSV
 - Handles network retries and partial downloads
 - Validates downloaded artifacts
 
-### Fallback Methods
+Total size: ~150GB compressed.
+
+### Fallback Methods Table
 
 | Method | Steps | When To Use |
 |--------|-------|-------------|
-| Manual download | Download from http://fcon_1000.projects.nitrc.org/indi/abide.html | S3 access issues |
+| Pre-downloaded dataset | Use `--skip-download` flag | Already have ABIDE data locally |
+| Manual download from OpenNeuro | 1. Go to https://openneuro.org/datasets/ds000031 2. Download ~16GB zipped 3. Extract to `data/abide/` 4. Update config in `src/core/config.py` | S3 access issues |
+| Pre-processed time series only | Request from ABIDE-initiative.org, use PCA/FV extraction, place in `data/processed/` | Only need time-series data |
+| GridEngine batch job | Submit download as batch job | Large-scale distributed runs |
 | rsync | `rsync -avz user@server:/path/ data/raw/` | Local network copy |
-| GridEngine | Submit download as batch job | Large-scale distributed runs |
+
+### Dataset Version Control
+
+**CPAC Version Used:** CPAC 1.0 (filt_global preprocessing)
+
+**Preprocessing Details:**
+- Bandpass filtering: 0.01–0.1 Hz
+- Global signal regression: Yes
+- Spatial normalization: MNI152
+
+**Phenotype File:**
+- Version: 1.0b
+- File: `Phenotypic_V1_0b_preprocessed1.csv`
+- ⚠️ Checksum verification: **NOT IMPLEMENTED** — pending implementation in `abide_download.py`
 
 ### Post-Download Verification
 
@@ -402,20 +366,26 @@ Verify that download stage shows as complete in dry-run output.
 
 ### Troubleshooting
 
-#### S3 Access Denied
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| S3 access denied | IP blocked or network restriction | Check IP not blocked; try different network; use VPN if behind corporate firewall |
+| Slow downloads | Network bandwidth or regional latency | Use `--n-jobs` to parallelize downloads; consider regional AWS endpoints |
+| Data corruption | Incomplete download or network issue | Re-run download stage with `--force-reset`; verify MD5 checksums if available; use manual download fallback |
 
-- Verify AWS credentials configured: `aws configure`
-- Check bucket public access policy
-- Try manual download from Nitrc as fallback
+### Checksum Generation (Future)
 
-#### Slow Downloads
+```bash
+# After downloading phenotype CSV
+md5sum data/raw/Phenotypic_V1_0b_preprocessed1.csv
+```
 
-- Use `--n-jobs` to parallelize downloads
-- Consider regional S3 endpoints
-- Check network bandwidth
+To verify programmatically:
+```python
+import hashlib
 
-#### Data Corruption
+def verify_phenotype_checksum(csv_path, expected_md5):
+    md5 = hashlib.md5(csv_path.read_bytes()).hexdigest()
+    return md5 == expected_md5
+```
 
-- Re-run download stage with `--force-reset`
-- Verify MD5 checksums if available
-- Use manual download fallback
+⚠️ **Action Required:** Generate MD5 checksum after first clean download and update `EXPECTED_PHENO_CHECKSUMS` in `abide_download.py`.

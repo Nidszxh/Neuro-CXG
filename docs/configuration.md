@@ -1,10 +1,10 @@
 # Configuration
 
-## Purpose
-
 Neuro-CXG is configuration-driven. Runtime behavior should be changed through `src/core/*` config modules, not by hardcoding values inside stage scripts.
 
-## Configuration Topology
+---
+
+## 1) Configuration Topology
 
 `src/core/config.py` is the compatibility facade. It re-exports:
 
@@ -20,7 +20,9 @@ Recommended import pattern:
 from src.core.config import CHECKPOINT_DIR, GNN_IN_CHANNELS, EVAL_THRESHOLD_POLICY
 ```
 
-## 1) Path Configuration
+---
+
+## 2) Path Configuration
 
 Key roots defined in `src/core/paths.py`:
 
@@ -29,10 +31,10 @@ Key roots defined in `src/core/paths.py`:
 - `MODEL_ROOT`
 - `RESULTS_DIR`
 
-High-impact file paths:
+### High-Impact File Paths
 
-| Constant | Path |
-|----------|------|
+| Constant | Resolved Path |
+|----------|---------------|
 | `MASTER_MANIFEST` | `data/metadata/master_manifest.csv` |
 | `NODE_ATTRIBUTES_HARMONIZED` | `data/metadata/node_attributes_harmonized.csv` |
 | `HARMONIZED_FOLDS_DIR` | `data/metadata/harmonized_folds_cv/` |
@@ -43,36 +45,38 @@ High-impact file paths:
 | `CHECKPOINT_DIR` | `models/checkpoints/` |
 | `RESULTS_EVALUATION_DIR` | `results/evaluation/` |
 
-## 2) Feature Registry
+---
+
+## 3) Feature Registry
 
 Feature channel layout is derived from `src/core/feature_registry.py`.
 
-**Current groups:**
+### Current Groups
 
-| Group | Channels |
-|-------|----------|
-| temporal | 8 (base time-domain features) |
-| frequency | 10 (from ACTIVE_FREQ_BANDS + spectral_entropy + phase_std) |
-| internal | 2 (coherence, spatial_variance) |
-| spatial | 4 (x, y, z_depth, size) |
+| Group | Channels | Description |
+|-------|----------|-------------|
+| temporal | 8 | Base time-domain features (mean, std, skew, kurtosis, psd, mssd, range, autocorr) |
+| frequency | 10 | From `ACTIVE_FREQ_BANDS` + spectral_entropy + phase_std |
+| internal | 2 | coherence, spatial_variance |
+| spatial | 4 | x, y, z_depth, size |
 
-**Important behavior:**
+### Important Behavior
 
-- Gamma band is excluded by default:
+- **Gamma band exclusion**: Gamma band is excluded by default:
   - `UNRELIABLE_FREQ_BANDS_AT_NYQUIST = ("gamma",)`
   - `EXCLUDE_NYQUIST_BANDS = True`
-- `GNN_IN_CHANNELS` is computed dynamically from `ALL_FEATURE_NAMES` (24 total)
+- **Dynamic channel count**: `GNN_IN_CHANNELS` is computed dynamically from `ALL_FEATURE_NAMES` (24 total when gamma excluded)
 
-**Safety sentinel:**
+⚠️ **Safety sentinel for spatial channels:** `NUM_SPATIAL_FEATURES == 4` is enforced by assertion to prevent reintroducing site-leaky channels (`conf_std`, `detection_count`).
 
-- ⚠️ `NUM_SPATIAL_FEATURES == 4` is enforced by assertion to prevent reintroducing site-leaky channels (`conf_std`, `detection_count`).
+---
 
-## 3) Atlas Mapping
+## 4) Atlas Mapping
 
 Defined in `src/core/atlas_config.py`:
 
-- `LOBE_MAPPING`: maps 170 AAL ROIs into **12 lobe nodes**
-- `LOBE_NAMES`: lobe labels used across extraction, graphs, and plots
+- `LOBE_MAPPING`: Maps 170 AAL ROIs into **12 lobe nodes**
+- `LOBE_NAMES`: Lobe labels used across extraction, graphs, and plots
 - Optional hierarchy:
   - `LOBE_TO_NETWORK`
   - `NETWORK_TO_LOBES`
@@ -80,15 +84,18 @@ Defined in `src/core/atlas_config.py`:
 
 This hierarchy is used when `GNN_POOLING = "anatomical"`.
 
-**Architecture Note (May 2026) — APPROVED:**
+### Architecture Status (DD-018)
 
-- **12-Lobe is approved for publication**
+**12-Lobe is approved for publication** (April 28, 2026):
+
 - YOLO v29 never detects Brainstem → constant synthetic features act as implicit regularization
 - Test AUC: 0.8648 (ridge_granger_hybrid method)
 - See `docs/decisions.md` (DD-018) for full analysis
-- **Method:** ridge_granger_hybrid (70% Ridge Granger + 30% Lagged Pearson) — best Granger-based performance
+- **Method**: ridge_granger_hybrid (70% Ridge Granger + 30% Lagged Pearson) — best Granger-based performance
 
-## 4) Hyperparameters
+---
+
+## 5) Hyperparameters
 
 ### Causal Graph Defaults
 
@@ -105,7 +112,7 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 | `SPARSITY_TOPK_PER_NODE` | 3 | Edges per node |
 | `MIN_EDGES_PER_GRAPH` | 12 | Minimum edges |
 
-### GNN Defaults (Optimized)
+### GNN Architecture Defaults
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
@@ -121,14 +128,14 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 | `GNN_EPOCHS` | 100 | Max epochs |
 | `K_FOLDS` | 5 | CV folds |
 
-### Site Bias Controls (Optimized)
+### Site Bias Controls
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | `GNN_USE_SITE_EMBEDDING` | True | Site conditioning |
 | `GNN_USE_DEMOGRAPHICS` | True | Demographic conditioning |
-| `GNN_USE_GRL` | True | Gradient reversal |
-| `GNN_GRL_ALPHA` | **0.10** | ⚠️ CRITICAL: Do NOT increase to 1.0 - test AUC drops from 0.87 to 0.83 |
+| `GNN_USE_GRL` | True | Gradient reversal layer |
+| `GNN_GRL_ALPHA` | **0.10** | ⚠️ **CRITICAL**: Do NOT set to 1.0 — test AUC drops from 0.87 to 0.83 |
 | `GNN_GRL_ALPHA_MAX` | 1.0 | Alpha max for annealing |
 | `GNN_SITE_LOSS_WEIGHT` | 0.15 | Site loss weight |
 
@@ -153,9 +160,11 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | `EVAL_THRESHOLD_POLICY` | `"youden"` | Balanced sensitivity/specificity |
-| `EVAL_FIXED_THRESHOLD` | 0.5263 | Backward compat |
+| `EVAL_FIXED_THRESHOLD` | 0.5263 | Backward compatibility |
 
-## 5) Quality Gates and Policies
+---
+
+## 6) Quality Gates and Policies
 
 | Gate | Value | Notes |
 |------|-------|-------|
@@ -165,11 +174,13 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 | `GNN_ENFORCE_MULTIVIEW_QUALITY_GATE` | True | Block poor views |
 | `GNN_MULTIVIEW_MAX_ZERO_EDGE_RATE` | 0.20 | Max 20% zero-edge |
 | `MULTIVIEW_GENERATION_ENFORCE_QUALITY_GATE` | True | Generation-time gate |
-| `HARMONIZATION_UNSEEN_SITE_POLICY` | `"passthrough"` | Unseen sites |
+| `HARMONIZATION_UNSEEN_SITE_POLICY` | `"passthrough"` | Unseen sites pass through |
 
-## 6) Medical Integrity Constraints
+---
 
-YOLO augmentation controls are intentionally conservative:
+## 7) Medical Integrity Constraints
+
+YOLO augmentation controls are intentionally conservative to preserve anatomical left/right and spatial consistency:
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
@@ -177,18 +188,22 @@ YOLO augmentation controls are intentionally conservative:
 | `YOLO_DEGREES` | 0.0 | No rotation |
 | `YOLO_MOSAIC` | 0.0 | No mosaic |
 
-These settings preserve anatomical left/right and spatial consistency.
+---
 
-## 7) Validation Helpers
+## 8) Validation Helpers
 
-`src/core/validators.py` provides runtime checks:
+`src/core/validators.py` provides runtime checks used by the runner and training:
 
-- `validate_environment()` — core paths and lobe mapping
-- `validate_graph_construction_inputs()` — feature/graph prerequisites
-- `validate_gnn_training_inputs()` — training prerequisites
-- `get_active_checkpoint_dir()` — checkpoint resolution
+| Function | Purpose |
+|----------|---------|
+| `validate_environment()` | Core paths and lobe mapping invariants |
+| `validate_graph_construction_inputs()` | Feature/graph prerequisites |
+| `validate_gnn_training_inputs()` | Training prerequisites (harmonized files, etc.) |
+| `get_active_checkpoint_dir()` | Checkpoint resolution |
 
-## 8) Safe Change Workflow
+---
+
+## 9) Safe Change Workflow
 
 When updating config values:
 
@@ -201,17 +216,11 @@ python src/run_pipeline.py --dry-run
 
 3. Re-run affected stages only.
 4. Re-check downstream contracts:
-   - feature dimensions
-   - sentinel outputs
-   - threshold metadata alignment across evaluation scripts
+   - Feature dimensions
+   - Sentinel outputs
+   - Threshold metadata alignment across evaluation scripts
 
-## 9) Deprecated Parameters
-
-The following parameters have been removed:
-
-| Parameter | Removed | Notes |
-|-----------|---------|-------|
-| `EVAL_FREQUENCY` | v2026-04 | Use `--eval-frequency` CLI instead |
+---
 
 ## 10) Common Misconfiguration Patterns
 
@@ -219,4 +228,18 @@ The following parameters have been removed:
 - Changing output paths without updating stage sentinels in `src/pipeline/registry.py`
 - Mixing artifacts from different runs in a shared output directory
 - Switching threshold policy without regenerating evaluation artifacts
-- Setting `GNN_GRL_ALPHA = 1.0` — causes test AUC drop ⚠️
+- ⚠️ **Setting `GNN_GRL_ALPHA = 1.0`** — causes test AUC drop from 0.87 to 0.83
+
+---
+
+## 11) Deprecated Parameters
+
+| Parameter | Version Removed | Notes |
+|-----------|-----------------|-------|
+| `EVAL_FREQUENCY` | v2026-04 | Use `--eval-frequency` CLI instead |
+| `LAGGED_PEARSON_METHOD` | v2026-04 | Superseded by ridge_granger_hybrid |
+| `GNN_AUTO_GRL_GRID_SEARCH` | v2026-04 | Set to False in gap-closure wave |
+| `GNN_EDGE_CONTRASTIVE_WEIGHT` | v2026-04 | Reduced to 0.0 (disabled) |
+| `compute_granger_causality_gpu` | v2026-04 | Removed (dead code, Task 6 DD-014) |
+| `compute_transfer_entropy` | v2026-04 | Removed (dead code, Task 6 DD-014) |
+| `compute_multilag_causality` | v2026-04 | Removed (dead code, Task 6 DD-014) |
