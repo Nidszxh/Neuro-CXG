@@ -185,10 +185,10 @@ Use the smallest rebuild that restores consistency:
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| **CV AUC** | 0.8100 ± 0.0273 | 5-fold |
-| **Test AUC** | **0.8648** | Ensemble, 95% CI [~0.78–0.90] |
-| **Test F1** | **0.7682** | Youden threshold |
-| **Test Accuracy** | **0.7826** | |
+| **CV AUC** | 0.8101 ± 0.0274 | 5-fold |
+| **Test AUC** | **0.8651** | Ensemble, 95% CI [~0.78–0.90] |
+| **Test F1** | **0.7651** | Youden threshold |
+| **Test Accuracy** | **0.7727** | |
 
 **Method:** ridge_granger_hybrid (β=0.70)
 
@@ -196,11 +196,11 @@ Use the smallest rebuild that restores consistency:
 
 | Fold | AUC | F1 |
 |------|-----|-----|
-| 1 | 0.7816 | 0.7552 |
-| 2 | 0.7623 | 0.7183 |
-| 3 | 0.8215 | 0.7879 |
-| 4 | 0.7885 | 0.7758 |
-| 5 | 0.8445 | 0.7714 |
+| 1 | 0.8039 | 0.7671 |
+| 2 | 0.7833 | 0.7077 |
+| 3 | 0.8058 | 0.7682 |
+| 4 | 0.7951 | 0.6829 |
+| 5 | 0.8626 | 0.7692 |
 
 **Configuration that achieved these results:**
 
@@ -224,7 +224,7 @@ RIDGE_GRANGER_HYBRID_BETA = 0.70
 | Baseline (ridge_granger) | 0.7586 ± 0.0519 | 0.7325 | 0.6338 | Initial |
 | lagged_pearson + GRL=0.10 | 0.8004 ± 0.0293 | 0.8753 | 0.8121 | Method switch |
 | 12-Lobe Final | 0.7997 ± 0.0294 | 0.8694 | 0.8000 | 12-lobe approved |
-| **ridge_granger_hybrid** | **0.8100 ± 0.0273** | **0.8648** | **0.7682** | Current best |
+| **ridge_granger_hybrid** | **0.8101 ± 0.0274** | **0.8651** | **0.7651** | Current best |
 
 ### Metric Disagreement Guidance
 

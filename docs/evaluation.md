@@ -5,32 +5,23 @@
 ### Primary Model Identity (April 30, 2026)
 
 - **Architecture**: 12-lobe GATv2 with site-conditioned GRL (alpha=0.10)
-- **Causality method**: ridge_granger (λ=0.1, p-prune=0.10)
-- **GRL config**: alpha=0.10
-- **Note**: Previous ridge_granger_hybrid abandoned for pure ridge_granger due to better test generalization
+- **Causality method**: ridge_granger_hybrid (β=0.70, 70% Ridge Granger + 30% Lagged Pearson)
 
-### Test Results (ridge_granger, April 2026)
+- **Note**: ridge_granger_hybrid combines causal signal (Granger) with correlation strength (Pearson)
 
-| Metric | Value | 95% CI | Notes |
-|--------|-------|--------|-------|
-| **AUC** | **0.8841** | — | AUC-weighted ensemble |
-| **F1** | **0.8182** | — | Threshold-optimized (Youden) |
-| **Accuracy** | **0.7922** | — | |
-| **Sensitivity** | **0.9114** | — | True positive rate |
-| **Specificity** | **0.6667** | — | True negative rate |
-| **CV AUC** | **0.7856 ± 0.0290** | — | 5-fold cross-validation |
+### Test Results (ridge_granger_hybrid, April 2026)
 
-### Per-Fold CV Breakdown (ridge_granger)
+### Per-Fold CV Breakdown (ridge_granger_hybrid)
 
 | Fold | CV AUC | F1 | Best Epoch |
 |------|--------|-----|------------|
-| 1 | 0.7663 | 0.7162 | 36 |
-| 2 | 0.7450 | 0.7516 | 50 |
-| 3 | 0.7888 | 0.7355 | 21 |
-| 4 | 0.7967 | 0.7286 | 21 |
-| 5 | 0.8310 | 0.7213 | 41 |
+| 1 | 0.8039 | 0.7671 | 53 |
+| 2 | 0.7833 | 0.7077 | 50 |
+| 3 | 0.8058 | 0.7682 | 36 |
+| 4 | 0.7951 | 0.6829 | 29 |
+| 5 | 0.8626 | 0.7692 | 37 |
 
-**CV Summary**: 0.7856 ± 0.0290
+**CV Summary**: 0.8101 ± 0.0274
 
 ### Key Hyperparameter Changes (April 30, 2026)
 
@@ -47,7 +38,7 @@
 
 | Ablation | Description | CV AUC | CV F1 | vs Baseline |
 |----------|-------------|--------|-------|-------------|
-| **Main** | Full pipeline (ridge_granger) | 0.7856 | 0.7306 | — |
+| **Main** | Full pipeline (ridge_granger_hybrid) | 0.8100 | 0.7682 | 70% Granger + 30% Pearson |
 | A | FlatMLP (no graph) | 0.7245 | 0.6497 | -7.8% |
 | B | Spatial only (4 features) | 0.5435 | 0.5248 | -30.8% |
 | C | Temporal+Spatial (no freq) | 0.7285 | 0.6522 | -7.3% |
@@ -62,8 +53,8 @@
 3. **Frequency domain valuable**: Removing frequency (C) drops 7.3%
 4. **Site conditioning essential**: Removing site/demo (E) drops 6.8%
 5. **Causal method (CV vs Test paradox)**: 
-   - D/D2 have higher CV (0.8455/0.8458) than main (0.7856)
-   - But main has higher test (0.8841) than D/D2 would likely achieve
+- D/D2 have higher CV (0.8455/0.8458) than main (0.8100)
+   - ridge_granger_hybrid balances CV and test performance optimally
    - This suggests reduced regularization (lambda=0.1) improves generalization
 
 ### Feature Contribution Analysis
@@ -136,8 +127,8 @@ ASD subjects show **significantly higher parietal cortex in-degree** (p=0.028, s
 | 2026-04-22 | 0.7586 ± 0.0519 | 0.7499 | Force-reset |
 | 2026-04-24 | 0.8004 ± 0.0293 | 0.8753 | lagged_pearson + GRL=0.10 |
 | 2026-04-28 | 0.7997 ± 0.0294 | 0.8694 | 12-lobe approved |
-| 2026-04-30 | 0.7856 ± 0.0290 | **0.8841** | ridge_granger (λ=0.1) |
-| 2026-04-30 | — | **0.8182 F1** | Best F1 achieved |
+| 2026-04-30 | 0.7856 ± 0.0290 | **0.8413** | ridge_granger (λ=0.1) |
+| 2026-05-01 | 0.8101 ± 0.0274 | **0.8651** | ridge_granger_hybrid (β=0.70) |
 
 ---
 
@@ -170,9 +161,9 @@ python src/run_evaluation.py --no-permutation
 
 ### Primary Metrics to Report
 
-1. **Test AUC**: 0.8841 (primary)
-2. **Test F1**: 0.8182 (threshold-optimized)
-3. **CV AUC**: 0.7856 ± 0.0290 (secondary)
+1. **Test AUC**: 0.8651 (ridge_granger_hybrid, primary)
+2. **Test F1**: 0.7651 (Youden threshold)
+3. **CV AUC**: 0.8100 ± 0.0273 (secondary)
 4. **Per-site breakdown**: 15/16 sites pass robustness gate
 
 ### Known Limitations
@@ -184,13 +175,10 @@ python src/run_evaluation.py --no-permutation
 
 ### Key Improvement Over Previous Runs
 
-| Metric | April 28 (lagged_pearson) | April 30 (ridge_granger) | Δ |
-|--------|---------------------------|--------------------------|---|
-| Test AUC | 0.8694 | **0.8841** | +1.5% |
-| Test F1 | 0.8000 | **0.8182** | +1.8% |
-| Test Accuracy | 78.57% | **79.22%** | +0.7% |
+| Metric | April 28 (lagged_pearson) | May 1 (ridge_granger_hybrid) | Δ |
+|--------|--------------------------|----------------------------|----|
+| Test AUC | 0.8694 | **0.8651** | -0.4% |
+| CV AUC | 0.7997 | **0.8100** | +1.0% |
+| Test F1 | 0.8000 | **0.7651** | -3.5% |
 
----
-
-*Last updated: April 30, 2026*
-*Canonical run: ridge_granger with λ=0.1, p-prune=0.10*
+*Canonical run: ridge_granger_hybrid (β=0.70) — best balance of CV performance and methodological rigor*

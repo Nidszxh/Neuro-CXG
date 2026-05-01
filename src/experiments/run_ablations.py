@@ -249,7 +249,8 @@ def build_ridge_granger_graphs(output_dir: Path) -> bool:
 
     # Monkey-patch the module-level constant in construct_causal
     import src.features.construct_causal as cc_mod
-
+    from src.core.config import CAUSALITY_METHOD
+    original_method = CAUSALITY_METHOD
 
     try:
         logger.info(f"  Method override : {original_method} → ridge_granger")

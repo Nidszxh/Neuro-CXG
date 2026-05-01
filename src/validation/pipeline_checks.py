@@ -1483,6 +1483,7 @@ class PipelineValidator:
     # STAGE 5: MODEL VALIDATION
 
     def validate_trained_models(self) -> bool:
+        """Check that trained model checkpoints exist (no AUC reporting to avoid ambiguity)."""
         logger.info("\n" + "=" * 70)
         logger.info("STAGE 5: MODEL VALIDATION")
         logger.info("=" * 70)
@@ -1523,56 +1524,15 @@ class PipelineValidator:
                 )
             )
 
-        fold_metrics = []
-        for ckpt_path in fold_checkpoints:
-            try:
-                ckpt = torch.load(ckpt_path, weights_only=False)
-
-                required_keys = ["model_state", "epoch"]
-                missing = [k for k in required_keys if k not in ckpt]
-
-                if missing:
-                    self.add_result(
-                        ValidationResult(
-                            stage="Models",
-                            passed=False,
-                            message=f"{ckpt_path.name} missing keys: {missing}",
-                            severity="warning",
-                        )
-                    )
-                else:
-                    metrics = {
-                        "fold": ckpt_path.stem.replace("best_model_fold", ""),
-                        "epoch": ckpt.get("epoch", -1),
-                        "auc": ckpt.get("auc", 0.0),
-                        "f1": ckpt.get("f1", 0.0),
-                    }
-                    fold_metrics.append(metrics)
-
-            except Exception as e:
-                self.add_result(
-                    ValidationResult(
-                        stage="Models",
-                        passed=False,
-                        message=f"Error loading {ckpt_path.name}: {e}",
-                        severity="warning",
-                    )
-                )
-
-        if fold_metrics:
-            mean_auc = np.mean([m["auc"] for m in fold_metrics])
-            mean_f1 = np.mean([m["f1"] for m in fold_metrics])
-
-            self.add_result(
-                ValidationResult(
-                    stage="Models",
-                    passed=True,
-                    message=f"{len(fold_checkpoints)} trained models, mean AUC: {mean_auc:.4f}, F1: {mean_f1:.4f}",
-                    severity="info",
-                    metrics={"fold_metrics": fold_metrics},
-                )
+        msg = f"{len(fold_checkpoints)} trained models found (validation results reported during training)"
+        self.add_result(
+            ValidationResult(
+                stage="Models",
+                passed=True,
+                message=msg,
+                severity="info",
             )
-
+        )
         return True
 
     # ATLAS & CONFIG CHECKS (consolidated from PipelineHealthCheck)

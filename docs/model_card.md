@@ -36,18 +36,18 @@
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| **CV AUC** | 0.7856 ± 0.0290 | 5-fold cross-validation |
-| **Test AUC** | **0.8841** | Ensemble on held-out test set |
-| **Test F1** | **0.8182** | Threshold-optimized |
-| **Test Accuracy** | 79.22% | |
-| **Sensitivity** | 0.9114 | True positive rate |
-| **Specificity** | 0.6667 | True negative rate |
+| **CV AUC** | 0.8101 ± 0.0274 | 5-fold cross-validation |
+| **Test AUC** | **0.8651** | Ensemble on held-out test set (ridge_granger_hybrid) |
+| **Test F1** | **0.7651** | Threshold-optimized |
+| **Test Accuracy** | 77.27% | |
+| **Sensitivity** | 0.7342 | True positive rate |
+| **Specificity** | 0.6800 | True negative rate |
 
 ### Ablation Studies
 
 | Ablation | CV AUC | CV F1 | Notes |
 |----------|--------|-------|-------|
-| **Main (ridge_granger)** | 0.7856 | 0.7306 | Full pipeline |
+| **Main (ridge_granger_hybrid)** | 0.8100 | 0.7682 | Full pipeline (70% Granger + 30% Pearson) |
 | D (lagged_pearson) | 0.8455 | 0.7742 | CV-only |
 | D2 (ridge_granger) | 0.8458 | 0.7747 | CV-only |
 | A (FlatMLP, no graph) | 0.7245 | 0.6497 | Baseline |
@@ -101,7 +101,7 @@
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| Causal method | ridge_granger | Primary (most causally defensible) |
+| Causal method | ridge_granger_hybrid (β=0.70) | Primary (70% Granger + 30% Pearson) |
 | Ridge lambda | 0.1 | Reduced from 1.0 for better signal |
 | Prune threshold | 0.10 | Reduced from 0.20 for more edges |
 | Max lag | 10.0s | Adjusted by TR per subject |

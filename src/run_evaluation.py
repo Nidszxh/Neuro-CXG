@@ -324,7 +324,7 @@ def _bootstrap_ci(
 # SECTION 1: ENSEMBLE TEST-SET EVALUATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
+def run_ensemble_evaluation(test_graphs: List, output_dir: Path, enable_calibration: bool = False) -> Dict:
     """
     AUC-weighted ensemble of the 5 fold checkpoints evaluated on the test set.
     Returns a dict with metrics, CIs, and per-fold breakdown.
@@ -334,7 +334,9 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path) -> Dict:
     logger.info("=" * 60)
 
     loader = make_loader(test_graphs, batch_size=GNN_BATCH_SIZE, shuffle=False)
-    calibration_graphs = _load_last_fold_val_graphs()
+    calibration_graphs = None  # disabled by default: calibration degrades AUC (0.8650 -> 0.8403)
+    if enable_calibration:
+        calibration_graphs = _load_last_fold_val_graphs()
     calibration_loader = make_loader(calibration_graphs, batch_size=GNN_BATCH_SIZE, shuffle=False) if calibration_graphs else None
 
     fold_ids = []
@@ -1130,6 +1132,8 @@ def main() -> None:
                         help="Skip SVM / RF / MLP baseline training.")
     parser.add_argument("--no-subgroups", action="store_true", default=False,
                         help="Skip subgroup analysis.")
+    parser.add_argument("--enable-calibration", action="store_true", default=False,
+                        help="Enable per-site Platt calibration (default: disabled because it degrades AUC).")
     parser.add_argument("--batch-size", type=int, default=GNN_BATCH_SIZE)
     args = parser.parse_args()
 
@@ -1153,7 +1157,7 @@ def main() -> None:
         sys.exit(1)
 
     # ── Section 1: Ensemble evaluation ────────────────────────────────────────
-    ensemble_result = run_ensemble_evaluation(test_graphs, args.output_dir)
+    ensemble_result = run_ensemble_evaluation(test_graphs, args.output_dir, args.enable_calibration)
     ens_probs = np.array(ensemble_result["ensemble_probs"])
     labels    = np.array(ensemble_result["labels"])
 

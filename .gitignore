@@ -1,4 +1,4 @@
-# --- Python & Environments ---
+# SECTION 1: Python & Build Artifacts
 **/__pycache__/
 **/*.py[cod]
 *$py.class
@@ -9,12 +9,96 @@ env/
 .env
 build/
 dist/
+*.egg
 
-# --- Jupyter & Notebooks ---
+# SECTION 2: Jupyter Notebooks
 .ipynb_checkpoints/
 */.ipynb_checkpoints/*
+*.ipynb
+!notebooks/eda.ipynb
 
-# --- Data & Large Scientific Files (Global Rules) ---
+# SECTION 3: Data - RAW (Downloaded/Generated - DO NOT COMMIT)
+# Raw fMRI data from ABIDE
+data/raw/**
+
+# Processed time series and features
+data/processed/**
+
+# YOLO training data (generated)
+data/final/**
+
+# Image labels for YOLO
+data/images/
+data/labels/
+
+# Data metadata (large files - keep small config files only)
+data/metadata/*.feather
+data/metadata/harmonized_folds_cv/*.feather
+data/metadata/harmonized_folds_cv/*.csv
+data/metadata/harmonized_folds_cv/combat_model_*.pkl
+
+# Keep only small metadata files (JSON, small CSVs, TXT)
+!data/metadata/atlas_metadata.json
+!data/metadata/roi_centroids.json
+!data/metadata/master_manifest.csv
+!data/metadata/active_subject_ids.txt
+!data/metadata/subject_ids_1015.txt
+!data/metadata/phenotypic_manifest_1015.csv
+!data/metadata/download_log.csv
+!data/metadata/fold_unseen_site_audit.csv
+!data/metadata/harmonization_variance_retention.csv
+
+# SECTION 4: Models & Checkpoints (Large - DO NOT COMMIT)
+# GNN model checkpoints
+models/checkpoints/**
+models/**/*.pt
+models/**/*.pth
+
+# YOLO weights (downloadable artifact)
+yolo26n.pt
+models/**/weights/*.pt
+models/**/weights/*.weights
+
+# Keep model config files (YAML, JSON)
+!models/**/*.yaml
+!models/**/*.json
+!models/README.md
+
+# SECTION 5: Results & Experiment Outputs (Generated - DO NOT COMMIT)
+# Full experiment runs (can be regenerated)
+results/experiments/runs/**
+results/experiments/training/**
+results/experiments/detection/**
+
+# Subject-level predictions
+results/subject_analysis/**
+
+# Analysis outputs (can be regenerated)
+results/analysis/**
+
+# Visualization outputs
+results/visualizations/**
+
+# Paper figures (can be regenerated)
+results/paper_figures/**
+
+# Keep only essential result summaries
+!results/evaluation/comprehensive_results.json
+!results/evaluation/comprehensive_results.csv
+!results/evaluation/config_snapshot.json
+!results/experiments/ablations/ablation_results.csv
+!results/explainability/summary.json
+!results/evaluation_rg/comprehensive_results.json
+!results/evaluation_rg/comprehensive_results.csv
+!results/evaluation_rg/config_snapshot.json
+!results/evaluation_rgh/comprehensive_results.json
+!results/evaluation_rgh/comprehensive_results.csv
+!results/evaluation_rgh/config_snapshot.json
+
+# SECTION 6: Experiment Scripts (Reference Only - DO NOT COMMIT)
+paper/experiments/**
+
+# SECTION 7: Large Data Files (Binary - DO NOT COMMIT)
 *.nii
 *.nii.gz
 *.npy
@@ -26,113 +110,58 @@ dist/
 *.tar*
 *.7z
 *.feather
+*.pkl
 
-# --- Metadata Cache Files (LEAKED: removed from git history 2026-04-30) ---
-*.feather
-data/metadata/master_manifest.feather
-data/metadata/node_attributes_harmonized.feather
-data/metadata/node_attributes_temporal.feather
-data/metadata/node_features_3d.feather
-data/metadata/node_features_3d_harmonized.feather
-data/metadata/harmonized_folds_cv/harmonized_fold_*.feather
+# SECTION 8: Temporary & Development Files (DO NOT COMMIT)
+temp/
+temp/**
+temp/**/*
 
-# --- Large Data CSVs (LEAKED: removed from git history 2026-04-30) ---
+# Development patches
+patch_*.py
+
+# Documentation drafts
+docs/deprecated/**
+docs/archive/**
+
+# Hash/debug files
 *.backup
-data/metadata/node_attributes_temporal.csv
-data/metadata/node_attributes_harmonized.csv
-data/metadata/node_features_3d.csv
-data/metadata/node_features_3d_harmonized.csv
-data/metadata/harmonized_folds_cv/harmonized_fold_[0-4].csv
-data/metadata/harmonized_folds_cv/fold[0-4]_train_lobes.csv
-data/metadata/harmonized_folds_cv/fold[0-4]_val_lobes.csv
-data/metadata/test_node_attributes_temporal.csv
-data/metadata/node_attributes_temporal.roi_coverage.json
+*.log
 
-# --- Config Noise (LEAKED: removed from git history 2026-04-30) ---
-hash1.json
-hash2.json
+# Keep all workflow files for CI/CD (Right now we have none)
+.github/ 
 
-# --- Training History (LEAKED: removed from git history 2026-04-30) ---
-results/experiments/training/training_history_fold*.json
+# Keep Docker configs
+!Dockerfile
+!configs/docker-compose.yml
 
-# --- Subject Analysis (LEAKED: removed from git history 2026-04-30) ---
-results/subject_analysis/
-
-# --- Project Data Directories ---
-data/raw/**
-data/processed/**
-data/final/**
-data/images/
-data/labels/
-
-# Metadata Exceptions (CSV/JSON only — NO large data CSVs)
-!data/metadata/atlas_metadata.json
-!data/metadata/roi_centroids.json
-!data/metadata/master_manifest.csv
-!data/metadata/active_subject_ids.txt
-!data/metadata/harmonized_folds_cv/fold_unseen_site_audit.csv
-!data/metadata/harmonized_folds_cv/harmonization_variance_retention.csv
-!data/metadata/download_log.csv
-!data/metadata/phenotypic_manifest_1015.csv
-!data/metadata/subject_ids_1015.txt
-
-# --- Models & Weights ---
-models/**
-*.pt
-*.pth
-*.ckpt
-*.onnx
-*.weights
-yolo26n.pt
-
-!models/README.md
-!models/**/*.yaml
-!models/**/*.json
-
-# --- Results & Experiment Tracking ---
-results/experiments/runs/
-results/experiments/detection/ROI_Detection_v*/
-mlruns/
-.mlflow/
-
-# Keep important result summaries
-!results/evaluation/comprehensive_results.*
-!results/experiments/ablations/ablation_results.csv
-!results/explainability/summary.json
-
-# --- Paper Experiments ---
-paper/experiments/
-
-# --- OS / IDE Junk ---
+# SECTION 10: OS & IDE Files (DO NOT COMMIT)
 .DS_Store
+.AppleDouble
+Thumbs.db
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
-Thumbs.db
-.AppleDouble
 
-# --- Logs & Performance ---
-logs/
-*.log
-*.pkl
-
-# --- Testing & Coverage ---
+# SECTION 11: Testing & Coverage (DO NOT COMMIT)
 .pytest_cache/
 .coverage
 htmlcov/
 .tox/
+.mypy_cache/
 
-# --- Misc ---
-.github/
-dump/*
-chats/*
-scripts/*
-docs/internal/
-temp/
-DOCSY/
-patch_*.py
-results/analysis/per_subject_predictions.csv
+# SECTION 12: ML Experiment Tracking (DO NOT COMMIT)
+mlruns/
+.mlflow/
+
+# SECTION 13: Scripts - Keep Essential Only
+# Keep reproducible scripts
 !scripts/reproduce.sh
 !scripts/verify_seeds.sh
+!scripts/figures/generate_all.sh
+
+# Ignore script implementations
+tree/
+scripts/**/*

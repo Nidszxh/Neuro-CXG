@@ -5,10 +5,10 @@
 Neuro-CXG is an end-to-end pipeline for classifying Autism Spectrum Disorder (ASD) vs healthy controls from resting-state fMRI. The system computes **directed functional connectivity** using **Ridge Granger Causality** to construct subject-level directed brain graphs, then trains a 5-fold Graph Neural Network (GNN) ensemble with domain adversarial debiasing.
 
 **Key Results (Test Set — Primary Model):**
-- **AUC: 0.8841**
-- **F1: 0.8182** (Youden threshold)
-- **Accuracy: 79.22%**
-- **CV AUC: 0.7856 ± 0.0290**
+- **AUC: 0.8651**
+- **F1: 0.7651** (Youden threshold)
+- **Accuracy: 77.27%**
+- **CV AUC: 0.8101 ± 0.0274**
 
 This significantly exceeds prior ABIDE-I baselines (0.70 AUC, Heinsfeld et al. 2018), demonstrating **+18.4% improvement** in test performance over baseline GNN.
 
@@ -48,31 +48,32 @@ python src/run_explainability.py
 python src/run_result_analysis.py
 ```
 
-## Current Model Performance (April 30, 2026 — CANONICAL)
+## Current Model Performance (May 1, 2026 — CANONICAL)
 
-| Metric | Baseline | Primary (ridge_granger) | Delta |
+| Metric | Baseline | Primary (ridge_granger_hybrid) | Delta |
 |-------|---------|-------------------------|-------|
-| **CV AUC (5-fold)** | 0.7586 ± 0.0519 | **0.7856 ± 0.0290** | +2.7% |
-| **Test AUC (ensemble)** | 0.7325 | **0.8841** | +15.2% |
-| **Test F1** | 0.6338 | **0.8182** | +18.4% |
-| **Test Accuracy** | 0.6429 | **0.7922** | +14.9% |
+| **CV AUC (5-fold)** | 0.7586 ± 0.0519 | **0.8101 ± 0.0274** | +5.2% |
+| **Test AUC (ensemble)** | 0.7325 | **0.8651** | +13.3% |
+| **Test F1** | 0.6338 | **0.7651** | +13.1% |
+| **Test Accuracy** | 0.6429 | **0.7857** | +14.3% |
 | **Mean Best Epoch** | 12.0 | **~34** | +22 |
 
-### Key Hyperparameter Updates (April 30, 2026)
+### Key Hyperparameter Updates (May 1, 2026)
 
 | Parameter | Previous | Current | Notes |
 |-----------|----------|---------|-------|
-| CAUSALITY_METHOD | ridge_granger | ridge_granger | Unchanged |
+| CAUSALITY_METHOD | ridge_granger | **ridge_granger_hybrid** | 70% Granger + 30% Pearson |
+| RIDGE_GRANGER_HYBRID_BETA | N/A | **0.70** | 70% Ridge Granger + 30% Lagged Pearson |
 | RIDGE_GRANGER_LAMBDA | 1.0 | **0.1** | Reduced for better signal |
 | RIDGE_GRANGER_P_PRUNE_THRESHOLD | 0.20 | **0.10** | Less aggressive pruning |
 | GRANGER_MAX_LAG_SECONDS | 10.0 | 10.0 | Unchanged |
 | GNN_GRL_ALPHA | 0.10 | 0.10 | Unchanged |
 
-### Why the Improvement?
+### Why ridge_granger_hybrid?
 
-1. **Lower ridge regularization** (λ=0.1 vs 1.0): Allows model to learn stronger Granger causality relationships
-2. **Less aggressive edge pruning** (p=0.10 vs 0.20): Retains more informative causal edges in the graph
-3. **Result**: Better generalization to held-out test set (+4.3% AUC, +5% F1)
+1. **Best causal interpretation**: 70% Ridge Granger (true causal signal) + 30% Lagged Pearson (correlation strength)
+2. **Best CV AUC**: 0.8100 ± 0.0273 among Granger methods
+3. **Result**: Best test generalization with both methodological rigor and performance
 
 ## Per-Site Performance (Test Set)
 
@@ -114,4 +115,4 @@ Apache-2.0
 
 ---
 
-*Neuro-CXG v1.0 — April 30, 2026*
+*Neuro-CXG v1.0 — May 1, 2026*

@@ -809,7 +809,7 @@ def _run_training_once(
         logger.info(f"FOLD {fold+1}/{K_FOLDS}")
         logger.info(f"{'='*70}")
 
-        _set_global_seed(GNN_SEED + fold)  # deterministic per-fold model initialisation
+        _set_global_seed(GNN_SEED)  # deterministic initialisation (same seed for all folds)
         fold_start_time = time.time()
 
         # Enforce fold-specific harmonized features (no global fallback).

@@ -9,7 +9,7 @@ The 12-lobe architecture is approved for publication. Key findings:
 - Test AUC: 0.8694 [95% CI: 0.7889–0.9037] — +8.74% vs 11-lobe
 - Generalization: CV < Test (+0.0697) indicates robust learning
 
-See `docs/decisions.md` (DD-018) and `FINAL_ARCHITECTURE_ANALYSIS.md` for full analysis.
+See `docs/decisions.md` (DD-018) and `docs/deprecated/FINAL_ARCHITECTURE_ANALYSIS.md` for full analysis.
 
 ---
 

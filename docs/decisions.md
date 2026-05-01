@@ -193,7 +193,7 @@ This log records active architectural and modeling decisions reflected in source
 | **Rationale** | Test AUC +8.74% vs 11-lobe; Brainstem constant features act as implicit regularization; better generalization (CV < Test) |
 | **Trade-offs** | Brainstem uses synthetic fallback coordinates |
 | **Status** | Active — APPROVED FOR PUBLICATION |
-| **Source of truth** | `src/core/atlas_config.py`, `FINAL_ARCHITECTURE_ANALYSIS.md` |
+| **Source of truth** | `src/core/atlas_config.py`, `docs/deprecated/FINAL_ARCHITECTURE_ANALYSIS.md` |
 
 **Empirical Evidence:**
 
@@ -248,7 +248,7 @@ Describe as **"directed functional connectivity GNN"** rather than "causal GNN" 
 
 | Configuration | Test AUC | Interpretation |
 |---------------|----------|----------------|
-| Full GNN | 0.8694 | Full model |
+| Full GNN | 0.8651 | Full model (ridge_granger_hybrid) |
 | Shuffled edges | 0.8337 | Identical to real |
 
 **Interpretation**: Graph topology matters; edge weight magnitudes are negligible. Frame as "anatomical scaffold" in paper.

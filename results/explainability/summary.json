@@ -11,11 +11,11 @@
   ],
   "top_regions": [
     "Frontal_Superior",
-    "Occipital",
-    "Motor_Premotor",
     "Frontal_Orbital",
     "Insula",
-    "Parietal"
+    "Occipital",
+    "Motor_Premotor",
+    "Cerebellum"
   ],
   "top_networks": [
     "DMN",
@@ -23,37 +23,38 @@
     "Salience",
     "Sensorimotor",
     "Visual",
+    "Subcortical",
     "FPC"
   ],
   "overlap_scores": {
-    "DMN": 0.375,
+    "DMN": 0.2222,
     "Social": 0.25,
     "Salience": 0.25,
-    "Sensorimotor": 0.3333,
-    "Visual": 0.3333,
-    "Subcortical": 0.0,
-    "FPC": 0.5
+    "Sensorimotor": 0.1429,
+    "Visual": 0.1429,
+    "Subcortical": 0.125,
+    "FPC": 0.2857
   },
   "gradcam_top5_differential": [
     {
-      "region": "Frontal_Orbital",
-      "delta": 0.02797502651810646
-    },
-    {
       "region": "Motor_Premotor",
-      "delta": 0.02582210674881935
-    },
-    {
-      "region": "Frontal_Superior",
-      "delta": 0.02558412402868271
+      "delta": 0.014515867456793785
     },
     {
       "region": "Insula",
-      "delta": 0.024939872324466705
+      "delta": 0.014328625053167343
     },
     {
-      "region": "Occipital",
-      "delta": 0.02472880482673645
+      "region": "Frontal_Orbital",
+      "delta": 0.013528497889637947
+    },
+    {
+      "region": "Frontal_Superior",
+      "delta": 0.012684554792940617
+    },
+    {
+      "region": "Parietal",
+      "delta": 0.011667996644973755
     }
   ],
   "network_embeddings": {
@@ -63,38 +64,38 @@
       32
     ],
     "mean_abs_per_network": [
-      0.34620732069015503,
-      0.3596821427345276,
-      0.35555773973464966,
-      0.3414310812950134
+      0.3481020927429199,
+      0.3536039888858795,
+      0.3563746511936188,
+      0.3509696125984192
     ],
     "saved_path": "/home/nidszxh/Projects/Neuro-CXG/results/explainability/node/network_embeddings_last_batch.npy"
   },
   "top5_differential_edges": [
     {
-      "source": "Cerebellum",
-      "target": "Motor_Premotor",
-      "delta": 0.003154180526750836
-    },
-    {
-      "source": "Cerebellum",
-      "target": "Subcortical",
-      "delta": 0.002608365134229463
-    },
-    {
-      "source": "Frontal_Superior",
-      "target": "Frontal_Orbital",
-      "delta": 0.0024250598589844637
+      "source": "Frontal_Orbital",
+      "target": "Frontal_Superior",
+      "delta": 0.0011202666443388715
     },
     {
       "source": "Motor_Premotor",
-      "target": "Cerebellum",
-      "delta": 0.0022766779067739202
+      "target": "Frontal_Superior",
+      "delta": 0.0010485815808106015
+    },
+    {
+      "source": "Cingulate",
+      "target": "Subcortical",
+      "delta": 0.0009533093856832701
+    },
+    {
+      "source": "Motor_Premotor",
+      "target": "Occipital",
+      "delta": 0.0009303774235693034
     },
     {
       "source": "Parietal",
-      "target": "Motor_Premotor",
-      "delta": 0.0018379334080456237
+      "target": "Subcortical",
+      "delta": 0.0008745158518106592
     }
   ]
 }

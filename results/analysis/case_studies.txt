@@ -4,7 +4,7 @@ CASE STUDIES — NEURO-CXG ASD CLASSIFICATION
 [HIGH_CONF_CORRECT]
   Subject  : Yale_0050555
   Diagnosis: ASD  →  Predicted: ASD
-  P(ASD)   : 0.9541   Confidence: 0.9541
+  P(ASD)   : 0.9633   Confidence: 0.9633
   Age      : 14  Sex: F  FIQ: 131  Site: 19
   Top-3 features (by |mean| across 12 regions):
     mssd: 786.8186
@@ -12,19 +12,9 @@ CASE STUDIES — NEURO-CXG ASD CLASSIFICATION
     std: 23.9522
 
 [HIGH_CONF_CORRECT]
-  Subject  : Yale_0050626
-  Diagnosis: Control  →  Predicted: Control
-  P(ASD)   : 0.0473   Confidence: 0.9527
-  Age      : 11  Sex: M  FIQ: 61  Site: 19
-  Top-3 features (by |mean| across 12 regions):
-    mssd: 334.2827
-    range: 128.3107
-    std: 23.7127
-
-[HIGH_CONF_CORRECT]
   Subject  : Yale_0050576
   Diagnosis: ASD  →  Predicted: ASD
-  P(ASD)   : 0.9466   Confidence: 0.9466
+  P(ASD)   : 0.9558   Confidence: 0.9558
   Age      : 8  Sex: F  FIQ: 119  Site: 19
   Top-3 features (by |mean| across 12 regions):
     mssd: 516.6818
@@ -32,29 +22,39 @@ CASE STUDIES — NEURO-CXG ASD CLASSIFICATION
     z_depth: 23.5833
 
 [HIGH_CONF_CORRECT]
-  Subject  : USM_0050519
+  Subject  : Leuven_1_0050689
   Diagnosis: Control  →  Predicted: Control
-  P(ASD)   : 0.0549   Confidence: 0.9451
-  Age      : 16  Sex: M  FIQ: 83  Site: 18
+  P(ASD)   : 0.0480   Confidence: 0.9520
+  Age      : 21  Sex: M  FIQ: 106  Site: 3
   Top-3 features (by |mean| across 12 regions):
-    mssd: 366.1637
-    range: 124.3142
-    z_depth: 23.5833
+    mssd: 200.9410
+    range: 100.4393
+    z_depth: 23.4167
 
 [HIGH_CONF_CORRECT]
   Subject  : Leuven_1_0050692
   Diagnosis: ASD  →  Predicted: ASD
-  P(ASD)   : 0.9429   Confidence: 0.9429
+  P(ASD)   : 0.9418   Confidence: 0.9418
   Age      : 22  Sex: M  FIQ: 109  Site: 3
   Top-3 features (by |mean| across 12 regions):
     mssd: 416.7732
     range: 94.5415
     z_depth: 23.4500
 
+[HIGH_CONF_CORRECT]
+  Subject  : SDSU_0050206
+  Diagnosis: ASD  →  Predicted: ASD
+  P(ASD)   : 0.9405   Confidence: 0.9405
+  Age      : 9  Sex: F  FIQ: 112  Site: 11
+  Top-3 features (by |mean| across 12 regions):
+    mssd: 528.6229
+    range: 134.5826
+    std: 24.6723
+
 [HIGH_CONF_WRONG]
   Subject  : NYU_0051021
   Diagnosis: Control  →  Predicted: ASD
-  P(ASD)   : 0.9321   Confidence: 0.9321
+  P(ASD)   : 0.9278   Confidence: 0.9278
   Age      : 24  Sex: M  FIQ: 112  Site: 6
   Top-3 features (by |mean| across 12 regions):
     mssd: 841.4578
@@ -64,7 +64,7 @@ CASE STUDIES — NEURO-CXG ASD CLASSIFICATION
 [HIGH_CONF_WRONG]
   Subject  : Pitt_0050008
   Diagnosis: Control  →  Predicted: ASD
-  P(ASD)   : 0.8750   Confidence: 0.8750
+  P(ASD)   : 0.8781   Confidence: 0.8781
   Age      : 32  Sex: M  FIQ: 123  Site: 9
   Top-3 features (by |mean| across 12 regions):
     mssd: 452.7062
@@ -72,82 +72,82 @@ CASE STUDIES — NEURO-CXG ASD CLASSIFICATION
     z_depth: 23.5833
 
 [HIGH_CONF_WRONG]
-  Subject  : NYU_0051015
-  Diagnosis: Control  →  Predicted: ASD
-  P(ASD)   : 0.8529   Confidence: 0.8529
-  Age      : 30  Sex: M  FIQ: 105  Site: 6
+  Subject  : USM_0050434
+  Diagnosis: ASD  →  Predicted: Control
+  P(ASD)   : 0.1767   Confidence: 0.8233
+  Age      : 18  Sex: M  FIQ: 93  Site: 18
   Top-3 features (by |mean| across 12 regions):
-    mssd: 419.3922
-    range: 117.0112
-    z_depth: 23.9500
+    mssd: 372.2094
+    range: 120.8443
+    z_depth: 23.3786
 
 [HIGH_CONF_WRONG]
-  Subject  : UCLA_1_0051282
-  Diagnosis: ASD  →  Predicted: Control
-  P(ASD)   : 0.2455   Confidence: 0.7545
-  Age      : 13  Sex: F  FIQ: 91  Site: 14
+  Subject  : KKI_0050825
+  Diagnosis: Control  →  Predicted: ASD
+  P(ASD)   : 0.8217   Confidence: 0.8217
+  Age      : 8  Sex: M  FIQ: 89  Site: 2
   Top-3 features (by |mean| across 12 regions):
-    mssd: 509.0692
-    range: 149.2367
-    std: 25.9907
+    mssd: 208.9262
+    range: 100.3560
+    z_depth: 23.5833
 
 [HIGH_CONF_WRONG]
-  Subject  : USM_0050526
+  Subject  : UM_2_0050404
   Diagnosis: Control  →  Predicted: ASD
-  P(ASD)   : 0.7531   Confidence: 0.7531
-  Age      : 50  Sex: M  FIQ: 123  Site: 18
+  P(ASD)   : 0.8099   Confidence: 0.8099
+  Age      : 16  Sex: M  FIQ: 130  Site: 17
   Top-3 features (by |mean| across 12 regions):
-    mssd: 306.6973
-    range: 84.4316
-    z_depth: 23.4167
+    mssd: 238.1973
+    range: 107.6289
+    z_depth: 22.4833
 
 [AMBIGUOUS]
-  Subject  : CMU_b_0050657
+  Subject  : NYU_0051121
   Diagnosis: ASD  →  Predicted: Control
-  P(ASD)   : 0.4980   Confidence: 0.5020
-  Age      : 21  Sex: M  FIQ: 120  Site: 1
+  P(ASD)   : 0.4930   Confidence: 0.5070
+  Age      : 11  Sex: M  FIQ: 113  Site: 6
   Top-3 features (by |mean| across 12 regions):
-    mssd: 131.7370
-    range: 89.4776
-    z_depth: 24.9000
-
-[AMBIGUOUS]
-  Subject  : UCLA_1_0051279
-  Diagnosis: ASD  →  Predicted: Control
-  P(ASD)   : 0.5020   Confidence: 0.5020
-  Age      : 14  Sex: F  FIQ: 106  Site: 14
-  Top-3 features (by |mean| across 12 regions):
-    mssd: 216.3996
-    range: 103.7689
+    mssd: 331.0707
+    range: 116.6821
     z_depth: 23.5833
 
 [AMBIGUOUS]
-  Subject  : CMU_a_0050654
-  Diagnosis: Control  →  Predicted: Control
-  P(ASD)   : 0.4869   Confidence: 0.5131
-  Age      : 24  Sex: M  FIQ: 95  Site: 1
+  Subject  : Yale_0050564
+  Diagnosis: ASD  →  Predicted: Control
+  P(ASD)   : 0.4917   Confidence: 0.5083
+  Age      : 8  Sex: M  FIQ: 140  Site: 19
   Top-3 features (by |mean| across 12 regions):
-    mssd: 329.3488
-    range: 122.4388
-    z_depth: 23.3333
+    mssd: 386.3654
+    range: 101.0303
+    z_depth: 23.7083
 
 [AMBIGUOUS]
-  Subject  : UM_1_0050300
-  Diagnosis: Control  →  Predicted: Control
-  P(ASD)   : 0.4868   Confidence: 0.5132
-  Age      : 10  Sex: F  FIQ: 90  Site: 16
+  Subject  : UCLA_1_0051254
+  Diagnosis: ASD  →  Predicted: Control
+  P(ASD)   : 0.4914   Confidence: 0.5086
+  Age      : 14  Sex: M  FIQ: 113  Site: 14
   Top-3 features (by |mean| across 12 regions):
-    mssd: 422.3892
-    range: 137.1023
-    std: 24.7421
+    mssd: 377.7611
+    range: 123.8043
+    z_depth: 23.5833
 
 [AMBIGUOUS]
-  Subject  : OHSU_0050153
-  Diagnosis: Control  →  Predicted: Control
-  P(ASD)   : 0.5134   Confidence: 0.5134
-  Age      : 10  Sex: M  FIQ: 100  Site: 7
+  Subject  : Trinity_0051133
+  Diagnosis: ASD  →  Predicted: Control
+  P(ASD)   : 0.5141   Confidence: 0.5141
+  Age      : 12  Sex: M  FIQ: 91  Site: 13
   Top-3 features (by |mean| across 12 regions):
-    mssd: 456.9368
-    range: 139.7214
-    std: 24.7944
+    mssd: 340.5721
+    range: 110.7135
+    z_depth: 23.5000
+
+[AMBIGUOUS]
+  Subject  : Yale_0050604
+  Diagnosis: Control  →  Predicted: Control
+  P(ASD)   : 0.4850   Confidence: 0.5150
+  Age      : 14  Sex: F  FIQ: 85  Site: 19
+  Top-3 features (by |mean| across 12 regions):
+    mssd: 574.4709
+    range: 127.2192
+    z_depth: 23.5833
 

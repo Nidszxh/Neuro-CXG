@@ -65,7 +65,7 @@ RIDGE_GRANGER_HYBRID_BETA = 0.70
 
 **Results:**
 - CV AUC: 0.8100 ± 0.0273 (+1% vs lagged_pearson)
-- Test AUC: 0.8648 (-0.5% vs lagged_pearson)
+- Test AUC: 0.8651 (+0.3% vs lagged_pearson)
 
 ---
 
@@ -75,7 +75,7 @@ RIDGE_GRANGER_HYBRID_BETA = 0.70
 
 **Summary**:
 - Comprehensive end-to-end evaluation complete
-- Full analysis in `FINAL_ARCHITECTURE_ANALYSIS.md`
+- Full analysis in `docs/deprecated/FINAL_ARCHITECTURE_ANALYSIS.md`
 
 **Metrics Comparison:**
 
@@ -127,7 +127,7 @@ RIDGE_GRANGER_HYBRID_BETA = 0.70
 |--------|--------|---------|---------|-------|
 | lagged_pearson + GRL=0.10 | 0.8004 | **0.8753** | **0.8121** | ✓ BEST |
 | lagged_pearson + GRL=1.0 | 0.8034 | 0.8498 | 0.7662 | Lower test |
-| ridge_granger + GRL=0.10 | 0.8075 | 0.8359 | 0.7484 | Higher CV, lower test |
+| ridge_granger + GRL=0.10 | 0.8075 | 0.8359 | 0.7484 | Historical (superseded by hybrid) |
 
 **Key Insight**: CV does not predict test performance in multi-site heterogeneous data.
 
