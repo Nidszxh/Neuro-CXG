@@ -143,3 +143,6 @@ mlruns/
 
 # Ignore script implementations
 tree/
+
+# CI/CD workflows (kept locally only)
+.github/**
