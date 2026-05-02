@@ -395,13 +395,46 @@ class CausalGraphAnalyzer:
     # ── visualisation ─────────────────────────────────────────────────────────
 
     def visualize_average_causal_graph(
-        self, output_path: Path, max_graphs: Optional[int] = None
+        self, output_path: Path, max_graphs: Optional[int] = None,
+        group: Optional[str] = None
     ) -> Optional[Path]:
-        """Heatmap of the mean causal adjacency matrix across all subjects."""
+        """Heatmap of the mean causal adjacency matrix across subjects.
+        
+        Args:
+            output_path: Save location for the figure
+            max_graphs: Maximum number of graphs to sample (None = all)
+            group: If provided ('ASD' or 'Control'), filter to that diagnosis group
+        """
         graph_files = list(self.graphs_dir.glob("*_graph.pt"))
         if not graph_files:
             logger.warning("No causal graphs found for average visualisation")
             return None
+        
+        # Filter by group if requested
+        if group is not None and self.manifest is not None:
+            # Convert group name to numeric DX_GROUP value
+            if group == 'ASD':
+                dx_value = 1
+            elif group == 'Control':
+                # Try 2 first, then 0
+                if 2 in self.manifest['DX_GROUP'].values:
+                    dx_value = 2
+                else:
+                    dx_value = 0
+            else:
+                dx_value = group
+            
+            group_subjects = set(
+                self.manifest[self.manifest["DX_GROUP"] == dx_value]["subject_id"].astype(str)
+            )
+            graph_files = [
+                gf for gf in graph_files 
+                if gf.stem.replace("_graph", "") in group_subjects
+            ]
+            if not graph_files:
+                logger.warning(f"No causal graphs found for group={group}")
+                return None
+        
         if max_graphs is not None:
             graph_files = list(
                 np.random.choice(graph_files, min(max_graphs, len(graph_files)), replace=False)
@@ -421,10 +454,11 @@ class CausalGraphAnalyzer:
 
         avg = np.mean(np.stack(matrices), axis=0)
         labels = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
+        title_suffix = f" ({group})" if group else ""
         fig, ax = plt.subplots(figsize=(10, 8))
         sns.heatmap(avg, xticklabels=labels, yticklabels=labels, cmap="RdYlBu_r",
                     center=0, linewidths=0.5, ax=ax)
-        ax.set(title="Average Causal Adjacency Matrix",
+        ax.set(title=f"Average Causal Adjacency Matrix{title_suffix}",
                xlabel="Target Region", ylabel="Source Region")
         plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
         plt.setp(ax.get_yticklabels(), rotation=0)

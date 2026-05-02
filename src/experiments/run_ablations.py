@@ -743,8 +743,7 @@ def print_summary(results: Dict[str, Dict], baseline_auc: float = 0.63) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 ABLATION_MAP = {"A": "FlatMLP (no graph)", "B": "Spatial only", "C": "Temporal (no freq)",
-                "D": "Lagged Pearson", "D2": "Ridge Granger", "E": "No site/demographics",
-                "F": "Random topology", "G": "Identity edges"}
+                 "D": "Lagged Pearson", "D2": "Ridge Granger", "E": "No site/demographics"}
 
 
 def main():
@@ -797,11 +796,11 @@ def main():
     if "E" in args.ablations:
         results["E"] = run_ablation_e(base_ds)
 
-    if "F" in args.ablations:
-        results["F"] = run_ablation_f()
+    # if "F" in args.ablations:
+    #     results["F"] = run_ablation_f()
 
-    if "G" in args.ablations:
-        results["G"] = run_ablation_g()
+    # if "G" in args.ablations:
+    #     results["G"] = run_ablation_g()
 
     print_summary(results, baseline_auc=args.baseline_auc)
 

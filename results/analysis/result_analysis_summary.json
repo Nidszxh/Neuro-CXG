@@ -1,8 +1,8 @@
 {
   "n_subjects": 154,
-  "overall_accuracy": 0.7792207792207793,
-  "overall_auc": 0.8655696202531645,
-  "decision_threshold": 0.6422646121485219,
+  "overall_accuracy": 0.7857142857142857,
+  "overall_auc": 0.8660759493670886,
+  "decision_threshold": 0.6468651829862367,
   "threshold_policy": "youden",
   "per_site_calibration": {
     "requested": 0,
@@ -14,47 +14,47 @@
     "num_sites": 0
   },
   "youden_analysis": {
-    "threshold": 0.6422646229687983,
-    "accuracy": 0.7792207792207793,
-    "f1": 0.7733333333333333,
-    "sensitivity": 0.7341772151898734,
-    "specificity": 0.8266666666666667,
+    "threshold": 0.6468651649388466,
+    "accuracy": 0.7922077922077922,
+    "f1": 0.7866666666666666,
+    "sensitivity": 0.7468354430379747,
+    "specificity": 0.84,
     "n_total": 154,
     "n_asd": 79,
     "n_control": 75,
-    "tp": 58,
-    "tn": 62,
-    "fp": 13,
-    "fn": 21
+    "tp": 59,
+    "tn": 63,
+    "fp": 12,
+    "fn": 20
   },
   "misclassification": {
     "FP": {
-      "n_subjects": 13,
-      "mean_age": 21.0,
-      "pct_male": 92.3,
-      "mean_fiq": 112.7,
-      "mean_confidence": 0.762
+      "n_subjects": 12,
+      "mean_age": 21.5,
+      "pct_male": 91.7,
+      "mean_fiq": 112.0,
+      "mean_confidence": 0.759
     },
     "FN": {
       "n_subjects": 21,
       "mean_age": 16.9,
       "pct_male": 90.5,
       "mean_fiq": 107.7,
-      "mean_confidence": 0.587
+      "mean_confidence": 0.595
     },
     "TP": {
       "n_subjects": 58,
       "mean_age": 15.3,
       "pct_male": 69.0,
       "mean_fiq": 110.6,
-      "mean_confidence": 0.827
+      "mean_confidence": 0.823
     },
     "TN": {
-      "n_subjects": 62,
+      "n_subjects": 63,
       "mean_age": 16.5,
-      "pct_male": 85.5,
-      "mean_fiq": 102.4,
-      "mean_confidence": 0.727
+      "pct_male": 85.7,
+      "mean_fiq": 102.7,
+      "mean_confidence": 0.732
     }
   },
   "site_effects": {
@@ -220,7 +220,7 @@
         "n_total": 7,
         "n_asd": 4,
         "n_control": 3,
-        "auc": 0.8333,
+        "auc": 0.9167,
         "auc_status": "ok",
         "accuracy": 0.571,
         "accuracy_ci_low": 0.25,
@@ -234,9 +234,9 @@
         "n_control": 6,
         "auc": 0.6667,
         "auc_status": "ok",
-        "accuracy": 0.545,
-        "accuracy_ci_low": 0.28,
-        "accuracy_ci_high": 0.787,
+        "accuracy": 0.636,
+        "accuracy_ci_low": 0.354,
+        "accuracy_ci_high": 0.848,
         "ci_status": "sufficient"
       },
       {
@@ -302,8 +302,8 @@
     ]
   },
   "calibration": {
-    "mean_confidence": 0.748411038961039,
-    "pct_high_confidence": 53.896103896103895,
+    "mean_confidence": 0.7494305194805195,
+    "pct_high_confidence": 52.5974025974026,
     "calibration_bins": [
       "0.50\u20130.55",
       "0.55\u20130.60",
@@ -317,35 +317,35 @@
       "0.95\u20131.00"
     ],
     "fraction_correct": [
-      0.38461538461538464,
-      0.7,
+      0.5294117647058824,
+      0.5882352941176471,
+      0.8888888888888888,
+      0.625,
       0.7142857142857143,
-      0.7272727272727273,
-      0.5384615384615384,
-      0.875,
       0.8571428571428571,
-      0.9444444444444444,
-      0.96,
+      0.8571428571428571,
+      0.9375,
+      0.9629629629629629,
       1.0
     ],
-    "brier_score": 0.15460348162337664
+    "brier_score": 0.1530162824025974
   },
   "severity_correlation": {
     "FIQ_ASD": {
-      "r": 0.074,
-      "p": 0.5147
+      "r": 0.067,
+      "p": 0.5599
     },
     "FIQ_All": {
-      "r": 0.028,
-      "p": 0.7327
+      "r": 0.004,
+      "p": 0.9645
     },
     "Age_ASD": {
-      "r": -0.034,
-      "p": 0.7641
+      "r": -0.051,
+      "p": 0.6581
     },
     "Age_All": {
-      "r": -0.055,
-      "p": 0.5007
+      "r": -0.071,
+      "p": 0.3811
     }
   },
   "n_case_studies": 15

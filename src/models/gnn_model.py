@@ -15,7 +15,11 @@ import sys
 import warnings
 import time
 
-warnings.filterwarnings('ignore')
+# Targeted warning suppression for known harmless issues
+warnings.filterwarnings('ignore', category=DeprecationWarning, module='neuroHarmonize')
+warnings.filterwarnings('ignore', category=DeprecationWarning, module='torch_geometric')
+warnings.filterwarnings('ignore', message='.*CUDA initialization.*', category=UserWarning)
+warnings.filterwarnings('ignore', message='.*dataclass_transform.*')
 
 # Setup paths and config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -1316,6 +1320,11 @@ def run_training():
 # CLI
 
 def parse_args():
+    """Parse command-line arguments for GNN training.
+
+    Returns:
+        Parsed arguments with optional seed override.
+    """
     import argparse
     parser = argparse.ArgumentParser(description="Neuro-CXG GNN Training")
     parser.add_argument("--seed", type=int, default=None, help="Random seed (default: uses GNN_SEED from config)")

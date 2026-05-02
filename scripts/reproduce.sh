@@ -44,8 +44,8 @@ python3 -c "from src.core.config import validate_environment" || {
 # ---- Run Pipeline ----
 echo "Running pipeline..."
 if [[ "$1" == "--skip-download" ]]; then
-    echo "Skipping download..."
-    python3 src/run_pipeline.py --auto --skip-download
+    echo "Skipping download and split (using existing data)..."
+    python3 src/run_pipeline.py --auto --skip-download --skip-split
 else
     python3 src/run_pipeline.py --auto
 fi

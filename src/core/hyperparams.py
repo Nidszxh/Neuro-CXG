@@ -52,7 +52,9 @@ YOLO_TRAIN_CONFIG = {
 }
 
 # GNN training seed for reproducibility
-GNN_SEED = 42
+# Can be overridden via NEURO_CXG_SEED environment variable (propagated from run_pipeline.py --seed)
+import os
+GNN_SEED = int(os.environ.get("NEURO_CXG_SEED", "42"))
 
 # --- CAUSAL GRAPH PARAMETERS ---
 SPARSITY_QUANTILE = 0.70  # Keep top 30% edges (high selectivity - Phase 3)

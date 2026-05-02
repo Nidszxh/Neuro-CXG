@@ -1,78 +1,96 @@
 # CHANGELOG
 
-All notable changes to Neuro-CXG are documented here.
-Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+All notable changes to Neuro-CXG are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased]
+## [1.0.0] — May 2, 2026
 
-### 2026-05-01 - ridge_granger_hybrid Finalization
+### Added
+- Directed causal graphs using Ridge Granger Causality (hybrid blend β=0.70)
+- 12-lobe anatomical parcellation with Brainstem
+- Domain adversarial debiasing (GRL, α=0.10)
+- Fold-safe ComBat harmonization (DX_GROUP protected)
+- Comprehensive ablation studies (A-E, D2)
+- Bootstrap confidence intervals + permutation tests
+- DeLong statistical comparison with Bonferroni correction
 
-- Adopted `ridge_granger_hybrid` (β=0.70) as canonical causality method
-- Results: CV AUC 0.8101 ± 0.0274, Test AUC 0.8651
-- See `docs/paper/results.md` for full metrics
+### Changed
+- Causality method: lagged_pearson → ridge_granger_hybrid (β=0.70)
+- Lambda: 1.0 → 0.1 (reduced regularization)
+- Architecture: 12-lobe approved as primary
+- CV AUC: 0.8102 ± 0.0273 (from 0.8101)
+- Test AUC: 0.8657 (from 0.8651, May 2 fresh run)
 
----
-
-## 2026-04-28
-
-### Comprehensive Ablation Study
-
-- Executed 10 experiments: 6 core ablations + 4 paper experiments
-- All on 12-lobe regenerated features
-- Full documentation: `docs/decisions.md` (DD-018 to DD-028)
-
----
-
-## 2026-04-24
-
-### 12-Lobe Architecture Adoption
-
-- Added Brainstem as 12th lobe
-- Rationale: implicit regularization, stable generalization gap
+### Results
+- Test AUC: **0.8657** [95% CI: 0.8017–0.9185]
+- CV AUC: **0.8102 ± 0.0273**
+- Test F1: 0.7733
+- See [`docs/paper/results.md`](docs/paper/results.md) for full metrics
 
 ---
 
-## 2026-04-22
+## [0.9.0] — May 1, 2026
 
-### Force-Reset Pipeline
-
-- Full pipeline rebuild for reproducibility
-- Test AUC: 0.7499 (pre-harmonization)
+### Changed
+- Causality method: lagged_pearson → ridge_granger_hybrid (β=0.70)
+- Test AUC: 0.8651 (canonical candidate)
 
 ---
 
-## 2026-03-09
+## [0.8.0] — April 28, 2026
 
-### P0/P1 Fixes
+### Added
+- Comprehensive ablation study (10 experiments)
+- 12-lobe regenerated features
 
-- Dead-lobe NaN handling fixed
+---
+
+## [0.7.0] — April 24, 2026
+
+### Added
+- Brainstem as 12th lobe
+- Implicit regularization effect discovered (variance reduction 46.5%)
+
+---
+
+## [0.6.0] — April 22, 2026
+
+### Added
+- Force-reset pipeline for reproducibility
+
+---
+
+## [0.5.0] — March 9, 2026
+
+### Fixed
+- Dead-lobe NaN handling
 - Test AUC improved to 0.6487
 
 ---
 
-## 2026-03-08
+## [0.4.0] — March 8, 2026
 
-### Dead-Lobe NaN Fix
-
-- Resolved NaN propagation in feature extraction
-- Enabled training on previously excluded subjects
+### Fixed
+- NaN propagation in feature extraction
+- Previously excluded subjects now trainable
 
 ---
 
-## 2026-02-15
+## [0.1.0] — February 15, 2026
 
-### Baseline Establishment
-
+### Added
 - Initial GNN baseline: CV AUC 0.6194, Test AUC 0.5398
 
 ---
 
-## Legacy (Pre-DD)
+## Historical References
 
-For pre-Decision Document history, see `docs/archive/ANALYSIS_AND_VALIDATION.md`.
+- **Full decision rationale**: [`docs/decisions.md`](docs/decisions.md) (DD-018 to DD-028)
+- **Test set protocol**: [`docs/test_set_protocol.md`](docs/test_set_protocol.md)
+- **Canonical metrics**: [`docs/paper/results.md`](docs/paper/results.md)
+- **Pre-v1.0 archive**: [`archive_docs/`](archive_docs/) (deprecated, for reference only)
 
 ---
 
-*Full rationale and design decisions: `docs/decisions.md`*
+*Format: Keep a Changelog | Last updated: May 2, 2026*

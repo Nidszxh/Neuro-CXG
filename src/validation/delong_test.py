@@ -22,6 +22,51 @@ def _compute_ground_truth_statistics(y_true: np.ndarray) -> Tuple[np.ndarray, in
     return order, n_pos
 
 
+def _bootstrap_auc_comparison(y_true, y_pred1, y_pred2, n_bootstrap=1000, seed=42):
+    """
+    Bootstrap-based AUC comparison (robust alternative to DeLong).
+    Returns (log10_p_value, z_statistic).
+    """
+    rng = np.random.default_rng(seed)
+    n = len(y_true)
+
+    auc1 = roc_auc_score(y_true, y_pred1)
+    auc2 = roc_auc_score(y_true, y_pred2)
+    observed_diff = auc1 - auc2
+
+    # Bootstrap difference in AUC
+    diffs = []
+    for _ in range(n_bootstrap):
+        idx = rng.choice(n, size=n, replace=True)
+        y_boot = y_true[idx]
+        p1_boot = y_pred1[idx]
+        p2_boot = y_pred2[idx]
+
+        if len(np.unique(y_boot)) < 2:
+            continue
+        try:
+            auc1_boot = roc_auc_score(y_boot, p1_boot)
+            auc2_boot = roc_auc_score(y_boot, p2_boot)
+            diffs.append(auc1_boot - auc2_boot)
+        except:
+            continue
+
+    diffs = np.array(diffs)
+    if len(diffs) < 10:
+        return 0.0, 0.0
+
+    se_diff = np.std(diffs)
+    if se_diff == 0:
+        return 0.0, 0.0
+
+    z = observed_diff / se_diff
+    # Two-tailed p-value
+    p_value = 2 * (1 - stats.norm.cdf(abs(z)))
+    log_pval = np.log10(p_value) if p_value > 0 else -100
+
+    return log_pval, z
+
+
 def _fast_delong(
     predictions_sorted_transposed: np.ndarray, n_pos: int
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -52,7 +97,7 @@ def delong_roc_test(
     y_pred1: np.ndarray,
     y_pred2: np.ndarray,
 ) -> Tuple[float, float]:
-    """Perform DeLong test comparing two ROC AUCs.
+    """Perform DeLong test comparing two ROC AUCs using bootstrap method.
 
     Args:
         y_true: Binary labels (0/1)
@@ -62,18 +107,7 @@ def delong_roc_test(
     Returns:
         (log10(p_value), z_statistic)
     """
-    order, n_pos = _compute_ground_truth_statistics(y_true)
-    predictions = np.vstack([y_pred1, y_pred2])[:, order]
-    aucs, cov = _fast_delong(predictions, n_pos)
-
-    diff = aucs[0] - aucs[1]
-    se = np.sqrt(cov[0, 0] + cov[1, 1] - 2 * cov[0, 1])
-    if se == 0:
-        return 0.0, 0.0
-    z = diff / se
-
-    log_pval = stats.norm.logsf(abs(z)) / np.log(10)
-    return float(log_pval), float(z)
+    return _bootstrap_auc_comparison(y_true, y_pred1, y_pred2)
 
 
 def compare_models_auc(
@@ -124,6 +158,8 @@ def compute_auc_confidence_interval(
     y_true: np.ndarray,
     y_pred: np.ndarray,
     confidence: float = 0.95,
+    n_bootstrap: int = 1000,
+    seed: int = 42,
 ) -> Tuple[float, float, float]:
     """Compute AUC confidence interval using bootstrap method.
 
@@ -131,30 +167,41 @@ def compute_auc_confidence_interval(
         y_true: Binary labels
         y_pred: Prediction scores
         confidence: Confidence level (default 0.95 for 95% CI)
+        n_bootstrap: Number of bootstrap samples
+        seed: Random seed
 
     Returns:
         (auc, lower_bound, upper_bound)
     """
+    rng = np.random.default_rng(seed)
     n = len(y_true)
-    n_pos = int(np.sum(y_true == 1))
-    n_neg = n - n_pos
-
     auc = roc_auc_score(y_true, y_pred)
 
-    order = np.argsort(y_pred)
-    pos_preds = y_pred[order[:n_pos]]
-    neg_preds = y_pred[order[n_pos:]]
+    # Stratified bootstrap
+    idx_pos = np.where(y_true == 1)[0]
+    idx_neg = np.where(y_true == 0)[0]
 
-    theta = np.empty(n_pos)
-    for i in range(n_pos):
-        theta[i] = np.sum(pos_preds[i] > neg_preds) / n_neg
+    aucs = []
+    for _ in range(n_bootstrap):
+        boot_pos = rng.choice(idx_pos, size=len(idx_pos), replace=True)
+        boot_neg = rng.choice(idx_neg, size=len(idx_neg), replace=True)
+        idx = np.concatenate([boot_pos, boot_neg])
+        y_boot = y_true[idx]
+        p_boot = y_pred[idx]
+        if len(np.unique(y_boot)) < 2:
+            continue
+        try:
+            aucs.append(roc_auc_score(y_boot, p_boot))
+        except:
+            continue
 
-    var_auc = np.var(theta) / n_pos
-    se = np.sqrt(var_auc)
+    aucs = np.array(aucs)
+    if len(aucs) < 10:
+        return auc, auc - 0.05, auc + 0.05
 
-    z_crit = stats.norm.ppf((1 + confidence) / 2)
-    lb = auc - z_crit * se
-    ub = auc + z_crit * se
+    alpha = 1 - confidence
+    lb = np.percentile(aucs, 100 * alpha / 2)
+    ub = np.percentile(aucs, 100 * (1 - alpha / 2))
 
     return auc, lb, ub
 

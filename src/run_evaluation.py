@@ -47,6 +47,8 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import numpy as np
 import pandas as pd
 import torch
@@ -72,8 +74,6 @@ from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from torch_geometric.loader import DataLoader
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.core.config import (
     ALL_FEATURE_NAMES,
     CHECKPOINT_DIR,
@@ -854,8 +854,8 @@ def _collect_flat_features(graphs: List) -> Tuple[np.ndarray, np.ndarray]:
     return np.array(X, dtype=np.float32), np.array(y, dtype=np.int32)
 
 
-def _train_mlp(X_train, y_train, X_test, y_test, epochs=80, lr=1e-3, seed=42) -> float:
-    """Train a flat MLP and return test AUC."""
+def _train_mlp(X_train, y_train, X_test, y_test, epochs=80, lr=1e-3, seed=42) -> Tuple[float, np.ndarray]:
+    """Train a flat MLP and return test AUC and probabilities."""
     torch.manual_seed(seed)
     model = FlatMLP(in_dim=X_train.shape[1]).to(DEVICE)
     opt   = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -878,7 +878,7 @@ def _train_mlp(X_train, y_train, X_test, y_test, epochs=80, lr=1e-3, seed=42) ->
     model.eval()
     with torch.no_grad():
         probs = torch.softmax(model(X_te), dim=1)[:, 1].cpu().numpy()
-    return float(roc_auc_score(y_test, probs))
+    return float(roc_auc_score(y_test, probs)), probs
 
 
 def _print_baseline_table(baselines: Dict[str, float]) -> None:
@@ -967,7 +967,8 @@ def run_baseline_comparison(
     # ── Flat MLP ──────────────────────────────────────────────────────────────
     logger.info("  Training Flat MLP (336-dim → 128 → 64 → 2)…")
     t0 = time.time()
-    baselines["Flat MLP"] = _train_mlp(X_train, y_train, X_test, y_test)
+    mlp_auc, mlp_probs = _train_mlp(X_train, y_train, X_test, y_test)
+    baselines["Flat MLP"] = mlp_auc
     logger.info("  MLP AUC=%.4f  (%.1fs)", baselines["Flat MLP"], time.time() - t0)
 
     # ── GNN + Literature ──────────────────────────────────────────────────────
@@ -983,7 +984,7 @@ def run_baseline_comparison(
     delong_results = _run_delong_tests(
         y_test, baselines,
         gnn_probs=gnn_probs,
-        svm_probs=svm_probs, rf_probs=rf_probs
+        svm_probs=svm_probs, rf_probs=rf_probs, mlp_probs=mlp_probs
     )
 
     # AUC Confidence Interval (DeLong)
@@ -1008,9 +1009,11 @@ def _run_delong_tests(
     gnn_probs: Optional[np.ndarray] = None,
     svm_probs: Optional[np.ndarray] = None,
     rf_probs: Optional[np.ndarray] = None,
+    mlp_probs: Optional[np.ndarray] = None,
 ) -> Dict:
-    """Run DeLong tests comparing GNN vs baseline models."""
+    """Run DeLong tests comparing GNN vs baseline models with Bonferroni correction."""
     from src.validation.delong_test import compare_models_auc, delong_roc_test
+    from sklearn.metrics import roc_auc_score
 
     results = {
         "baselines": baselines,
@@ -1023,9 +1026,14 @@ def _run_delong_tests(
         model_scores["SVM (RBF)"] = svm_probs
     if rf_probs is not None:
         model_scores["Random Forest"] = rf_probs
+    if mlp_probs is not None:
+        model_scores["Flat MLP"] = mlp_probs
 
     if len(model_scores) < 2:
         return results
+
+    gnn_auc = roc_auc_score(y_test, gnn_probs) if gnn_probs is not None else 0.0
+    n_comparisons = len(model_scores) - 1  # Excluding GNN itself
 
     # Run comparisons
     for name, scores in model_scores.items():
@@ -1038,15 +1046,28 @@ def _run_delong_tests(
                 scores,
             )
             pval = 10**log_pval if log_pval < 0 else 1.0
-            sig = " *" if pval < 0.05 else ""
-            logger.info("  GNN vs %s: z=%.2f, p=%.4f%s", name, z, pval, sig)
+            baseline_auc = roc_auc_score(y_test, scores)
+            auc_delta = gnn_auc - baseline_auc
+
+            # Bonferroni correction
+            pval_corrected = min(pval * n_comparisons, 1.0)
+            sig = " *" if pval_corrected < 0.05 else ""
+            sig_bonf = " *" if pval_corrected < 0.05 else ""
+
+            logger.info("  GNN vs %s: z=%.2f, p=%.4f (Bonf: %.4f), ΔAUC=%+.4f%s",
+                        name, z, pval, pval_corrected, auc_delta, sig_bonf)
             results["comparisons"].append({
                 "model1": "GNN (Ours)",
                 "model2": name,
+                "gnn_auc": float(gnn_auc),
+                "baseline_auc": float(baseline_auc),
+                "auc_delta": float(auc_delta),
                 "z": float(z),
                 "p_value": float(pval),
+                "p_value_bonferroni": float(pval_corrected),
                 "log10_p": float(log_pval),
-                "significant": pval < 0.05,
+                "significant": pval_corrected < 0.05,
+                "n_comparisons": n_comparisons,
             })
         except Exception as e:
             logger.warning("  DeLong test failed for GNN vs %s: %s", name, e)
@@ -1122,6 +1143,8 @@ def save_comprehensive_results(
         "baseline_comparison": baseline_result.get("baselines", {}),
         "per_fold_metrics":  ensemble_result.get("per_fold_metrics", []),
         "paired_ttest_val_vs_test": paired_ttest_result,
+        "ensemble_probs":   ensemble_result.get("ensemble_probs", []),
+        "labels":           ensemble_result.get("labels", []),
     }
     json_path = output_dir / "comprehensive_results.json"
     with open(json_path, "w") as f:

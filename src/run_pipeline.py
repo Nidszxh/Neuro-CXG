@@ -569,6 +569,9 @@ Examples:
     if args.lobes_11:
         os.environ["NEURO_CXG_11_LOBES"] = "1"
 
+    # Seed propagation for reproducibility
+    os.environ["NEURO_CXG_SEED"] = str(args.seed)
+
     # Backward-compatible alias: --use-atlas-spatial forces atlas-centroid features.
     if args.use_yolo_spatial and args.use_atlas_spatial:
         parser.error("Use only one of --use-yolo-spatial or --use-atlas-spatial")

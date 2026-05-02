@@ -28,24 +28,24 @@ import seaborn as sns
 # Add project to path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.core.config import RESULTS_DIR, NUM_LOBES, LOBE_NAMES
+from src.core.config import RESULTS_DIR, NUM_LOBES, LOBE_NAMES, PROJECT_ROOT
 from src.models.evaluation import evaluate_loader, compute_metrics
 import torch
 
-# Publication-quality matplotlib config
-plt.rcParams.update(
-    {
-        "figure.dpi": 300,
-        "savefig.dpi": 300,
-        "font.size": 10,
-        "axes.labelsize": 11,
-        "axes.titlesize": 12,
-        "xtick.labelsize": 9,
-        "ytick.labelsize": 9,
-        "legend.fontsize": 9,
-        "figure.facecolor": "white",
-    }
-)
+# Load publication-quality matplotlib style from configs/
+matplotlib_rc_path = PROJECT_ROOT / "configs" / "matplotlib.rc"
+if matplotlib_rc_path.exists():
+    plt.style.use(str(matplotlib_rc_path))
+    print(f"  Loaded matplotlib style from {matplotlib_rc_path}")
+else:
+    print(f"  Warning: {matplotlib_rc_path} not found, using defaults")
+
+# Set color cycle manually (rc file has parsing issues with hex colors)
+from matplotlib import cycler
+plt.rcParams['axes.prop_cycle'] = cycler('color', ['#0072B2', '#D55E00', '#CC79A7', '#009E73', '#F0E442', '#56B4E9', '#E69F00', '#000000'])
+
+# Override DPI for publication
+plt.rcParams.update({"figure.dpi": 300, "savefig.dpi": 300})
 
 
 def setup_output_dir(output_dir: Path) -> Path:
@@ -67,7 +67,8 @@ def generate_roc_curves(output_dir: Path):
     # Load evaluation results
     eval_path = RESULTS_DIR / "evaluation" / "comprehensive_results.json"
     if not eval_path.exists():
-        print(f"  Warning: {eval_path} not found, skipping ROC curves")
+        print(f"  Skipping ROC curves: {eval_path} not found. "
+              f"Run: python src/run_evaluation.py --full")
         return
 
     with open(eval_path) as f:
@@ -112,8 +113,10 @@ def generate_ablation_figure(output_dir: Path):
     # Load ablation results
     abl_path = RESULTS_DIR / "experiments" / "ablations" / "ablation_summary.json"
     if not abl_path.exists():
-        print(f"  Warning: {abl_path} not found, skipping ablation figure")
-        return
+        raise FileNotFoundError(
+            f"Ablation summary not found: {abl_path}\n"
+            f"Fix: Run: python -m src.experiments.run_ablations"
+        )
 
     with open(abl_path) as f:
         ablations = json.load(f)
@@ -155,16 +158,20 @@ def generate_training_curves(output_dir: Path):
     print("Generating training curves...")
 
     # Look for training monitor data
-    train_dir = RESULTS_DIR / "training"
+    train_dir = RESULTS_DIR / "experiments" / "training"
     if not train_dir.exists():
-        print(f"  Warning: {train_dir} not found, skipping training curves")
-        return
+        raise FileNotFoundError(
+            f"Training directory not found: {train_dir}\n"
+            f"Fix: Run: python src/run_pipeline.py --auto"
+        )
 
     # Find fold monitor files
-    monitor_files = list(train_dir.glob("**/fold_*_metrics.json"))
+    monitor_files = list(train_dir.glob("training_history_fold*.json"))
     if not monitor_files:
-        print("  No training monitor data found")
-        return
+        raise FileNotFoundError(
+            f"No training history files found in {train_dir}\n"
+            f"Fix: Run training with --auto flag"
+        )
 
     fig, axes = plt.subplots(2, 1, figsize=(10, 8))
     ax_loss, ax_auc = axes
@@ -173,9 +180,9 @@ def generate_training_curves(output_dir: Path):
         with open(mf) as f:
             data = json.load(f)
 
-        epochs = [d["epoch"] for d in data]
-        train_loss = [d.get("train_loss", 0) for d in data]
-        val_auc = [d.get("val_auc", 0.5) for d in data]
+        epochs = list(range(len(data.get("train_loss", []))))
+        train_loss = data.get("train_loss", [])
+        val_auc = data.get("val_auc", [])
 
         ax_loss.plot(epochs, train_loss, label=f"Fold {i+1} Train Loss")
         ax_auc.plot(epochs, val_auc, label=f"Fold {i+1} Val AUC")
@@ -192,7 +199,6 @@ def generate_training_curves(output_dir: Path):
     ax_auc.legend()
     ax_auc.grid(True, alpha=0.3)
 
-    fig.tight_layout()
     fig.savefig(output_dir / "training_curves" / "training_curves.png", bbox_inches="tight")
     fig.savefig(output_dir / "training_curves" / "training_curves.pdf", bbox_inches="tight")
     plt.close(fig)
@@ -203,21 +209,25 @@ def generate_attention_heatmap(output_dir: Path):
     """Generate brain region attention heatmap."""
     print("Generating attention heatmap...")
 
-    # Load node importance data
-    importance_path = RESULTS_DIR / "explainability" / "node_importance.json"
-    if not importance_path.exists():
-        print(f"  Warning: {importance_path} not found, skipping attention heatmap")
+    # Try to load node importance data from explainability output
+    summary_path = RESULTS_DIR / "explainability" / "summary.json"
+    if not summary_path.exists():
+        print(f"  Skipping attention heatmap: {summary_path} not found. "
+              f"Run: python src/run_explainability.py")
         return
 
-    with open(importance_path) as f:
-        importance = json.load(f)
+    with open(summary_path) as f:
+        summary = json.load(f)
 
-    # Extract lobe importance (mean across subjects)
+    # Extract lobe importance from gradcam_top5_differential
     lobe_scores = np.zeros(NUM_LOBES)
-    for lobe_idx, lobe_name in enumerate(LOBE_NAMES):
-        key = f"lobe_{lobe_idx}"
-        if key in importance:
-            lobe_scores[lobe_idx] = np.mean(importance[key])
+    if "gradcam_top5_differential" in summary:
+        for item in summary["gradcam_top5_differential"]:
+            region = item.get("region", "")
+            delta = item.get("delta", 0)
+            if region in LOBE_NAMES:
+                lobe_idx = LOBE_NAMES.index(region)
+                lobe_scores[lobe_idx] = delta
 
     # Create heatmap
     fig, ax = plt.subplots(1, 1, figsize=(6, 8))
@@ -239,19 +249,57 @@ def generate_causal_graphs(output_dir: Path):
     """Generate causal graph visualizations (ASD vs Control)."""
     print("Generating causal graph visualizations...")
 
+    # Suppress matplotlib colorbar warning globally for this function
+    import warnings
+    warnings.filterwarnings("ignore", ".*Colorbar layout.*")
+    
     try:
         from src.analysis.visualize_causal_graph import plot_comparison
+        from src.core.config import MASTER_MANIFEST
+        import pandas as pd
+
+        # Load manifest to get example subjects
+        df = pd.read_csv(MASTER_MANIFEST)
+        
+        # Filter to valid subjects (not in excluded list)
+        from src.core.hyperparams import EXCLUDED_SUBJECTS
+        df = df[~df['subject_id'].isin(EXCLUDED_SUBJECTS)]
+        
+        asd_subjects = df[df['DX_GROUP'] == 1]['subject_id'].tolist()
+        control_subjects = df[df['DX_GROUP'] == 2]['subject_id'].tolist()
+        
+        if not asd_subjects:
+            asd_subjects = df[df['DX_GROUP'] == 1]['subject_id'].tolist()
+        if not control_subjects:
+            # DX_GROUP might be 1=ASD, 2=Control in some formats
+            control_subjects = df[df['DX_GROUP'] == 0]['subject_id'].tolist()
+        
+        if not asd_subjects or not control_subjects:
+            # Debug: show column values
+            print(f"  Debug: DX_GROUP unique values: {df['DX_GROUP'].unique()}")
+            print("  Skipping causal graph: no ASD/Control subjects found")
+            return
+            
+        asd_subject = asd_subjects[0]
+        control_subject = control_subjects[0]
 
         output_path = output_dir / "causal_graphs" / "causal_graph_comparison.png"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
         result = plot_comparison(
-            str(output_path), threshold=0.3, dpi=300
+            asd_subject,
+            control_subject,
+            output_path,
+            threshold=0.3,
+            dpi=300,
         )
         if result is not None:
             print("  Saved causal graph comparison")
         else:
             print("  Causal graph generation skipped (no data)")
     except Exception as e:
-        print(f"  Warning: causal graph visualization failed: {e}")
+        if "Colorbar layout" not in str(e):
+            print(f"  Warning: causal graph visualization failed: {e}")
 
 
 def generate_calibration_plot(output_dir: Path):
@@ -260,8 +308,10 @@ def generate_calibration_plot(output_dir: Path):
 
     eval_path = RESULTS_DIR / "evaluation" / "comprehensive_results.json"
     if not eval_path.exists():
-        print(f"  Warning: {eval_path} not found, skipping calibration plot")
-        return
+        raise FileNotFoundError(
+            f"Evaluation results not found: {eval_path}\n"
+            f"Fix: Run: python src/run_evaluation.py"
+        )
 
     with open(eval_path) as f:
         results = json.load(f)
@@ -270,8 +320,10 @@ def generate_calibration_plot(output_dir: Path):
     labels = np.array(results.get("labels", []))
 
     if len(probs) == 0 or len(labels) == 0:
-        print("  No probability data found")
-        return
+        raise ValueError(
+            f"No probability data found in {eval_path}.\n"
+            f"Fix: Ensure run_evaluation.py saves 'ensemble_probs' and 'labels'."
+        )
 
     from sklearn.calibration import calibration_curve
 
@@ -367,11 +419,101 @@ def generate_architecture_diagram(output_dir: Path):
                 arrowprops=dict(arrowstyle="->", lw=2, color="darkblue"),
             )
 
-    fig.tight_layout()
     fig.savefig(output_dir / "architecture_diagram.png", bbox_inches="tight")
     fig.savefig(output_dir / "architecture_diagram.svg", bbox_inches="tight")
     plt.close(fig)
     print("  Saved architecture diagram to architecture_diagram.{png,svg}")
+
+
+def generate_per_site_chart(output_dir: Path):
+    """Generate per-site AUC bar chart."""
+    print("Generating per-site AUC chart...")
+
+    eval_path = RESULTS_DIR / "evaluation" / "comprehensive_results.json"
+    if not eval_path.exists():
+        raise FileNotFoundError(
+            f"Evaluation results not found: {eval_path}\n"
+            f"Fix: Run: python src/run_evaluation.py"
+        )
+
+    with open(eval_path) as f:
+        results = json.load(f)
+
+    subgroup = results.get("subgroup_analysis", {})
+    site_data = {k: v for k, v in subgroup.items() if k.startswith("site_")}
+
+    if not site_data:
+        raise ValueError(
+            f"No site data found in {eval_path}\n"
+            f"Fix: Ensure evaluation includes subgroup analysis with sites."
+        )
+
+    names = list(site_data.keys())
+    aucs = [site_data[k].get("auc", 0.5) for k in names]
+    ns = [site_data[k].get("n", 0) for k in names]
+
+    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+    colors = ["steelblue" if site_data[k].get("n_asd", 0) > 0 else "gray" for k in names]
+    bars = ax.bar(range(len(names)), aucs, color=colors)
+
+    ax.set_xticks(range(len(names)))
+    ax.set_xticklabels([f"{n}\n(n={ns[i]})" for i, n in enumerate(names)], rotation=45, ha="right")
+    ax.set_ylabel("Test AUC")
+    ax.set_title("Per-Site AUC (n per site shown)")
+    ax.axhline(y=0.5, color="gray", linestyle="--", alpha=0.5)
+    ax.set_ylim(0, 1)
+
+    fig.savefig(output_dir / "per_site_auc.png", bbox_inches="tight")
+    fig.savefig(output_dir / "per_site_auc.pdf", bbox_inches="tight")
+    plt.close(fig)
+    print("  Saved per-site AUC chart to per_site_auc.{png,pdf}")
+
+
+def generate_bootstrap_ci_figure(output_dir: Path):
+    """Generate Bootstrap CI visualization."""
+    print("Generating Bootstrap CI figure...")
+
+    eval_path = RESULTS_DIR / "evaluation" / "comprehensive_results.json"
+    if not eval_path.exists():
+        raise FileNotFoundError(
+            f"Evaluation results not found: {eval_path}\n"
+            f"Fix: Run: python src/run_evaluation.py"
+        )
+
+    with open(eval_path) as f:
+        results = json.load(f)
+
+    ci = results.get("ensemble_ci_95", {})
+    metrics = results.get("ensemble_metrics", {})
+
+    if not ci or not metrics:
+        raise ValueError(
+            f"No Bootstrap CI data found in {eval_path}\n"
+            f"Fix: Ensure evaluation includes bootstrap CI computation."
+        )
+
+    metric_names = ["auc", "f1", "accuracy", "sensitivity", "specificity"]
+    labels = ["AUC", "F1", "Accuracy", "Sensitivity", "Specificity"]
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+
+    y_pos = np.arange(len(metric_names))
+    values = [metrics.get(m, 0.5) for m in metric_names]
+    errors = [[metrics.get(m, 0.5) - ci.get(m, [0.5, 0.5])[0] for m in metric_names],
+             [ci.get(m, [0.5, 0.5])[1] - metrics.get(m, 0.5) for m in metric_names]]
+
+    bars = ax.barh(y_pos, values, xerr=errors, capsize=5, color="steelblue", edgecolor="black")
+
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(labels)
+    ax.set_xlabel("Value (with 95% CI)")
+    ax.set_title("Bootstrap 95% Confidence Intervals")
+    ax.set_xlim(0, 1)
+
+    fig.savefig(output_dir / "bootstrap_ci.png", bbox_inches="tight")
+    fig.savefig(output_dir / "bootstrap_ci.pdf", bbox_inches="tight")
+    plt.close(fig)
+    print("  Saved Bootstrap CI figure to bootstrap_ci.{png,pdf}")
 
 
 def main():
@@ -392,6 +534,8 @@ def main():
     generate_attention_heatmap(output_dir)
     generate_causal_graphs(output_dir)
     generate_calibration_plot(output_dir)
+    generate_per_site_chart(output_dir)
+    generate_bootstrap_ci_figure(output_dir)
     generate_architecture_diagram(output_dir)
 
     print("=" * 60)
@@ -403,7 +547,9 @@ def main():
     print("  [4] Attention heatmap - attention/")
     print("  [5] Causal graphs - causal_graphs/")
     print("  [6] Calibration plot - calibration/")
-    print("  [7] Architecture diagram - architecture_diagram.{png,svg}")
+    print("  [7] Per-site AUC chart - per_site_auc.{png,pdf}")
+    print("  [8] Bootstrap CI figure - bootstrap_ci.{png,pdf}")
+    print("  [9] Architecture diagram - architecture_diagram.{png,svg}")
 
 
 if __name__ == "__main__":

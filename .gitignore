@@ -1,15 +1,18 @@
 # SECTION 1: Python & Build Artifacts
-**/__pycache__/
-**/*.py[cod]
-*$py.class
+__pycache__/
+*.py[cod]
+*.py.class
 *.egg-info/
+.egg
+build/
+dist/
+*.egg
+
+# Virtual environments
 .venv/
 venv/
 env/
 .env
-build/
-dist/
-*.egg
 
 # SECTION 2: Jupyter Notebooks
 .ipynb_checkpoints/
@@ -17,88 +20,74 @@ dist/
 *.ipynb
 !notebooks/eda.ipynb
 
-# SECTION 3: Data - RAW (Downloaded/Generated - DO NOT COMMIT)
-# Raw fMRI data from ABIDE
+# SECTION 3: Downloaded/Generated Data (DO NOT COMMIT)
+# Raw ABIDE fMRI data
 data/raw/**
-
-# Processed time series and features
-data/processed/**
-
-# YOLO training data (generated)
-data/final/**
-
-# Image labels for YOLO
-data/images/
-data/labels/
-
-# Data metadata (large files - keep small config files only)
 data/metadata/*.feather
 data/metadata/harmonized_folds_cv/*.feather
+data/metadata/harmonized_folds_cv/*.pkl
 data/metadata/harmonized_folds_cv/*.csv
-data/metadata/harmonized_folds_cv/combat_model_*.pkl
+data/metadata/*_1015.csv
+data/metadata/active_subject_ids.txt
+data/metadata/subject_ids_1015.txt
+data/metadata/download_log.csv
+data/metadata/fold_unseen_site_audit.csv
+data/metadata/harmonization_variance_retention.csv
 
-# Keep only small metadata files (JSON, small CSVs, TXT)
+# Keep small metadata files only
 !data/metadata/atlas_metadata.json
 !data/metadata/roi_centroids.json
-!data/metadata/master_manifest.csv
-!data/metadata/active_subject_ids.txt
-!data/metadata/subject_ids_1015.txt
-!data/metadata/phenotypic_manifest_1015.csv
-!data/metadata/download_log.csv
-!data/metadata/fold_unseen_site_audit.csv
-!data/metadata/harmonization_variance_retention.csv
 
-# SECTION 4: Models & Checkpoints (Large - DO NOT COMMIT)
-# GNN model checkpoints
+# Processed data
+data/processed/**
+data/final/**
+
+# SECTION 4: Model Checkpoints & Weights (DO NOT COMMIT)
 models/checkpoints/**
 models/**/*.pt
 models/**/*.pth
-
-# YOLO weights (downloadable artifact)
+# YOLO weights
 yolo26n.pt
 models/**/weights/*.pt
 models/**/weights/*.weights
-
-# Keep model config files (YAML, JSON)
+# Keep model configs
 !models/**/*.yaml
 !models/**/*.json
 !models/README.md
 
-# SECTION 5: Results & Experiment Outputs (Generated - DO NOT COMMIT)
-# Full experiment runs (can be regenerated)
+# SECTION 5: Results & Generated Outputs (DO NOT COMMIT)
+# Experiment runs (can be regenerated)
 results/experiments/runs/**
 results/experiments/training/**
 results/experiments/detection/**
-
-# Subject-level predictions
-results/subject_analysis/**
-
-# Analysis outputs (can be regenerated)
+# Analysis outputs (ignore all, keep summary)
 results/analysis/**
-
-# Visualization outputs
+!results/analysis/result_analysis_summary.json
+# Subject analysis
+results/subject_analysis/**
+# Visualizations
 results/visualizations/**
-
-# Paper figures (can be regenerated)
-results/paper_figures/**
-
-# Keep only essential result summaries
+# Evaluation outputs (ignore all, keep essential)
+results/evaluation/**
 !results/evaluation/comprehensive_results.json
 !results/evaluation/comprehensive_results.csv
 !results/evaluation/config_snapshot.json
+# Evaluation RG duplicates (ignore all)
+results/evaluation_rg/**
+# Ablation results (keep)
+results/experiments/ablations/**
 !results/experiments/ablations/ablation_results.csv
+!results/experiments/ablations/ablation_summary.json
+# Explainability outputs (ignore all, keep summary)
+results/explainability/**
 !results/explainability/summary.json
-!results/evaluation_rg/comprehensive_results.json
-!results/evaluation_rg/comprehensive_results.csv
-!results/evaluation_rg/config_snapshot.json
-!results/evaluation_rgh/comprehensive_results.json
-!results/evaluation_rgh/comprehensive_results.csv
-!results/evaluation_rgh/config_snapshot.json
+# Paper figures - KEEP (demonstrate project quality)
+# (can be regenerated with: bash scripts/figures/generate_all.sh)
 
-# SECTION 6: Experiment Scripts (Reference Only - DO NOT COMMIT)
+# SECTION 6: Experiment Scripts (Reference Only - IGNORE)
 paper/experiments/**
 
-# SECTION 7: Large Data Files (Binary - DO NOT COMMIT)
+# SECTION 7: Large Binary Files (DO NOT COMMIT)
 *.nii
 *.nii.gz
 *.npy
@@ -111,31 +100,24 @@ paper/experiments/**
 *.7z
 *.feather
 *.pkl
+# Atlas-specific large files
+*.xml
+*.m
+*.pdf
+*.rtf
 
-# SECTION 8: Temporary & Development Files (DO NOT COMMIT)
+# SECTION 8: Temporary & Development Files
 temp/
 temp/**
 temp/**/*
-
-# Development patches
 patch_*.py
-
-# Documentation drafts
-docs/deprecated/**
-docs/archive/**
-
-# Hash/debug files
 *.backup
 *.log
+# Documentation drafts (already moved to archive_docs/)
+docs/deprecated/**
+archive_docs/**
 
-# Keep all workflow files for CI/CD (Right now we have none)
-.github/ 
-
-# Keep Docker configs
-!Dockerfile
-!configs/docker-compose.yml
-
-# SECTION 10: OS & IDE Files (DO NOT COMMIT)
+# SECTION 9: OS & IDE Files
 .DS_Store
 .AppleDouble
 Thumbs.db
@@ -145,23 +127,16 @@ Thumbs.db
 *.swo
 *~
 
-# SECTION 11: Testing & Coverage (DO NOT COMMIT)
+# SECTION 10: Testing & Coverage
 .pytest_cache/
 .coverage
 htmlcov/
 .tox/
 .mypy_cache/
 
-# SECTION 12: ML Experiment Tracking (DO NOT COMMIT)
+# SECTION 11: ML Experiment Tracking
 mlruns/
 .mlflow/
 
-# SECTION 13: Scripts - Keep Essential Only
-# Keep reproducible scripts
-!scripts/reproduce.sh
-!scripts/verify_seeds.sh
-!scripts/figures/generate_all.sh
-
 # Ignore script implementations
 tree/
-scripts/**/*
