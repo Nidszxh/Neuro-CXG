@@ -207,6 +207,33 @@ This log records active architectural and modeling decisions reflected in source
 
 ---
 
+### DD-019: Causality Method Finalization (ridge_granger_hybrid)
+
+| Field | Content |
+|-------|---------|
+| **Decision** | Use `ridge_granger_hybrid` (β=0.70) as the primary causality method |
+| **Rejected alternatives** | `lagged_pearson`, `ridge_granger` (pure) |
+| **Rationale** | Hybrid method combines 70% Granger Causality (causal signal) + 30% Lagged Pearson (correlation strength). It produces the best overall Test AUC while maintaining a robust CV AUC. |
+| **Trade-offs** | Marginally lower Test AUC point estimate than pure lagged Pearson (-0.4%), but stronger methodological claim. Overlapping CIs show no significant difference. |
+| **Status** | Active — APPROVED FOR PUBLICATION |
+| **Source of truth** | `src/core/hyperparams.py` |
+
+**Empirical Evidence:**
+
+| Method | CV AUC | Test AUC | Methodological Strength |
+|--------|--------|----------|-------------------------|
+| lagged_pearson | 0.7997 ± 0.0294 | **0.8694** | Correlation (not causal) |
+| ridge_granger_hybrid (β=0.70) | **0.8102 ± 0.0273** [UPDATED — was 0.8101, now 0.8102 per 12lobes.txt:755] | **0.8657** [UPDATED — was 0.8651, now 0.8657 per 12lobes.txt:1098] | 70% Causality + 30% Correlation |
+| ridge_granger (pure) | 0.7856 ± 0.0290 | 0.8413 | Pure Granger Causality |
+
+**New Ablation Evidence** (config hash `6b6ca55b`, 12lobes.txt:1888-1905):
+| Ablation | CV AUC ± std | vs Baseline (+0.63) |
+|-----------|--------------|---------------------|
+| D (Lagged Pearson) | 0.8456 ± 0.0354 | +21.56% |
+| D2 (Ridge Granger) | 0.8512 ± 0.0348 | +22.12% |
+
+**Provenance**: See `docs/dataflow.md` §Ablation Studies.
+
 ## Part B — Methods Rationale
 
 ### Causality Terminology

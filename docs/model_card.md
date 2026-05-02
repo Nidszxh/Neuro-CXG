@@ -25,7 +25,7 @@
 | **Sites** | 20 sites |
 | **Age range** | Pediatric to adult (varies by site) |
 | **Preprocessing** | AAL3 parcellation (170 ROIs → 12 lobes), DPABI fALFF computation |
-| **Causal method** | Ridge Granger (λ=0.1, p-prune=0.10) |
+| **Causal method** | ridge_granger_hybrid (β=0.70, 70% Ridge Granger λ=0.1 + 30% Lagged Pearson) [UPDATED — was Ridge Granger, now hybrid per AGENTS.md:116-117] |
 
 ## Evaluation Data
 
@@ -33,6 +33,7 @@
 - **Split**: 5-fold CV (train/val) + held-out test (154 subjects, ~15% of data)
 
 ## Performance Metrics
+Provenance: Config hash 6b6ca55b, run log 12lobes.txt
 
 | Metric | Value | Notes |
 |--------|-------|-------|
@@ -57,23 +58,27 @@
 
 ### Per-Site Performance (Test Set)
 
+**Provenance**: Config hash 6b6ca55b, run log `12lobes.txt:1626-1650`
+
 | Site | N | Ctrl | ASD | AUC | Status |
 |------|---|------|-----|-----|--------|
-| NYU | 27 | 12 | 15 | 0.8833 | Pass |
-| UM_1 | 16 | 8 | 8 | 0.7031 | Pass |
-| UCLA_1 | 11 | 6 | 5 | 0.6333 | Marginal |
-| USM | 11 | 7 | 4 | 0.8929 | Pass |
+| NYU | 27 | 12 | 15 | **0.9000** [UPDATED — was 0.8833, now 0.9000 per 12lobes.txt:1631] | Pass |
+| UM_1 | 16 | 8 | 8 | 0.7188 | Pass |
+| UCLA_1 | 11 | 6 | 5 | 0.7667 | Pass |
+| USM | 11 | 7 | 4 | 0.7857 | Pass |
 | YALE | 8 | 4 | 4 | 1.0000 | Pass |
-| PITT | 9 | 5 | 4 | 0.9500 | Pass |
-| TRINITY | 7 | 3 | 4 | 1.0000 | Pass |
+| PITT | 9 | 5 | 4 | 0.7500 | Pass |
+| TRINITY | 7 | 3 | 4 | 0.8333 | Pass |
 | KKI | 7 | 3 | 4 | 1.0000 | Pass |
 | STANFORD | 6 | 3 | 3 | 1.0000 | Pass |
-| SBL | 5 | 3 | 2 | 0.8333 | Pass |
+| SBL | 5 | 3 | 2 | 0.6667 | Pass |
 | OLIN | 5 | 3 | 2 | 0.8333 | Pass |
-| LEUVEN_2 | 5 | 2 | 3 | 0.8333 | Pass |
+| LEUVEN_2 | 5 | 2 | 3 | 1.0000 | Pass |
 | CALTECH | 5 | 2 | 3 | 1.0000 | Pass |
 | MAX_MUN | 7 | 3 | 4 | 0.5833 | Weak |
 | UM_2 | 5 | 2 | 3 | 0.5000 | Fail |
+
+**Site robustness gate**: 15/16 evaluable sites pass (93.75%), 1 fail (UM_2)
 
 **Sites with AUC < 0.55**: UM_2 (n=5)
 **Site robustness gate**: 15/16 evaluable sites pass (93.75%)
@@ -93,7 +98,7 @@
 
 1. **Cross-site generalization**: 1/16 sites fail (UM_2 at AUC 0.50), 1 marginal (UCLA_1 at 0.63)
 2. **CV-Test gap**: CV AUC (0.79) is lower than test AUC (0.88), unusual but consistent with ensemble averaging
-3. **Brainstem features**: YOLO never detects Brainstem in 2D slices (uses synthetic fallback). 12-lobe architecture generalizes better than 11-lobe due to implicit regularization.
+3. **Brainstem features**: YOLO never detects Brainstem in 2D slices (uses synthetic fallback). ⚠️ Now explicitly logged as warning during validation (see operations.md §10). 12-lobe architecture generalizes better than 11-lobe due to implicit regularization.
 4. **Causality interpretation**: Directed functional connectivity from Ridge Granger, NOT philosophical causal inference.
 5. **Temporal resolution**: Depends on site-specific TR (1.5s–3.0s), causal lag limited to 10s of history.
 
@@ -130,4 +135,4 @@
 
 *This model card follows the template from Mitchell et al. (2019) "Model Cards for Model Reporting".*
 
-*Last updated: April 30, 2026*
+*Last updated: May 2, 2026*

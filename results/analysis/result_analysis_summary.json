@@ -1,8 +1,8 @@
 {
   "n_subjects": 154,
-  "overall_accuracy": 0.7727272727272727,
-  "overall_auc": 0.8651476793248946,
-  "decision_threshold": 0.6420797180058067,
+  "overall_accuracy": 0.7792207792207793,
+  "overall_auc": 0.8655696202531645,
+  "decision_threshold": 0.6422646121485219,
   "threshold_policy": "youden",
   "per_site_calibration": {
     "requested": 0,
@@ -14,7 +14,7 @@
     "num_sites": 0
   },
   "youden_analysis": {
-    "threshold": 0.6420797061773786,
+    "threshold": 0.6422646229687983,
     "accuracy": 0.7792207792207793,
     "f1": 0.7733333333333333,
     "sensitivity": 0.7341772151898734,
@@ -33,21 +33,21 @@
       "mean_age": 21.0,
       "pct_male": 92.3,
       "mean_fiq": 112.7,
-      "mean_confidence": 0.761
+      "mean_confidence": 0.762
     },
     "FN": {
-      "n_subjects": 22,
+      "n_subjects": 21,
       "mean_age": 16.9,
-      "pct_male": 90.9,
-      "mean_fiq": 108.1,
-      "mean_confidence": 0.589
+      "pct_male": 90.5,
+      "mean_fiq": 107.7,
+      "mean_confidence": 0.587
     },
     "TP": {
-      "n_subjects": 57,
-      "mean_age": 15.2,
-      "pct_male": 68.4,
-      "mean_fiq": 110.5,
-      "mean_confidence": 0.83
+      "n_subjects": 58,
+      "mean_age": 15.3,
+      "pct_male": 69.0,
+      "mean_fiq": 110.6,
+      "mean_confidence": 0.827
     },
     "TN": {
       "n_subjects": 62,
@@ -66,7 +66,10 @@
         "n_control": 2,
         "auc": 1.0,
         "auc_status": "ok",
-        "accuracy": 1.0
+        "accuracy": 1.0,
+        "accuracy_ci_low": 0.566,
+        "accuracy_ci_high": 1,
+        "ci_status": "marginal"
       },
       {
         "site_id": 1,
@@ -75,7 +78,10 @@
         "n_control": 2,
         "auc": null,
         "auc_status": "too_few_samples",
-        "accuracy": 0.75
+        "accuracy": 0.75,
+        "accuracy_ci_low": null,
+        "accuracy_ci_high": null,
+        "ci_status": "insufficient"
       },
       {
         "site_id": 2,
@@ -84,7 +90,10 @@
         "n_control": 3,
         "auc": 0.9167,
         "auc_status": "ok",
-        "accuracy": 0.857
+        "accuracy": 0.857,
+        "accuracy_ci_low": 0.487,
+        "accuracy_ci_high": 0.974,
+        "ci_status": "marginal"
       },
       {
         "site_id": 3,
@@ -93,7 +102,10 @@
         "n_control": 2,
         "auc": null,
         "auc_status": "too_few_samples",
-        "accuracy": 1.0
+        "accuracy": 1.0,
+        "accuracy_ci_low": null,
+        "accuracy_ci_high": null,
+        "ci_status": "insufficient"
       },
       {
         "site_id": 4,
@@ -102,7 +114,10 @@
         "n_control": 2,
         "auc": 1.0,
         "auc_status": "ok",
-        "accuracy": 0.8
+        "accuracy": 0.8,
+        "accuracy_ci_low": 0.376,
+        "accuracy_ci_high": 0.964,
+        "ci_status": "marginal"
       },
       {
         "site_id": 5,
@@ -111,7 +126,10 @@
         "n_control": 3,
         "auc": 0.5,
         "auc_status": "ok",
-        "accuracy": 0.429
+        "accuracy": 0.429,
+        "accuracy_ci_low": 0.158,
+        "accuracy_ci_high": 0.75,
+        "ci_status": "marginal"
       },
       {
         "site_id": 6,
@@ -120,7 +138,10 @@
         "n_control": 12,
         "auc": 0.9,
         "auc_status": "ok",
-        "accuracy": 0.852
+        "accuracy": 0.852,
+        "accuracy_ci_low": 0.675,
+        "accuracy_ci_high": 0.941,
+        "ci_status": "sufficient"
       },
       {
         "site_id": 7,
@@ -129,7 +150,10 @@
         "n_control": 2,
         "auc": null,
         "auc_status": "too_few_samples",
-        "accuracy": 1.0
+        "accuracy": 1.0,
+        "accuracy_ci_low": null,
+        "accuracy_ci_high": null,
+        "ci_status": "insufficient"
       },
       {
         "site_id": 8,
@@ -138,7 +162,10 @@
         "n_control": 3,
         "auc": 1.0,
         "auc_status": "ok",
-        "accuracy": 0.8
+        "accuracy": 0.8,
+        "accuracy_ci_low": 0.376,
+        "accuracy_ci_high": 0.964,
+        "ci_status": "marginal"
       },
       {
         "site_id": 9,
@@ -147,7 +174,10 @@
         "n_control": 5,
         "auc": 0.75,
         "auc_status": "ok",
-        "accuracy": 0.667
+        "accuracy": 0.667,
+        "accuracy_ci_low": 0.354,
+        "accuracy_ci_high": 0.879,
+        "ci_status": "marginal"
       },
       {
         "site_id": 10,
@@ -156,7 +186,10 @@
         "n_control": 3,
         "auc": 1.0,
         "auc_status": "ok",
-        "accuracy": 0.6
+        "accuracy": 0.6,
+        "accuracy_ci_low": 0.231,
+        "accuracy_ci_high": 0.882,
+        "ci_status": "marginal"
       },
       {
         "site_id": 11,
@@ -165,7 +198,10 @@
         "n_control": 1,
         "auc": null,
         "auc_status": "too_few_samples",
-        "accuracy": 1.0
+        "accuracy": 1.0,
+        "accuracy_ci_low": null,
+        "accuracy_ci_high": null,
+        "ci_status": "insufficient"
       },
       {
         "site_id": 12,
@@ -174,7 +210,10 @@
         "n_control": 3,
         "auc": 1.0,
         "auc_status": "ok",
-        "accuracy": 1.0
+        "accuracy": 1.0,
+        "accuracy_ci_low": 0.61,
+        "accuracy_ci_high": 1,
+        "ci_status": "marginal"
       },
       {
         "site_id": 13,
@@ -183,7 +222,10 @@
         "n_control": 3,
         "auc": 0.8333,
         "auc_status": "ok",
-        "accuracy": 0.571
+        "accuracy": 0.571,
+        "accuracy_ci_low": 0.25,
+        "accuracy_ci_high": 0.842,
+        "ci_status": "marginal"
       },
       {
         "site_id": 14,
@@ -192,7 +234,10 @@
         "n_control": 6,
         "auc": 0.6667,
         "auc_status": "ok",
-        "accuracy": 0.545
+        "accuracy": 0.545,
+        "accuracy_ci_low": 0.28,
+        "accuracy_ci_high": 0.787,
+        "ci_status": "sufficient"
       },
       {
         "site_id": 15,
@@ -201,7 +246,10 @@
         "n_control": 2,
         "auc": null,
         "auc_status": "too_few_samples",
-        "accuracy": 1.0
+        "accuracy": 1.0,
+        "accuracy_ci_low": null,
+        "accuracy_ci_high": null,
+        "ci_status": "insufficient"
       },
       {
         "site_id": 16,
@@ -210,7 +258,10 @@
         "n_control": 8,
         "auc": 0.8594,
         "auc_status": "ok",
-        "accuracy": 0.688
+        "accuracy": 0.75,
+        "accuracy_ci_low": 0.505,
+        "accuracy_ci_high": 0.898,
+        "ci_status": "sufficient"
       },
       {
         "site_id": 17,
@@ -219,7 +270,10 @@
         "n_control": 2,
         "auc": 0.6667,
         "auc_status": "ok",
-        "accuracy": 0.6
+        "accuracy": 0.6,
+        "accuracy_ci_low": 0.231,
+        "accuracy_ci_high": 0.882,
+        "ci_status": "marginal"
       },
       {
         "site_id": 18,
@@ -228,7 +282,10 @@
         "n_control": 7,
         "auc": 0.8214,
         "auc_status": "ok",
-        "accuracy": 0.818
+        "accuracy": 0.818,
+        "accuracy_ci_low": 0.523,
+        "accuracy_ci_high": 0.949,
+        "ci_status": "sufficient"
       },
       {
         "site_id": 19,
@@ -237,12 +294,15 @@
         "n_control": 4,
         "auc": 0.9375,
         "auc_status": "ok",
-        "accuracy": 0.875
+        "accuracy": 0.875,
+        "accuracy_ci_low": 0.529,
+        "accuracy_ci_high": 0.978,
+        "ci_status": "marginal"
       }
     ]
   },
   "calibration": {
-    "mean_confidence": 0.7483448051948053,
+    "mean_confidence": 0.748411038961039,
     "pct_high_confidence": 53.896103896103895,
     "calibration_bins": [
       "0.50\u20130.55",
@@ -257,34 +317,35 @@
       "0.95\u20131.00"
     ],
     "fraction_correct": [
-      0.4166666666666667,
-      0.6666666666666666,
-      0.6428571428571429,
-      0.75,
-      0.5,
+      0.38461538461538464,
+      0.7,
+      0.7142857142857143,
+      0.7272727272727273,
+      0.5384615384615384,
       0.875,
-      0.85,
-      0.9473684210526315,
+      0.8571428571428571,
+      0.9444444444444444,
       0.96,
       1.0
-    ]
+    ],
+    "brier_score": 0.15460348162337664
   },
   "severity_correlation": {
     "FIQ_ASD": {
       "r": 0.074,
-      "p": 0.5144
+      "p": 0.5147
     },
     "FIQ_All": {
-      "r": 0.027,
-      "p": 0.7369
+      "r": 0.028,
+      "p": 0.7327
     },
     "Age_ASD": {
-      "r": -0.035,
-      "p": 0.7573
+      "r": -0.034,
+      "p": 0.7641
     },
     "Age_All": {
       "r": -0.055,
-      "p": 0.4948
+      "p": 0.5007
     }
   },
   "n_case_studies": 15

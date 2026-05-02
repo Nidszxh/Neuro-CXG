@@ -122,11 +122,23 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 | `GNN_DROPOUT` | 0.35 | Dropout rate |
 | `GNN_POOLING` | `"anatomical"` | Hierarchical pooling |
 | `GNN_WEIGHT_DECAY` | 5e-4 | L2 regularization |
-| `GNN_ONECYCLE_MAX_LR` | 0.001 | Max learning rate |
+| `GNN_ONECYCLE_MAX_LR` | 0.001 | Max learning rate [per `12lobes.txt:522`] |
 | `GNN_ONECYCLE_WARMUP_FRACTION` | 0.05 | Warmup fraction |
 | `GNN_BATCH_SIZE` | 32 | Batch size |
 | `GNN_EPOCHS` | 100 | Max epochs |
 | `K_FOLDS` | 5 | CV folds |
+| `GNN_SEED` | 42 | Global seed (everywhere) |
+
+**Per-Fold Results** (config hash `6b6ca55b`, `12lobes.txt:755-762`):
+| Fold | AUC | F1 | Best Epoch |
+|------|--------|-----|------------|
+| 1 | 0.8027 | 0.7671 | 53 |
+| 2 | 0.7841 | 0.7500 | 50 |
+| 3 | 0.8062 | 0.7682 | 36 |
+| 4 | 0.7953 | 0.6829 | 29 |
+| 5 | 0.8626 | 0.7692 | 37 |
+
+**CV Summary**: 0.8102 ± 0.0273, mean F1=0.7475 ± 0.0331
 
 ### Site Bias Controls
 
@@ -174,7 +186,7 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 | `GNN_ENFORCE_MULTIVIEW_QUALITY_GATE` | True | Block poor views |
 | `GNN_MULTIVIEW_MAX_ZERO_EDGE_RATE` | 0.20 | Max 20% zero-edge |
 | `MULTIVIEW_GENERATION_ENFORCE_QUALITY_GATE` | True | Generation-time gate |
-| `HARMONIZATION_UNSEEN_SITE_POLICY` | `"passthrough"` | Unseen sites pass through |
+| `HARMONIZATION_UNSEEN_SITE_POLICY` | `"fail"` | Unseen sites cause the pipeline to fail |
 
 ---
 

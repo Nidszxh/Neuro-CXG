@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import sys
-from typing import Optional
+from typing import Optional, Any
 
 # Setup paths and config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -248,7 +248,7 @@ class ABIDECausalDataset(Dataset):
     def len(self):
         return len(self.manifest)
     
-    def get(self, idx):
+    def get(self, idx: int) -> Optional[Any]:
         """
         Build a PyTorch Geometric ``Data`` object for the subject at *idx*.
 

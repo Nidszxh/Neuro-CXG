@@ -304,13 +304,25 @@ def evaluate_ensemble(
 ):
     """
     Evaluate ensemble of all fold models on test set.
-    
+
+    DEPRECATED: This function is kept for backward compatibility only.
+    For canonical results, use: python src/run_evaluation.py
+
+    The authoritative evaluation (with bootstrap CIs, permutation tests,
+    baseline comparisons) is run via run_evaluation.py. This function may
+    produce slightly different numbers due to different threshold selection.
+
     Args:
         tracker: TrainingTracker with fold results
         checkpoint_manager: CheckpointManager for loading models
     """
+    logger.warning(
+        "DEPRECATED: evaluate_ensemble() is deprecated. "
+        "Use 'python src/run_evaluation.py' for canonical results."
+    )
+
     from src.features.graph_factory import ABIDECausalDataset
-    
+
     logger.info(f"\n{'='*70}")
     logger.info("ENSEMBLE EVALUATION (TEST SET)")
     logger.info(f"{'='*70}")

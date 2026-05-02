@@ -12,16 +12,6 @@ Covers all ROADMAP Phase 9.3 deliverables:
     ✅ Prediction confidence distribution (calibration)
     ✅ Relationship between prediction confidence and clinical severity
 
-Usage
------
-    # Full analysis (all sections)
-    python scripts/run_result_analysis.py
-
-    # Quick run — fewer case studies, skip slow plots
-    python scripts/run_result_analysis.py --n-cases 3 --no-heatmap
-
-    # Custom checkpoint / output directory
-    python scripts/run_result_analysis.py --output-dir results/analysis_v2
 
 Outputs
 -------
@@ -764,18 +754,32 @@ def run_site_effects(
     sites = df[df["site_id"] >= 0]["site_id"].unique()
     site_stats = []
 
+    def _wilson_ci(p: float, n: int, z: float = 1.96) -> tuple:
+        if n < 1:
+            return None, None
+        denom = 1 + z**2 / n
+        center = (p + z**2 / (2*n)) / denom
+        margin = z * np.sqrt((p * (1 - p) / n + z**2 / (4*n**2))) / denom
+        return (max(0, round(center - margin, 3)), min(1, round(center + margin, 3)))
+
     for site in sorted(sites):
         sdf      = df[df["site_id"] == site]
         auc, auc_status = _safe_auc(sdf)
         n_asd    = int((sdf["true_label"] == 1).sum())
         n_ctrl   = int((sdf["true_label"] == 0).sum())
+        n_total  = len(sdf)
         acc      = float(sdf["correct"].mean())
+        ci_low, ci_high = _wilson_ci(acc, n_total) if n_total >= 5 else (None, None)
+        ci_status = "sufficient" if n_total >= 10 else "marginal" if n_total >= 5 else "insufficient"
         site_stats.append({
-            "site_id": int(site), "n_total": len(sdf),
+            "site_id": int(site), "n_total": n_total,
             "n_asd": n_asd, "n_control": n_ctrl,
             "auc": round(auc, 4) if auc is not None else None,
             "auc_status": auc_status,
             "accuracy": round(acc, 3),
+            "accuracy_ci_low": ci_low,
+            "accuracy_ci_high": ci_high,
+            "ci_status": ci_status,
         })
         auc_log = f"{auc:.4f}" if auc is not None else "N/A"
         logger.info(
@@ -802,17 +806,29 @@ def _plot_site_auc(site_stats: List[Dict], save_path: Path) -> None:
         x_labels = [f"Site {s['site_id']}" for s in valid]
         aucs     = [s["auc"] for s in valid]
         ns       = [s["n_total"] for s in valid]
+        accs     = [s.get("accuracy", 0) for s in valid]
+        ci_lows  = [s.get("accuracy_ci_low") for s in valid]
+        ci_highs = [s.get("accuracy_ci_high") for s in valid]
+
+        has_ci = all(c is not None for c in ci_lows)
 
         fig, ax = plt.subplots(figsize=(max(8, len(valid) * 0.7), 5))
         colors  = ["#e74c3c" if a >= 0.6 else "#f39c12" if a >= 0.5 else "#bdc3c7" for a in aucs]
         bars    = ax.bar(x_labels, aucs, color=colors, alpha=0.85, edgecolor="white")
+
+        if has_ci:
+            yerrs = [[acc - lo if lo is not None else 0 for acc, lo in zip(accs, ci_lows)],
+                     [hi - acc if hi is not None else 0 for acc, hi in zip(accs, ci_highs)]]
+            ax.errorbar(x_labels, accs, yerr=yerrs, fmt='s', color='darkgreen',
+                        capsize=4, elinewidth=1.5, markersize=6, label='Accuracy (95% CI)')
+
         for bar, auc, n in zip(bars, aucs, ns):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005,
                     f"{auc:.2f}\nn={n}", ha="center", va="bottom", fontsize=8)
         ax.axhline(0.5, color="gray", lw=1.2, ls="--", label="Chance (0.50)")
-        ax.set_ylim(0.3, 0.95)
-        ax.set_ylabel("AUC", fontsize=12, fontweight="bold")
-        ax.set_title("Per-Site AUC on Test Set", fontsize=13, fontweight="bold")
+        ax.set_ylim(0.3, 1.05)
+        ax.set_ylabel("AUC / Accuracy", fontsize=12, fontweight="bold")
+        ax.set_title("Per-Site Performance on Test Set (AUC & 95% CI)", fontsize=13, fontweight="bold")
         plt.xticks(rotation=30, ha="right", fontsize=9)
         ax.grid(axis="y", alpha=0.3)
         ax.legend(fontsize=10)
@@ -877,6 +893,12 @@ def run_calibration_analysis(df: pd.DataFrame, output_dir: Path) -> Dict:
     pct_high  = float((df["confidence"] >= 0.75).mean() * 100)
     logger.info("  Mean confidence: %.3f  Pct high-conf (≥0.75): %.1f%%", mean_conf, pct_high)
 
+    labels = df["true_label"].values
+    probs = df["prob_asd"].values
+    brier_score = float(np.mean((probs - labels) ** 2))
+    random_baseline = 0.25
+    logger.info("  Brier Score: %.4f (random baseline: %.4f)", brier_score, random_baseline)
+
     _plot_calibration(df, bin_labels, frac_correct, output_dir / "calibration.png")
 
     return {
@@ -884,6 +906,7 @@ def run_calibration_analysis(df: pd.DataFrame, output_dir: Path) -> Dict:
         "pct_high_confidence": pct_high,
         "calibration_bins":    bin_labels,
         "fraction_correct":    frac_correct,
+        "brier_score": brier_score,
     }
 
 

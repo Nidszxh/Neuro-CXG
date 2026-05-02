@@ -3,18 +3,18 @@
 **Status**: Publication-ready literature review  
 **Date**: May 1, 2026  
 **Dataset**: ABIDE-I  
-**Canonical Model**: ridge_granger_hybrid (Test AUC 0.8651, 70% Ridge Granger + 30% Lagged Pearson)  
+**Canonical Model**: ridge_granger_hybrid (Test AUC 0.8657, 70% Ridge Granger + 30% Lagged Pearson)  
 
 **Historical comparison**: lagged_pearson achieved Test AUC 0.8694
 ---
 
 ## Executive Summary
 
-Neuro-CXG achieves **Test AUC 0.8651** on ABIDE-I using Ridge Granger Hybrid (70% Granger + 30% Pearson), representing a **+23.5% improvement** over the best prior published baseline (Heinsfeld et al., 0.70) and **+16.8% over recent GNN-based approaches** (Kawahara 2017, AUC 0.74).
+Neuro-CXG achieves **Test AUC 0.8657** on ABIDE-I using Ridge Granger Hybrid (70% Granger + 30% Pearson), representing a **+23.5% improvement** over the best prior published baseline (Heinsfeld et al., 0.70) and **+16.8% over recent GNN-based approaches** (Kawahara 2017, AUC 0.74).
 
 | Rank | Method | Year | Type | Test AUC | Δ vs Ours | Notes |
 |------|--------|------|------|----------|-----------|-------|
-| **🥇 1** | **Neuro-CXG (Ours)** | 2026 | Ridge Granger Hybrid GNN | **0.8651** | — | 12-lobe, β=0.70 |
+| **🥇 1** | **Neuro-CXG (Ours)     ███████████████ 0.8657    │** | — | 12-lobe, β=0.70 |
 | 2 | Li et al. (BrainNetCNN) | 2021 | CNN on brain graphs | 0.8348 | -0.0300 | Graph convolution |
 | 3 | Parisot et al. | 2018 | ChebNet | 0.8100 | -0.0548 | Spectral graph CNN |
 | 4 | Kawahara et al. | 2017 | GNN (recurrent) | 0.7400 | -0.1248 | Temporal graph |
@@ -131,7 +131,7 @@ Neuro-CXG achieves **Test AUC 0.8651** on ABIDE-I using Ridge Granger Hybrid (70
 ┌─────────────────────────────────────────────────────────┐
 │                    Test AUC (ABIDE-I)                   │
 │━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━│
-│ Neuro-CXG (Ours)     ███████████████████████ 0.8651    │
+│ Neuro-CXG (Ours)     ███████████████ 0.8657    │    │
 │ BrainNetCNN (Li21)   ██████████████████████ 0.8348      │
 │ ChebNet (P18)        ████████████████████ 0.8100        │
 │ Multi-Modal (T19)    ███████████████████ 0.7850         │
@@ -179,7 +179,7 @@ Neuro-CXG achieves **Test AUC 0.8651** on ABIDE-I using Ridge Granger Hybrid (70
 
 | Configuration | Test AUC | Interpretation |
 |---------------|----------|----------------|
-| Real edges | 0.8651 | Baseline |
+| Real edges | 0.8657 | Baseline |
 | Shuffled edge weights | **0.8337** | Identical to real |
 
 ### Why This Happens
@@ -214,7 +214,7 @@ This is analogous to how CNNs use spatial priors (convolutional kernels) rather 
 
 ### Planned Neuro-CXG Extensions
 
-1. **ridge_granger_hybrid**: 70% Ridge Granger + 30% Lagged Pearson (target AUC 0.8651)
+1. **ridge_granger_hybrid**: 70% Ridge Granger + 30% Lagged Pearson (target AUC 0.8657)
 2. **Multiview learning**: Subject-specific + population-average graphs
 3. **Interpretable models**: LIME/SHAP for clinical decision support
 
@@ -232,7 +232,9 @@ This is analogous to how CNNs use spatial priors (convolutional kernels) rather 
 
 ## Summary
 
-**Neuro-CXG achieves state-of-the-art performance (Test AUC 0.8651)** on ABIDE-I, outperforming all prior published baselines by 4-29%. Key innovations include:
+**Neuro-CXG achieves state-of-the-art performance (Test AUC 0.8657)** on ABIDE-I, outperforming all prior published baselines by 4-29%. Key innovations include:
+
+**Provenance**: Config hash `6b6ca55b`, run log `12lobes.txt:1098`, 95% CI [0.8017, 0.9185]. See `docs/dataflow.md` §Part B for complete 29-stage pipeline.
 
 1. Directed functional connectivity edges (Ridge Granger)
 2. Domain adversarial site conditioning

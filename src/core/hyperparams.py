@@ -197,9 +197,9 @@ GNN_SITE_NORMALIZATION_MODE = "within_site"
 
 # Fold-safe harmonization policy for validation/test rows from sites that are
 # absent in fold-train. Options:
-# - "passthrough": harmonize seen sites, leave unseen rows unchanged.
+# - "passthrough": harmonize seen sites, leave unseen rows unchanged (default).
 # - "fail": abort fold harmonization when unseen sites are detected.
-HARMONIZATION_UNSEEN_SITE_POLICY = "fail"
+HARMONIZATION_UNSEEN_SITE_POLICY = "passthrough"
 
 # Multi-view integrity gate: disable invariance training when non-base views are
 # largely degenerate (zero-edge), rather than silently training on broken views.
@@ -265,3 +265,13 @@ F1_EXCELLENT_THRESHOLD = 0.70
 LOSS_RANDOM_THRESHOLD = 0.693
 LOSS_LEARNING_THRESHOLD = 0.65
 LOSS_CONVERGED_THRESHOLD = 0.50
+
+# --- MULTIVIEW GRAPH CONFIG ---
+_MULTIVIEW_VIEW_ORDER = (
+    "base",
+    "extended_lag",
+    "bootstrap_0",
+    "bootstrap_1",
+    "bootstrap_2",
+    "high_confidence",
+)

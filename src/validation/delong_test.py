@@ -157,3 +157,34 @@ def compute_auc_confidence_interval(
     ub = auc + z_crit * se
 
     return auc, lb, ub
+
+
+def wilson_score_interval(n_success: int, n_total: int, confidence: float = 0.95) -> Tuple[float, float, float]:
+    """
+    Wilson score confidence interval for a proportion (accuracy).
+
+    Better than Wald interval for small samples and near-boundary probabilities.
+    Formula: p ± z * sqrt(p*(1-p)/n + z²/(4n²)) / (1 + z²/n)
+
+    Args:
+        n_success: Number of correct predictions
+        n_total: Total sample size
+        confidence: Confidence level (default 0.95 for 95% CI)
+
+    Returns:
+        Tuple of (proportion, lower_bound, upper_bound)
+    """
+    if n_total == 0:
+        return 0.0, 0.0, 1.0
+
+    p = n_success / n_total
+    z = stats.norm.ppf((1 + confidence) / 2)
+
+    denominator = 1 + z**2 / n_total
+    center = p + z**2 / (2 * n_total)
+    spread = z * np.sqrt(p * (1 - p) / n_total + z**2 / (4 * n_total**2))
+
+    lb = (center - spread) / denominator
+    ub = (center + spread) / denominator
+
+    return p, max(0.0, lb), min(1.0, ub)

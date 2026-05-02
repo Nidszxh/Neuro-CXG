@@ -69,10 +69,12 @@ from src.core.config import (
     K_FOLDS,
     NUM_LOBES,
     RESULTS_ABLATIONS_DIR,
+    HARMONIZED_FOLDS_DIR,
 )
 from src.models.losses import FocalLoss
 from src.models.factory import build_model
 from src.models.training_utils import make_loader, train_fold_with_onecycle
+from src.models.gnn_model import _set_global_seed
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -201,34 +203,28 @@ def build_pearson_graphs(output_dir: Path) -> bool:
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Monkey-patch the module-level constant in construct_causal
-    # NOTE: This is fragile for parallel execution but safe for sequential ablation runs.
-    # TODO: Refactor to use dependency injection.
+    # Method is passed as an argument to construct_graph(), bypassing the module-level constant.
+    # No global mutation or restoration needed.
     import src.features.construct_causal as cc_mod
 
+    logger.info(f"  Method: lagged_pearson (passed as argument)")
+    logger.info(f"  Output dir      : {output_dir}")
 
-    try:
-        logger.info(f"  Method override : {original_method} → lagged_pearson")
-        logger.info(f"  Output dir      : {output_dir}")
+    import pandas as pd
+    from src.core.config import MASTER_MANIFEST
+    from tqdm import tqdm
 
-        import pandas as pd
-        from src.core.config import MASTER_MANIFEST
-        from tqdm import tqdm
+    manifest = pd.read_csv(MASTER_MANIFEST)
+    success, failed = 0, 0
+    for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Building Pearson graphs"):
+        result = cc_mod.construct_graph(row["subject_id"], row["split"], method="lagged_pearson", output_dir=output_dir)
+        if result:
+            success += 1
+        else:
+            failed += 1
 
-        manifest = pd.read_csv(MASTER_MANIFEST)
-        success, failed = 0, 0
-        for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Building Pearson graphs"):
-            result = cc_mod.construct_graph(row["subject_id"], row["split"], method="lagged_pearson", output_dir=output_dir)
-            if result:
-                success += 1
-            else:
-                failed += 1
-
-        logger.info(f"  Built {success}/{success+failed} graphs in {output_dir}")
-        return success > 0
-
-    finally:
-        pass
+    logger.info(f"  Built {success}/{success+failed} graphs in {output_dir}")
+    return success > 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -247,33 +243,27 @@ def build_ridge_granger_graphs(output_dir: Path) -> bool:
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Monkey-patch the module-level constant in construct_causal
+    # Method is passed as an argument to construct_graph(), bypassing the module-level constant.
     import src.features.construct_causal as cc_mod
-    from src.core.config import CAUSALITY_METHOD
-    original_method = CAUSALITY_METHOD
 
-    try:
-        logger.info(f"  Method override : {original_method} → ridge_granger")
-        logger.info(f"  Output dir      : {output_dir}")
+    logger.info(f"  Method: ridge_granger (passed as argument)")
+    logger.info(f"  Output dir      : {output_dir}")
 
-        import pandas as pd
-        from src.core.config import MASTER_MANIFEST
-        from tqdm import tqdm
+    import pandas as pd
+    from src.core.config import MASTER_MANIFEST
+    from tqdm import tqdm
 
-        manifest = pd.read_csv(MASTER_MANIFEST)
-        success, failed = 0, 0
-        for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Building Ridge Granger graphs"):
-            result = cc_mod.construct_graph(row["subject_id"], row["split"], method="ridge_granger", output_dir=output_dir)
-            if result:
-                success += 1
-            else:
-                failed += 1
+    manifest = pd.read_csv(MASTER_MANIFEST)
+    success, failed = 0, 0
+    for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Building Ridge Granger graphs"):
+        result = cc_mod.construct_graph(row["subject_id"], row["split"], method="ridge_granger", output_dir=output_dir)
+        if result:
+            success += 1
+        else:
+            failed += 1
 
-        logger.info(f"  Built {success}/{success+failed} graphs in {output_dir}")
-        return success > 0
-
-    finally:
-        pass
+    logger.info(f"  Built {success}/{success+failed} graphs in {output_dir}")
+    return success > 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -287,6 +277,7 @@ def run_kfold(
     folds: int = K_FOLDS,
     use_grl: bool = False,
     grl_alpha_max: float = 1.0,
+    use_fold_specific_harmonization: bool = False,
 ) -> Dict:
     """
     5-fold stratified CV for any dataset/model combination.
@@ -295,9 +286,12 @@ def run_kfold(
     Args:
         use_grl: Whether to use Gradient Reversal Layer for site debiasing.
         grl_alpha_max: Maximum GRL alpha value for annealing schedule.
+        use_fold_specific_harmonization: If True, use fold-specific harmonized features (like main pipeline)
     """
     logger.info(f"\n{'━'*70}")
     logger.info(f"ABLATION {ablation_name}: 5-Fold CV")
+    if use_fold_specific_harmonization:
+        logger.info(f"  Using fold-specific harmonized features (rigorous, no leakage)")
     logger.info(f"{'━'*70}")
 
     # Collect labels for stratification
@@ -367,6 +361,7 @@ def run_kfold(
         criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
 
     for fold, (train_idx, val_idx) in enumerate(cv_splits):
+        _set_global_seed(42)  # deterministic initialization per fold (like main pipeline)
         t0 = time.time()
 
         train_data = [dataset[i] for i in train_idx if dataset[i] is not None]
@@ -375,6 +370,18 @@ def run_kfold(
         if not train_data or not val_data:
             logger.warning(f"  Fold {fold}: insufficient data, skipping")
             continue
+
+        # Use fold-specific harmonized features if requested (like main pipeline)
+        if use_fold_specific_harmonization:
+            from src.features.graph_factory import ABIDECausalDataset
+            fold_temporal_path = HARMONIZED_FOLDS_DIR / f"harmonized_fold_{fold}.csv"
+            logger.info(f"  Fold {fold}: Using fold-specific harmonized features: {fold_temporal_path.name}")
+            fold_ds = ABIDECausalDataset(split='train', temporal_features_path=fold_temporal_path)
+            train_data = [fold_ds[i] for i in train_idx if fold_ds[i] is not None]
+            val_data = [fold_ds[i] for i in val_idx if fold_ds[i] is not None]
+            if not train_data or not val_data:
+                logger.warning(f"  Fold {fold}: insufficient data after harmonization reload, skipping")
+                continue
 
         train_loader = make_loader(train_data, batch_size=GNN_BATCH_SIZE, shuffle=True)
         val_loader   = make_loader(val_data,   batch_size=GNN_BATCH_SIZE)
@@ -536,6 +543,109 @@ def run_ablation_e(base_ds) -> Dict:
     return run_kfold(base_ds, factory, ablation_name="E (No site/demographics)")
 
 
+def run_ablation_f() -> Dict:
+    """F — Random topology: Same node features, random edge connections (same edge count).
+
+    Tests whether graph topology matters or just having any graph structure.
+    If AUC ~ FlatMLP (0.7245) → topology doesn't matter, just node features.
+    If AUC > FlatMLP but < Main (0.8651) → topology helps but specific edges matter.
+    """
+    from src.features.graph_factory import ABIDECausalDataset
+    import random
+
+    class RandomTopologyDataset(ABIDECausalDataset):
+        def __init__(self, split: str = "train", seed: int = 42):
+            self._rng = np.random.RandomState(seed)
+            super().__init__(split=split)
+
+        def get(self, idx: int):
+            data = super().get(idx)
+            if data is None:
+                return None
+            edge_index = data.edge_index
+            num_edges = edge_index.shape[1]
+            if num_edges < 2:
+                return data
+            src, dst = edge_index[0].numpy(), edge_index[1].numpy()
+            perm = self._rng.permutation(num_edges)
+            new_src = src[perm]
+            new_dst = dst[perm]
+            new_edge_index = torch.stack([torch.from_numpy(new_src), torch.from_numpy(new_dst)])
+            new_edge_attr = data.edge_attr[perm]
+            data.edge_index = new_edge_index
+            data.edge_attr = new_edge_attr
+            return data
+
+    try:
+        random_ds = RandomTopologyDataset(split="train")
+    except Exception as e:
+        logger.error(f"  Failed to create random topology dataset: {e}")
+        return {}
+
+    factory = _gnn_factory_default(
+        use_site_embedding=True,
+        use_demographics=True,
+        use_grl=True,
+        grl_alpha=GNN_GRL_ALPHA,
+        edge_gate=True,
+    )
+    return run_kfold(
+        random_ds, factory, ablation_name="F (Random topology)",
+        use_grl=True, grl_alpha_max=GNN_GRL_ALPHA_MAX,
+        use_fold_specific_harmonization=True,
+    )
+
+
+def run_ablation_g() -> Dict:
+    """G — Identity edges: fully connected graph with uniform weights.
+
+    Tests whether message-passing benefit comes from specific causal edges
+    or just from having a connected graph structure.
+    If AUC ~ FlatMLP (0.7245) → specific edges matter.
+    If AUC >> FlatMLP but < Main → topology helps, specific causal weights matter.
+    """
+    from src.features.graph_factory import ABIDECausalDataset
+
+    class IdentityEdgesDataset(ABIDECausalDataset):
+        def get(self, idx: int):
+            data = super().get(idx)
+            if data is None:
+                return None
+            num_nodes = NUM_LOBES
+            src_nodes = []
+            dst_nodes = []
+            for s in range(num_nodes):
+                for d in range(num_nodes):
+                    if s != d:
+                        src_nodes.append(s)
+                        dst_nodes.append(d)
+            new_edge_index = torch.tensor([src_nodes, dst_nodes], dtype=torch.long)
+            num_edges = new_edge_index.shape[1]
+            new_edge_attr = torch.ones(num_edges, 1, dtype=torch.float32)
+            data.edge_index = new_edge_index
+            data.edge_attr = new_edge_attr
+            return data
+
+    try:
+        identity_ds = IdentityEdgesDataset(split="train")
+    except Exception as e:
+        logger.error(f"  Failed to create identity edges dataset: {e}")
+        return {}
+
+    factory = _gnn_factory_default(
+        use_site_embedding=True,
+        use_demographics=True,
+        use_grl=True,
+        grl_alpha=GNN_GRL_ALPHA,
+        edge_gate=True,
+    )
+    return run_kfold(
+        identity_ds, factory, ablation_name="G (Identity edges)",
+        use_grl=True, grl_alpha_max=GNN_GRL_ALPHA_MAX,
+        use_fold_specific_harmonization=True,
+    )
+
+
 def run_ablation_d2() -> Dict:
     """D2 — Ridge Granger edges: rebuild graphs with 'ridge_granger' method and stronger GRL."""
     ridge_granger_dir = DATA_PROCESSED / "causal_graphs_ridge_granger"
@@ -633,7 +743,8 @@ def print_summary(results: Dict[str, Dict], baseline_auc: float = 0.63) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 ABLATION_MAP = {"A": "FlatMLP (no graph)", "B": "Spatial only", "C": "Temporal (no freq)",
-                "D": "Lagged Pearson", "D2": "Ridge Granger", "E": "No site/demographics"}
+                "D": "Lagged Pearson", "D2": "Ridge Granger", "E": "No site/demographics",
+                "F": "Random topology", "G": "Identity edges"}
 
 
 def main():
@@ -685,6 +796,12 @@ def main():
 
     if "E" in args.ablations:
         results["E"] = run_ablation_e(base_ds)
+
+    if "F" in args.ablations:
+        results["F"] = run_ablation_f()
+
+    if "G" in args.ablations:
+        results["G"] = run_ablation_g()
 
     print_summary(results, baseline_auc=args.baseline_auc)
 

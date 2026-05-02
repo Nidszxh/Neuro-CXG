@@ -2,26 +2,28 @@
 
 ## §1 — Canonical Results (Publication-Ready)
 
-### Primary Model Identity (April 30, 2026)
+### Primary Model Identity (May 2, 2026)
 
 - **Architecture**: 12-lobe GATv2 with site-conditioned GRL (alpha=0.10)
 - **Causality method**: ridge_granger_hybrid (β=0.70, 70% Ridge Granger + 30% Lagged Pearson)
+- **Config hash**: 6b6ca55b (run log: 12lobes.txt)
 
 - **Note**: ridge_granger_hybrid combines causal signal (Granger) with correlation strength (Pearson)
 
 ### Test Results (ridge_granger_hybrid, April 2026)
 
 ### Per-Fold CV Breakdown (ridge_granger_hybrid)
+Provenance: Config hash 6b6ca55b, run log 12lobes.txt
 
 | Fold | CV AUC | F1 | Best Epoch |
 |------|--------|-----|------------|
-| 1 | 0.8039 | 0.7671 | 53 |
-| 2 | 0.7833 | 0.7077 | 50 |
+| 1 | 0.8027 [UPDATED — was 0.8039, now 0.8027 per 12lobes.txt:565] | 0.7671 | 53 |
+| 2 | 0.7841 [UPDATED — was 0.7833, now 0.7841 per 12lobes.txt:609] | 0.7500 [UPDATED — was 0.7077, now 0.7500 per 12lobes.txt:609] | 50 |
 | 3 | 0.8058 | 0.7682 | 36 |
 | 4 | 0.7951 | 0.6829 | 29 |
 | 5 | 0.8626 | 0.7692 | 37 |
 
-**CV Summary**: 0.8101 ± 0.0274
+**CV Summary**: 0.8101 ± 0.0274 [Note: Includes fold3-5 from prior runs; 12lobes.txt run log only includes fold1-2]
 
 ### Key Hyperparameter Changes (April 30, 2026)
 
@@ -39,12 +41,14 @@
 | Ablation | Description | CV AUC | CV F1 | vs Baseline |
 |----------|-------------|--------|-------|-------------|
 | **Main** | Full pipeline (ridge_granger_hybrid) | 0.8100 | 0.7682 | 70% Granger + 30% Pearson |
-| A | FlatMLP (no graph) | 0.7245 | 0.6497 | -7.8% |
-| B | Spatial only (4 features) | 0.5435 | 0.5248 | -30.8% |
-| C | Temporal+Spatial (no freq) | 0.7285 | 0.6522 | -7.3% |
-| **D** | Lagged Pearson edges | 0.8455 | 0.7742 | +7.6% (CV only) |
-| **D2** | Ridge Granger edges | 0.8458 | 0.7747 | +7.7% (CV only) |
-| E | No site/demographics | 0.7323 | 0.6623 | -6.8% |
+| A | FlatMLP (no graph) | 0.7302 ± 0.0124 [UPDATED — was 0.7245, now 0.7302 per 12lobes.txt:1756] | +10.02% |
+| B | Spatial only (4 features) | 0.5577 ± 0.0222 [UPDATED — was 0.5435, now 0.5577 per 12lobes.txt:1779] | -27.23% |
+| C | Temporal+Spatial (no freq) | 0.7359 ± 0.0288 [UPDATED — was 0.7285, now 0.7359 per 12lobes.txt:1802] | +10.59% |
+| **D** | Lagged Pearson edges | 0.8456 ± 0.0354 [UPDATED — was 0.8455, now 0.8456 per 12lobes.txt:1827] | +21.56% (CV only) |
+| **D2** | Ridge Granger edges | 0.8512 ± 0.0348 [UPDATED — was 0.8458, now 0.8512 per 12lobes.txt:1850] | +22.12% (CV only) |
+| E | No site/demographics | 0.7393 ± 0.0297 [UPDATED — was 0.7323, now 0.7393 per 12lobes.txt:1871] | +10.93% |
+
+**Provenance**: Config hash 6b6ca55b, run log 12lobes.txt lines 1716-1905. See `docs/dataflow.md` §Ablation Studies.
 
 ### Key Findings
 
@@ -129,6 +133,7 @@ ASD subjects show **significantly higher parietal cortex in-degree** (p=0.028, s
 | 2026-04-28 | 0.7997 ± 0.0294 | 0.8694 | 12-lobe approved |
 | 2026-04-30 | 0.7856 ± 0.0290 | **0.8413** | ridge_granger (λ=0.1) |
 | 2026-05-01 | 0.8101 ± 0.0274 | **0.8651** | ridge_granger_hybrid (β=0.70) |
+| 2026-05-02 | **0.8102 ± 0.0273** [UPDATED — was 0.8101, now 0.8102 per 12lobes.txt:755] | **0.8657** [UPDATED — was 0.8651, now 0.8657 per 12lobes.txt:1098] | Config hash 6b6ca55b, full run log |
 
 ---
 

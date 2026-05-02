@@ -94,6 +94,7 @@ By default, `run_pipeline.py` is interactive. Use `--auto` for non-interactive e
 | `--auto` | Run all stages non-interactively | Production runs |
 | `--skip-download` | Skip ABIDE download | Already have data |
 | `--skip-split` | Skip train/val/test split | Reuse existing split |
+| `--skip-yolo` | Skip YOLO training (ROI detection stage 9) | Already have YOLO weights or iterating on later stages |
 | `--multiview` | Generate multiview graphs | Invariance experiments |
 | `--site-stratified-cv` | Regenerate cv_fold by site | Cross-site robustness |
 | `--force-reset` | Clear intermediates | Full rebuild |
@@ -178,17 +179,37 @@ python src/run_result_analysis.py
 
 | Stage | Output Path | Format | Description |
 |-------|-------------|--------|-------------|
-| download | `data/metadata/download_log.csv` | CSV | Download status per subject |
-| split | `data/final/{train,val,test}/` | dir | Split time series and images |
-| manifest | `data/metadata/master_manifest.csv` | CSV | Subject metadata with cv_fold |
-| yolo | `models/checkpoints/best.pt` | .pt | Trained YOLO weights |
-| spatial_features | `data/metadata/node_features_3d.csv` | CSV | 3D coordinates per lobe |
-| temporal_features | `data/metadata/node_attributes_temporal.csv` | CSV | Temporal features per ROI |
-| harmonization | `data/metadata/node_attributes_harmonized.csv` | CSV | ComBat-harmonized features |
-| causal_graphs | `data/processed/causal_graphs/*.pt` | .pt | Per-subject directed graphs |
-| gnn_training | `models/checkpoints/best_model_fold*.pt` | .pt | 5-fold model checkpoints |
-| evaluation | `results/evaluation/comprehensive_results.json` | JSON | Test metrics, bootstrap CI |
-| explainability | `results/explainability/summary.json` | JSON | Node/edge importance |
+| 0 preflight | — | — | Pre-flight validation log |
+| 1 download | `data/metadata/download_log.csv` | CSV | Download status per subject |
+| 2 split | `data/final/{train,val,test}/` | dir | Split time series and images |
+| 3 manifest | `data/metadata/master_manifest.csv` | CSV | Subject metadata with cv_fold |
+| 4 atlas_validation | `data/metadata/atlas_metadata.json` | JSON | Atlas validation report |
+| 5 pipeline_validation | `data/metadata/pipeline_ready.flag` | flag | Pipeline readiness |
+| 6 post_download_integrity | `data/metadata/download_integrity.json` | JSON | Download integrity |
+| 7 annotate | `data/processed/final_train/labels/` | txt | YOLO labels |
+| 8 yolo | `models/yolo/best.pt` | .pt | Trained YOLO weights |
+| 9 spatial_features | `data/metadata/node_features_3d.csv` | CSV | 3D coordinates per lobe |
+| 11 temporal_features | `data/metadata/node_attributes_temporal.csv` | CSV | Temporal features per ROI |
+| 12 harmonization | `data/metadata/node_attributes_harmonized.csv` | CSV | ComBat-harmonized features |
+| 13 pre_gnn_integrity | `data/metadata/pre_gnn_ready.flag` | flag | Pre-GNN validation |
+| 14 causal_graphs | `data/processed/causal_graphs/*.pt` | .pt | Per-subject directed graphs |
+| 15 multiview_graphs | `data/processed/causal_graphs_multiview/` | dir | Optional multiview graphs |
+| 16 diagnostics | `data/metadata/diagnostics.json` | JSON | Pipeline diagnostics |
+| 17 quality_validation | `data/metadata/quality_gates_pass.json` | JSON | Quality gates pass |
+| 18 gnn_training | `models/checkpoints/best_model_fold*.pt` | .pt | 5-fold model checkpoints |
+| 19 visualizations | `results/visualizations/` | dir | Training/feature plots |
+| 20 graph_visualization | `results/visualizations/causal_graph_comparison.png` | PNG | Causal graph comparison |
+| 21 evaluation | `results/evaluation/comprehensive_results.json` | JSON | Test metrics, bootstrap CI |
+| 22 explainability | `results/explainability/summary.json` | JSON | Node/edge importance |
+| 23 result_analysis | `results/analysis/result_analysis_summary.json` | JSON | Per-subject predictions |
+| 24 subject_analysis | `results/subject_analysis/` | CSV/txt | Per-subject diagnostics |
+| 25 post_fix_audit | `results/experiments/audit/` | JSON | Artifact validation |
+| 26 dev_code_audit | — | log | Code audit report |
+| 27 data_quality | `results/experiments/data_quality/` | CSV | Cross-site, bottleneck |
+| 28 ablations | `results/experiments/ablations/` | CSV/json | Ablation results |
+| 29 paper_figures | `results/paper_figures/` | PNG/SVG | Paper-ready figures |
+
+**Provenance**: Config hash `6b6ca55b`, run log `12lobes.txt` lines 1483-1968. See `docs/dataflow.md` for full data flow.
 
 ### Typical Workflow Patterns
 

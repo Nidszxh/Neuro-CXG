@@ -485,6 +485,45 @@ def run_ensemble_evaluation(test_graphs: List, output_dir: Path, enable_calibrat
     return result
 
 
+def run_paired_ttest(ensemble_result: Dict, output_dir: Path) -> Dict:
+    """
+    Run paired t-test comparing fold-level validation AUC vs fold-level test AUC.
+    Tests whether the CV-Test gap is statistically significant.
+    """
+    logger.info("=" * 60)
+    logger.info("SECTION 1B — PAIRED T-TEST (Val AUC vs Test AUC)")
+    logger.info("=" * 60)
+
+    val_aucs = ensemble_result.get("fold_aucs", [])
+    test_aucs = [pf["auc"] for pf in ensemble_result.get("per_fold_metrics", [])]
+
+    if len(val_aucs) != len(test_aucs) or len(val_aucs) < 2:
+        logger.warning("  Insufficient fold data for paired t-test")
+        return {"skipped": True, "reason": "insufficient_folds"}
+
+    from scipy import stats
+    t_stat, p_value = stats.ttest_rel(val_aucs, test_aucs)
+
+    logger.info("  Fold-level validation AUCs: %s", [f"{x:.4f}" for x in val_aucs])
+    logger.info("  Fold-level test AUCs:       %s", [f"{x:.4f}" for x in test_aucs])
+    logger.info("  Mean val AUC: %.4f  ± %.4f", np.mean(val_aucs), np.std(val_aucs))
+    logger.info("  Mean test AUC: %.4f  ± %.4f", np.mean(test_aucs), np.std(test_aucs))
+    logger.info("  Paired t-test: t=%.3f, p=%.4f", t_stat, p_value)
+    logger.info("  Interpretation: %s",
+                "SIGNIFICANT difference (p<0.05)" if p_value < 0.05 else "No significant difference (p≥0.05)")
+
+    result = {
+        "val_aucs": val_aucs,
+        "test_aucs": test_aucs,
+        "mean_val": float(np.mean(val_aucs)),
+        "mean_test": float(np.mean(test_aucs)),
+        "t_stat": float(t_stat),
+        "p_value": float(p_value),
+        "significant": p_value < 0.05,
+    }
+    return result
+
+
 def _print_metrics_table(
     metrics: Dict,
     ci: Dict,
@@ -1024,6 +1063,7 @@ def save_comprehensive_results(
     permutation_result: Dict,
     subgroup_result: Dict,
     baseline_result: Dict,
+    paired_ttest_result: Optional[Dict] = None,
     output_dir: Path = OUTPUT_DIR,
 ) -> None:
     """Write JSON + CSV summary of all evaluation sections."""
@@ -1081,6 +1121,7 @@ def save_comprehensive_results(
         "subgroup_analysis": subgroup_result,
         "baseline_comparison": baseline_result.get("baselines", {}),
         "per_fold_metrics":  ensemble_result.get("per_fold_metrics", []),
+        "paired_ttest_val_vs_test": paired_ttest_result,
     }
     json_path = output_dir / "comprehensive_results.json"
     with open(json_path, "w") as f:
@@ -1161,6 +1202,9 @@ def main() -> None:
     ens_probs = np.array(ensemble_result["ensemble_probs"])
     labels    = np.array(ensemble_result["labels"])
 
+    # ── Section 1B: Paired t-test (val AUC vs test AUC) ────────────────────────
+    paired_ttest_result = run_paired_ttest(ensemble_result, args.output_dir)
+
     # ── Section 2: Permutation test ───────────────────────────────────────────
     if not args.no_permutation:
         site_ids = np.array([
@@ -1228,7 +1272,7 @@ def main() -> None:
         bl_result = {"baselines": {"GNN (Ours)": ensemble_result["ensemble_metrics"]["auc"]}}
 
     # ── Section 5: Comprehensive results table ────────────────────────────────
-    save_comprehensive_results(ensemble_result, perm_result, sg_result, bl_result, args.output_dir)
+    save_comprehensive_results(ensemble_result, perm_result, sg_result, bl_result, paired_ttest_result, args.output_dir)
 
 
 if __name__ == "__main__":

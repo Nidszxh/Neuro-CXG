@@ -30,7 +30,8 @@ This document provides a complete, transparent accounting of how many times the 
 | 2026-04-24 | pipeline_20260424_191537 | 11-lobe | lagged_pearson | 0.8753 | 0.8121 | [0.8521, 0.8985] | ⚠️ Historical | Pre-architecture decision |
 | 2026-04-28 | pipeline_20260428_* | **12-lobe** | lagged_pearson | 0.8694 | 0.8000 | [0.7889, 0.9037] | ⚠️ Historical | Earlier method for comparison |
 | 2026-04-29 | run_evaluation.py | 12-lobe | **ridge_granger** | **0.8413** | 0.7673 | [0.7759, 0.8976] | ⚠️ Historical | Earlier pure Granger method |
-| 2026-05-01 | run_evaluation.py | 12-lobe | **ridge_granger_hybrid** | **0.8651** | 0.7651 | [0.7946, 0.9111] | ✅ **CANONICAL** | Primary model (70% Granger + 30% Pearson) |
+| 2026-05-01 | run_evaluation.py | 12-lobe | **ridge_granger_hybrid** | **0.8651** | 0.7651 | [0.7946, 0.9111] | ✅ Historical | Pre-May 2 run |
+| 2026-05-02 | run_pipeline.py | 12-lobe | **ridge_granger_hybrid** | **0.8657** | 0.7733 | [0.8017, 0.9185] | ✅ **CANONICAL** [NEW — per 12lobes.txt:1098] | Primary model (config hash 6b6ca55b, 70% Granger + 30% Pearson) |
 
 ### Detailed Evaluation Rationale
 

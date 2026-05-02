@@ -8,18 +8,45 @@ The canonical orchestration flow is defined in `src/pipeline/registry.py` and ex
 
 ```mermaid
 flowchart TD
-    A[ABIDE Download] --> B[Split + Manifest]
-    B --> C[Atlas Label Generation]
-    C --> D[YOLO Training]
-    B --> E[Temporal Feature Extraction]
-    D --> F[Spatial Feature Extraction]
-    E --> G[Fold-Safe Harmonization]
-    F --> G
-    G --> H[Causal Graph Construction]
-    H --> I[GNN 5-Fold Training]
-    I --> J[Evaluation]
-    I --> K[Explainability]
-    I --> L[Result Analysis]
+    subgraph Ingestion
+        A1[ABIDE Download] --> A2[Split + Manifest]
+        A2 --> A3[Atlas Validation]
+        A2 --> A4[Pipeline Validation]
+        A2 --> A5[Post-Download Integrity]
+    end
+    subgraph Detection
+        B1[Atlas Label Annotation] --> B2[YOLO Training]
+        B2 --> B3[Spatial Feature Extraction]
+    end
+    subgraph Features
+        C1[Temporal Feature Extraction] --> C2[Feature Harmonization]
+        B3 --> C2
+    end
+    subgraph Graphs
+        D1[Pre-GNN Integrity] --> D2[Causal Graph Construction]
+        D2 --> D3[Multi-View Graphs Optional]
+    end
+    subgraph Training
+        E1[Quality Validation] --> E2[GNN Training 5-Fold CV]
+    end
+    subgraph PostTraining
+        F1[Generate Visualizations]
+        F2[Causal Graph Visualization]
+        F3[Comprehensive Evaluation]
+        F4[Explainability]
+        F5[Result Interpretation]
+        F6[Subject-Level Analysis]
+    end
+    subgraph Extended
+        G1[Post-Fix Audit Check]
+        G2[Developer Code Audit]
+        G3[Data Quality Experiments]
+        G4[Ablation Studies]
+        G5[Generate Paper Figures]
+    end
+    C2 --> D1
+    E2 --> F1 & F2 & F3 & F4 & F5 & F6
+    F3 --> G1 & G2 & G3 & G4 & G5
 ```
 
 ## Design Principles
@@ -264,8 +291,8 @@ Into node tensor `x` with shape `(NUM_LOBES, GNN_IN_CHANNELS)`.
 
 **Input Shape:**
 - Nodes: 12 brain lobes (12-lobe architecture, approved for publication — DD-018)
-- Node features: 24 dimensions (8 temporal + 10 frequency + 2 internal + 4 spatial)
-- Edges: Directed causal adjacency (lagged Pearson correlation or ridge Granger)
+- Node features: 24 dimensions (18 temporal + 2 internal + 4 spatial) [UPDATED — was 8 temporal + 10 frequency, now 18 temporal (8 base + 10 frequency) per feature_registry.py]
+- Edges: Directed causal adjacency (ridge_granger_hybrid, β=0.70)
 - Edge attributes: 1 dimension (causality weight)
 
 **Architecture Details:**
@@ -277,7 +304,7 @@ Into node tensor `x` with shape `(NUM_LOBES, GNN_IN_CHANNELS)`.
 **Pooling Modes (configurable):**
 - `attention`: Learnable node attention (default, stable)
 - `mean_max_sum`: Concatenation of mean, max, and sum pooled embeddings
-- `anatomical`: 2-level hierarchy (lobes → networks → graph), with `AnatomicalHierarchyPool`
+- `anatomical`: 2-level hierarchy (lobes → networks → graph)
 
 **Domain Adaptation:**
 - Gradient Reversal Layer (GRL) for site-adversarial debiasing
@@ -287,6 +314,20 @@ Into node tensor `x` with shape `(NUM_LOBES, GNN_IN_CHANNELS)`.
 **Output:**
 - Logits: Shape `(batch_size, 2)` for binary classification (ASD vs Control)
 - Optional: Embeddings for explainability
+
+**Per-Fold Results** (config hash `6b6ca55b`, run log `12lobes.txt`):
+
+| Fold | Train/Val | AUC | F1 | Best Epoch | Threshold |
+|------|-----------|--------|-----|------------|-----------|
+| 1 | 565/142 | 0.8027 | 0.7671 | 53 | 0.6158 |
+| 2 | 565/142 | 0.7841 | 0.7500 | 50 | 0.6568 |
+| 3 | 566/141 | 0.8062 | 0.7682 | 36 | 0.6990 |
+| 4 | 566/141 | 0.7953 | 0.6829 | 29 | 0.6622 |
+| 5 | 566/141 | 0.8626 | 0.7692 | 37 | 0.6289 |
+
+**CV Summary**: 0.8102 ± 0.0273 (mean ± std), mean F1=0.7475 ± 0.0331
+
+**Data flow reference**: See `docs/dataflow.md` for complete 29-stage end-to-end data transformation.
 
 ## Loss Functions
 

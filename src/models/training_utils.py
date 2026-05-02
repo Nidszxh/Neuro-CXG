@@ -33,6 +33,7 @@ from src.core.config import (
     EVAL_THRESHOLD_POLICY,
     EVAL_FIXED_THRESHOLD,
 )
+from src.core.hyperparams import _MULTIVIEW_VIEW_ORDER
 from src.models.evaluation import evaluate_loader, optimal_threshold, resolve_threshold
 
 logger = logging.getLogger(__name__)
@@ -167,14 +168,6 @@ class _MultiviewCache:
         self._cache.clear()
 
 
-_MULTIVIEW_VIEW_ORDER = (
-    "base",
-    "extended_lag",
-    "bootstrap_0",
-    "bootstrap_1",
-    "bootstrap_2",
-    "high_confidence",
-)
 _multiview_cache: Optional[_MultiviewCache] = None
 
 

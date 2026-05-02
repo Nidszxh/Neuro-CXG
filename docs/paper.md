@@ -64,8 +64,8 @@ RIDGE_GRANGER_HYBRID_BETA = 0.70
 ```
 
 **Results:**
-- CV AUC: 0.8100 ± 0.0273 (+1% vs lagged_pearson)
-- Test AUC: 0.8651 (+0.3% vs lagged_pearson)
+- CV AUC: 0.8102 ± 0.0273 (+1.02% vs lagged_pearson) [UPDATED — was 0.8100, now 0.8102 per 12lobes.txt:755]
+- Test AUC: 0.8657 (+0.3% vs lagged_pearson) [UPDATED — was 0.8651, now 0.8657 per 12lobes.txt:1098]
 
 ---
 

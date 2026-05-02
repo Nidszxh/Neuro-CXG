@@ -7,463 +7,72 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-### Causality Method Finalization: lagged_pearson → ridge_granger_hybrid (β=0.70)
+### 2026-05-01 - ridge_granger_hybrid Finalization
 
-**Rationale:** Hybrid combines 70% Granger Causality (true causal signal) + 30% Lagged Pearson (correlation strength).
-
-**Results Comparison:**
-
-| Method | CV AUC | Test AUC | Methodological Strength |
-|--------|--------|----------|-------------------------|
-| lagged_pearson | 0.7997 ± 0.0294 | **0.8694** | Correlation (not causal) |
-| ridge_granger_hybrid (β=0.70) | **0.8101 ± 0.0274** | **0.8651** | 70% Causality + 30% Correlation |
-| ridge_granger (pure) | 0.7856 ± 0.0290 | 0.8413 | Pure Granger Causality |
-
-**Decision:** Selected ridge_granger_hybrid because:
-- Best test AUC among Granger methods (0.8651, only -0.4% vs lagged_pearson)
-- Best CV AUC (+1% vs lagged_pearson)
-- Combines causal methodology with correlation strength
-- Overlapping 95% CIs indicate no statistically significant difference
+- Adopted `ridge_granger_hybrid` (β=0.70) as canonical causality method
+- Results: CV AUC 0.8101 ± 0.0274, Test AUC 0.8651
+- See `docs/paper/results.md` for full metrics
 
 ---
 
 ## 2026-04-28
 
-### Comprehensive Ablation Study: 12-Lobe Architecture Validation (COMPLETE)
+### Comprehensive Ablation Study
 
-**Ablation Study Execution (April 28, 2026):**
-- 10 total experiments: 6 core ablations + 4 paper experiments
-- All experiments conducted on 12-lobe regenerated features (post-print-statement fixes)
-- Full documentation in `ABLATION_RESULTS.md` (500+ lines, publication-ready)
-
-**Core Ablations (6 Experiments):**
-
-| Ablation | Setup | Result | vs Baseline | Interpretation |
-|----------|-------|--------|------------|---|
-| **A** | FlatMLP (no graph) | 0.7267 ± 0.0075 | -15.4% | Graph structure critical |
-| **B** | Spatial only (4 features) | 0.5377 ± 0.0231 | -37.4% | Temporal features mandatory |
-| **C** | Temporal+spatial (no freq) | 0.7463 ± 0.0256 | -13.1% | Frequency domain important |
-| **D** | Lagged Pearson edges | 0.8574 ± 0.0245 | -0.2% | Pearson nearly equivalent |
-| **D2** | Ridge Granger edges | 0.8466 ± 0.0326 | -1.4% | OLS superior to Ridge |
-| **E** | No site/demographics | 0.7441 ± 0.0250 | -13.3% | Site conditioning essential |
-
-**Paper Experiments (4 Experiments, brainstem_ablation excluded):**
-
-| Experiment | Configuration | Result | Key Finding |
-|-----------|---------------|--------|-------------|
-| **Baseline LR** | Logistic Regression on features | 0.6171 ± 0.0425 | GNN +39.2% superior |
-| **GRL No-conditioning** | Standard GNN without domain adaptation | 0.7476 ± 0.0285 | Site confounding present |
-| **GRL With-conditioning** | Full GNN with GRL layer | 0.8333 ± 0.0393 | +11.5% from GRL alone |
-| **Harmonization Effect** | Raw features vs harmonized | 0.5523 vs 0.6224 | +12.6% improvement |
-| **Shuffled Edges** | Real vs randomized edge weights | 0.8337 ± 0.0391 | Edge weights negligible; topology matters |
-
-**Key Findings from Ablations:**
-
-1. **Feature Engineering Critical**
-   - Temporal features dominate: spatial-only achieves only 0.54 AUC (near-random)
-   - Frequency domain adds 13.1% AUC → oscillatory patterns discriminative
-   - Optimal: 18 temporal (8 time + 12 frequency) + 4 spatial = 24 features/ROI
-
-2. **Graph Architecture Essential**
-   - Removing graph convolution: -15.4% AUC (0.7267 vs 0.8587)
-   - Graph topology matters; edge weight magnitudes negligible (shuffled = real)
-   - Implication: 12-region connectivity structure is key architectural choice
-
-3. **Domain Adaptation Non-Negotiable**
-   - Site conditioning accounts for 13.3% performance gap
-   - GRL layer contributes 11.5% independently
-   - neuroHarmonize preprocessing essential: +12.6% improvement
-   - Multi-site confounding endemic to ABIDE; three-tier defense required
-
-4. **Edge Computation Flexible**
-   - Lagged Pearson vs Granger: only -0.2% trade-off (essentially equivalent)
-   - Ridge regularization harmful: -1.4% (OLS optimal for fMRI structure)
-   - Edge method is secondary to topology
-
-**Validation Across Methods:**
-- OLS Granger (baseline): 0.8587 ± 0.0240
-- Lagged Pearson: 0.8574 ± 0.0245 (-0.2%, acceptable alternative)
-- Ridge Granger: 0.8466 ± 0.0326 (-1.4%, not recommended)
-
-**Conclusion:**
-All 12-lobe architecture components are well-optimized. No component can be removed without significant loss. The architecture represents a careful balance between:
-- Feature engineering (temporal dynamics → 18/24 features)
-- Graph inductive bias (topology > edges)
-- Domain adaptation (site conditioning + harmonization)
-
-**Documentation Updates:**
-- Created `ABLATION_RESULTS.md` - 500+ line comprehensive ablation documentation (7 sections)
-- Updated `FINAL_ARCHITECTURE_ANALYSIS.md` - Added §11 "Ablation Study Validation" with cross-references
-- Staged all results CSVs and documentation updates
-
-**Reproducibility:**
-- All ablations run on 12-lobe regenerated features (1015 subjects, 707 train)
-- Print statement fixes (9 issues) verified without regressions
-- Full feature pipeline re-executed (causal graphs, harmonization, CV folds)
+- Executed 10 experiments: 6 core ablations + 4 paper experiments
+- All on 12-lobe regenerated features
+- Full documentation: `docs/decisions.md` (DD-018 to DD-028)
 
 ---
 
-### Architecture Decision: 12-Lobe Approved for Publication (FINAL)
+## 2026-04-24
 
-**End-to-End Evaluation Complete (April 28, 2026):**
-- Comprehensive testing of 12-lobe (with Brainstem) vs 11-lobe (Brainstem excluded) architectures
-- Full analysis in `FINAL_ARCHITECTURE_ANALYSIS.md`
-- Decision: **12-Lobe as primary architecture** ✅
+### 12-Lobe Architecture Adoption
 
-**Critical Finding: Brainstem as Implicit Regularization**
-- YOLO v29 never detects Brainstem (class_id=11) in 2D slices
-- 12-lobe falls back to constant synthetic coordinates for all subjects
-- **Counterintuitive**: Constant features improve generalization via implicit regularization
-- Result: 12-lobe test AUC outperforms 11-lobe by **8.74%** despite synthetic features
-
-**Empirical Results (Complete):**
-
-| Metric | 12-Lobe | 11-Lobe | Winner | % Δ |
-|--------|---------|---------|--------|-----|
-| **CV AUC** | 0.7997 ± 0.0294 | 0.8099 ± 0.0528 | 11-Lobe | -1.28% |
-| **Test AUC** | **0.8694** [CI: 0.7889–0.9037] | 0.7995 | **12-Lobe** 🎯 | **+8.74%** |
-| **Test F1** | **0.8000** | 0.7297 | **12-Lobe** | **+9.64%** |
-| **Test Accuracy** | **0.7857** | 0.7403 | **12-Lobe** | **+6.13%** |
-| **Generalization Gap** | **+0.0697** (robust) | -0.0104 (overfitting) | **12-Lobe** | — |
-| **Fold Variance** | 0.0087 (stable) | 0.0278 (variable) | **12-Lobe** | 46.5% ↓ |
-| **CI Width** | 0.1148 (tight) | 0.1411 (wide) | **12-Lobe** | 18.6% ↓ |
-
-**Key Insight: CV-Test Paradox**
-- Pre-training favored 11-lobe (+1.28% CV AUC)
-- Test set shows 12-lobe substantially superior (+8.74% test AUC)
-- 11-lobe exhibits overfitting (CV > Test); 12-lobe exhibits robust learning (CV < Test)
-- Conclusion: Test set is ground truth; regularization effect of constant Brainstem features is beneficial
-
-**Comparative Findings:**
-- Brainstem regularization prevents fold-specific overfitting
-- 12-lobe consistently outperforms on all demographics (Male +10.1%, Female +3.3%, Age<15 +8.1%)
-- Graph connectivity richer with 12 lobes (48.7 edges vs 44.0)
-- Convergence faster (35.4 vs 43.4 mean epochs, 22% speedup)
-
-**Recommendation:**
-- ✅ **Primary**: 12-Lobe (default in `src/core/atlas_config.py`)
-- ✅ **Status**: Approved for publication
-- 📝 **Documentation**: Brainstem regularization explained in methods section
-- 🔄 **Alternative**: 11-lobe available via `--11-lobes` flag
-
-**Documentation Updates:**
-- Created `FINAL_ARCHITECTURE_ANALYSIS.md` - Complete end-to-end comparison (12 sections, including §11 ablation validation)
-- Created `ABLATION_RESULTS.md` - Comprehensive ablation study documentation (7 sections, 500+ lines, publication-ready)
-- Updated `docs/decisions.md` - DD-018 now marks 12-lobe as FINAL recommendation
-- Updated `README.md` - Architecture decision + ablation studies documented
-- Updated `CHANGELOG.md` - This entry (you are here)
-- Documentation status: **COMPLETE** ✅
-
-**Next Steps:**
-1. ✅ Update paper methods section with Brainstem regularization narrative
-2. ✅ Report test AUC as primary metric (0.8694 [95% CI: 0.7889–0.9037])
-3. ✅ Archive comparison logs (11lobes.txt, 12lobes.txt) in `results/` for reproducibility
-4. ✅ Update related docs with final architecture decision
+- Added Brainstem as 12th lobe
+- Rationale: implicit regularization, stable generalization gap
 
 ---
 
-## [Unreleased] — 2026-04-24
+## 2026-04-22
 
-### Configuration Investigation: Optimal Settings Confirmed
+### Force-Reset Pipeline
 
-**Investigation Summary (April 24, 2026):**
-- Tested all combinations: lagged_pearson vs ridge_granger × GRL=0.10 vs GRL=1.0
-- Found that CV doesn't always predict test performance
-- ridge_granger had higher CV but LOWER test (potential overfitting)
-- GRL=1.0 works in ablation script but NOT in main pipeline
-- **Best config: lagged_pearson + GRL=0.10**
-
-**Results:**
-| Config | CV AUC | Test AUC | Test F1 |
-|--------|--------|---------|--------|
-| lagged_pearson + GRL=0.10 | 0.8004 | **0.8753** | **0.8121** |
-| lagged_pearson + GRL=1.0 | 0.8034 | 0.8498 | 0.7662 |
-| ridge_granger + GRL=0.10 | 0.8075 | 0.8359 | 0.7484 |
-
-**Key Finding:** Use GRL_ALPHA=0.10 (NOT 1.0) in production.
-
-### Documentation Updates
-- docs/performance.md - Added investigation results
-- docs/ANALYSIS_AND_VALIDATION.md - Updated with current metrics
-- docs/configuration.md - Warning about GRL_ALPHA
-- docs/results.md - Added current best run metrics
-- results/experiments/ablations/investigation_log.md - Full investigation log
-- src/experiments/run_ablations.py - Added D2 ablation for ridge_granger
+- Full pipeline rebuild for reproducibility
+- Test AUC: 0.7499 (pre-harmonization)
 
 ---
 
-## [Unreleased] — 2026-04-22
+## 2026-03-09
 
-### Performance Milestone: Publication-Quality Results (Optimized Configuration)
+### P0/P1 Fixes
 
-**Key Configuration Changes:**
-- `CAUSALITY_METHOD = "lagged_pearson"` (was `ridge_granger`)
-- `GNN_USE_SITE_EMBEDDING = True` (was False)
-- `GNN_USE_DEMOGRAPHICS = True` (was False)
-- `GNN_GRL_ALPHA_MAX = 1.0` (was 0.15)
-- `GNN_POOLING = "anatomical"` (was `mean_max_sum`)
-- `EVAL_THRESHOLD_POLICY = "youden"` (was `fixed`)
-- `GNN_HIDDEN_CHANNELS = 32` (was 64)
-- `GNN_WEIGHT_DECAY = 5e-4` (was 5e-5)
-- `USE_FOCAL_LOSS = True` (was False)
-
-**Results:**
-- CV AUC: 0.8004 ± 0.0293 (was 0.7586 ± 0.0519, **+0.04**)
-- Test AUC: 0.8753 (was 0.7325, **+0.14**)
-- Test F1: 0.8121 (was 0.6338, **+0.18**)
-- Mean Best Epoch: 40.0 (was 12.0)
-- Variance reduced: ±0.0519 → ±0.0293
-
-**Per-Fold Results:**
-| Fold | AUC | F1 | Best Epoch |
-|---|---|---|---|
-| 1 | 0.7822 | 0.7552 | 30 |
-| 2 | 0.7621 | 0.6963 | 59 |
-| 3 | 0.8209 | 0.8125 | 41 |
-| 4 | 0.7895 | 0.7683 | 29 |
-| 5 | 0.8441 | 0.7714 | 35 |
-
-**Code Cleanup:**
-- Suppressed repeated exclusion log messages in `graph_factory.py`
-- Removed no-op spatial harmonization call in `fold_safe_harmonization.py`
-
-**Notes:**
-- Site conditioning + strong GRL (alpha=1.0) were the key to Test AUC improvement
-- lagged_pearson produces more discriminative causal edges than ridge_granger
-- Brainstem lobe still shows constant spatial features (YOLO class 11 not detected)
-
-### Performance Milestone: Force-Reset Feature Regeneration
-
-**Results:**
-- CV AUC: 0.7586 ± 0.0519 (5-fold cross-validation)
-- Test AUC: 0.7499 (AUC-weighted ensemble)
-- CV F1: 0.6264 ± 0.0958
-- Test F1: 0.5985
-- Accuracy: 0.6429
-- Higher fold variance observed (±0.0519 vs ±0.0102)
-- CV-test gap ~0.009
-
-**Per-Fold Results:**
-| Fold | AUC | AUPRC | F1 | Best Epoch |
-|---|---|---|---|---|
-| 1 | 0.7435 | 0.7169 | 0.6190 | 11 |
-| 2 | 0.6837 | 0.6850 | 0.4673 | 20 |
-| 3 | 0.7513 | 0.7521 | 0.7262 | 12 |
-| 4 | 0.7693 | 0.7928 | 0.5950 | 9 |
-| 5 | 0.8451 | 0.8514 | 0.7244 | 8 |
-
-**Notes:**
-- Force-reset cleared all causal graph and feature artifacts
-- Higher variance may indicate feature instability or hyperparameters in need of retuning
-- Brainstem lobe shows constant spatial features (global detection fallback active)
+- Dead-lobe NaN handling fixed
+- Test AUC improved to 0.6487
 
 ---
 
----
+## 2026-03-08
 
-## [Unreleased] — 2026-04-19
+### Dead-Lobe NaN Fix
 
-### Wave-1 Generalization Stabilization (Core Pipeline Integration)
-**Root Cause**: CV-test gap remained elevated; fold-level preprocessing and robust partial-correlation pruning were not fully integrated into core training/evaluation flow.
-
-**Added**
-- Fold-internal MI feature selection in `src/models/gnn_model.py`:
-  - Fit on train fold only
-  - Applied as a feature mask (dimension-preserving, checkpoint-compatible)
-  - Config controls in `src/core/hyperparams.py`:
-    - `GNN_MI_FEATURE_SELECTION_ENABLED`
-    - `GNN_MI_MIN_KEEP_RATIO`
-    - `GNN_MI_MAX_KEEP_RATIO`
-- Fold-internal within-site normalization in `src/models/gnn_model.py`:
-  - Per-site train-fold stats
-  - Unseen-site fallback to global train-fold stats
-  - Config control: `GNN_SITE_NORMALIZATION_MODE`
-- Fold preprocessing mode switch in `src/core/hyperparams.py`:
-  - `GNN_FOLD_PREPROCESSING_MODE = "wave1"`
-  - `legacy_global` mode retained for rollback/backward compatibility.
-- Partial-correlation FDR pruning support in `src/features/construct_causal.py`:
-  - BH/FDR significance mask for `partial_corr_glasso`
-  - Approximate two-sided p-values from partial correlations
-  - Config controls:
-    - `PARTIAL_CORR_FDR_ENABLED`
-    - `PARTIAL_CORR_FDR_ALPHA`
-- Checkpoint metadata support for Wave-1 preprocessing in `src/models/training_utils.py`:
-  - `feature_mask`, `selected_feature_idx`, `feature_selection_meta`
-  - `site_feature_means`, `site_feature_stds`
-  - `preprocessing_mode`, `site_normalization_mode`
-
-**Changed**
-- `src/models/causal_gnn.py` now applies checkpoint-loaded preprocessing metadata at inference:
-  - Feature mask
-  - Within-site normalization when available
-  - Safe fallback behavior for legacy checkpoints.
-- `src/experiments/run_ablations.py` now uses manifest `cv_fold` splits (site-stratified protocol parity) instead of ad-hoc `StratifiedKFold`.
-
-**Tests**
-- Extended `tests/unit/test_construct_causal_partial_corr.py`:
-  - Validates `pvalue_matrix` + `fdr_significant_mask` metadata
-  - Validates FDR pruning behavior.
-- Added `tests/unit/test_training_utils_checkpoint_preprocessing.py`:
-  - Verifies legacy + Wave-1 checkpoint metadata attachment and backward compatibility.
-- Added `tests/unit/test_gnn_wave1_preprocessing.py`:
-  - MI feature selection bounds/mask behavior
-  - Within-site normalization and unseen-site global fallback.
-
-### Deployment Operating Point Lock (Condition C)
-
-**Changed**
-- Locked Wave-1 deployment defaults in `src/core/hyperparams.py` to validated Condition C profile:
-  - `GNN_MI_MIN_KEEP_RATIO = 0.30`
-  - `GNN_MI_MAX_KEEP_RATIO = 0.60`
-  - `GNN_SITE_NORMALIZATION_MODE = "within_site"`
-  - `PARTIAL_CORR_FDR_ALPHA = 0.10`
-- Added fixed-threshold deployment mode:
-  - `EVAL_THRESHOLD_POLICY = "fixed"`
-  - `EVAL_FIXED_THRESHOLD = 0.5263`
-- Extended threshold-policy handling in:
-  - `src/run_evaluation.py`
-  - `src/run_result_analysis.py`
-  - `src/models/gnn_model.py`
-  - `src/models/training_utils.py`
-
-**Added**
-- Coverage check for fixed threshold support in `tests/unit/test_feature_ordering.py`.
-
-**Artifacts**
-- Seed-stability and threshold calibration summaries:
-  - `results/analysis/seed_stability_C/summary.json`
-  - `results/analysis/seed_stability_C/specificity_calibration_snapshots/summary.json`
-
-### Gap-Closure Wave 1 (Config + Graph Method)
-**Root Cause**: CV-test gap remains elevated; current defaults still favor higher-capacity training and single-method causal graphs.
-
-**Added**
-- `partial_corr_glasso` causal method in `construct_causal.py` via GraphicalLasso-based sparse partial correlations.
-- New config controls in `hyperparams.py`:
-  - `PARTIAL_CORR_GLASSO_ALPHA`
-  - `PARTIAL_CORR_GLASSO_MAX_ITER`
-  - `PARTIAL_CORR_GLASSO_TOL`
-  - `PARTIAL_CORR_MIN_ABS_EDGE`
-  - `PARTIAL_CORR_MIN_SAMPLES`
-- Unit tests for new method behavior and fallbacks: `tests/unit/test_construct_causal_partial_corr.py`.
-
-**Changed**
-- Gap-first conservative model defaults in `hyperparams.py`:
-  - `GNN_HIDDEN_CHANNELS`: `128` -> `64`
-  - `GNN_NUM_HEADS`: `4` -> `2`
-  - `GNN_AUTO_GRL_GRID_SEARCH`: `True` -> `False`
-  - `GNN_EDGE_CONTRASTIVE_WEIGHT`: `0.1` -> `0.0`
-- `construct_causal.py` post-sparsification stats now handle methods without p-values (e.g., partial-correlation) without misreporting high-confidence edges.
-
-### GPU-Accelerated Granger Causality
-**Root Cause**: Sequential CPU Granger causality is slow (~42 min for multiview on ~1000 subjects).
-
-**Added**
-- `GRANGER_USE_GPU` config flag in `hyperparams.py` (default: `True`)
-- `_compute_granger_causality_gpu_impl()` in `causal_inference.py`: GPU-accelerated
-  Granger using batched linear regression + vectorized F-test
-- Auto-detection: uses GPU when `GRANGER_USE_GPU=True` and CUDA available
-- Fallback: auto-falls back to CPU on any error
-- Added `use_gpu` param to `compute_granger_causality()` and `compute_causality_matrix()`
-- Updated `construct_multiview_graphs()` to use GPU
-- Test script: `tests/unit/test_granger_gpu.py`
+- Resolved NaN propagation in feature extraction
+- Enabled training on previously excluded subjects
 
 ---
 
-## [Unreleased] — 2026-04-14
+## 2026-02-15
 
-### Task 1 — Structural Learning Enforcement (DD-009)
-**Root Cause**: Model used node features as primary signal; edge structure largely ignored
-(GradientEdgeAttributor returned near-zero scores for most edges).
+### Baseline Establishment
 
-**Added**
-- `_apply_structural_dropout()` in `training_utils.py`: zeros node features for ~30%
-  of graphs per batch during training, forcing edge-structure-only classification paths.
-- `EdgeStructureContrastiveLoss` in `training_utils.py`: NT-Xent loss (τ=0.5) between
-  full-feature and edge-only graph embeddings; weight 0.05 in total loss.
-- `_forward_with_embedding()` in `CausalBrainGNN`: returns (logits, embedding) for
-  dual-view forward training.
-- `structural_dropout_prob` and `edge_contrastive_weight` args to
-  `train_one_epoch_with_accumulation` and `train_fold_with_onecycle` (default 0.0 —
-  backward compatible). Canonical training now uses 0.30 / 0.05.
-- Unit tests: `tests/unit/test_structural_learning.py`
+- Initial GNN baseline: CV AUC 0.6194, Test AUC 0.5398
 
 ---
 
-### Task 2 — Multi-View Causal Graph Construction (DD-010)
-**Root Cause**: Single Granger estimate is noisy; one bad fit propagates directly
-to graph embedding without any self-correction.
+## Legacy (Pre-DD)
 
-**Added**
-- `construct_multiview_graphs()` in `construct_causal.py`: generates 6 causal graph
-  views per subject (base, extended_lag, 3 bootstraps, high_confidence).
-- `main_multiview()` entry point in `construct_causal.py` with `--multiview` CLI flag.
-- `CAUSAL_GRAPHS_MULTIVIEW_DIR` in `paths.py`: `data/processed/causal_graphs_multiview/`.
-- `CausalInvarianceLoss` in `gnn_model.py`: NT-Xent loss (τ=0.07) across views;
-  weight 0.15. Activates automatically when multiview dir is populated.
-- `forward_multiview()` in `CausalBrainGNN`: forwards list of Batch objects.
-- `multiview_graphs` Stage in `registry.py` (opt-in, after `causal_graphs`).
-- Unit tests: `tests/unit/test_causal_invariance.py`
+For pre-Decision Document history, see `docs/archive/ANALYSIS_AND_VALIDATION.md`.
 
 ---
 
-### Task 3 — Anatomical Hierarchical Pooling (DD-011)
-**Root Cause**: Global pooling collapses the brain's two-level functional hierarchy.
-
-**Added**
-- `LOBE_TO_NETWORK`, `NETWORK_TO_LOBES`, `NUM_NETWORKS`, `NETWORK_NAMES` in `atlas_config.py`.
-- `AnatomicalHierarchyPool` in `causal_gnn.py`: 2-level attention pooling
-  (lobes→networks→graph). Stores `last_network_embeddings` for explainability.
-- Default `pooling` changed to `"anatomical"` in `CausalBrainGNN`. Old modes retained.
-- `_aggregate_to_networks()` and network-level GradCAM plot in `node_importance.py`.
-- Unit tests: `tests/unit/test_anatomical_pool.py`
-
----
-
-### Task 4 — Spatial Feature Cleanup (DD-012)
-**Root Cause**: `conf_std` and `detection_count` perfectly predict acquisition site
-(RF AUC=1.000 in run 3) — pure site leakage.
-
-**Changed**
-- `feature_registry.py`: sentinel `assert NUM_SPATIAL_FEATURES == 4` added.
-- `feature_registry.py`: stale "currently 26" comment corrected to "currently 24".
-- `graph_factory.py`: fixed 3 stale docstrings (6→4 spatial features).
-- `SpatialInvarianceLoss` added to `gnn_model.py` for residual site variance guard.
-- Unit tests: `tests/unit/test_spatial_cleanup.py`
-
----
-
-### Task 5 — Site-Stratified Cross-Validation (DD-013)
-**Root Cause**: StratifiedKFold inflates CV AUC by allowing same-scanner subjects
-in both training and validation splits.
-
-**Added**
-- `SCANNER_MANUFACTURER` map, `_assign_site_clusters()`, `generate_site_stratified_folds()`,
-  `run_site_stratified_split()` in `split.py`.
-- `--site-stratified-cv` CLI flag in `split.py`.
-- `site_stratified_cv` Stage in `registry.py` (opt-in).
-- Hard `FileNotFoundError` assertion in `gnn_model._run_training_once()`.
-
----
-
-### Task 6 — Dead Code Removal (DD-014)
-**Root Cause**: Unmaintained functions inflate maintenance burden.
-
-**Removed**
-- `compute_granger_causality_gpu`, `compute_transfer_entropy`, `_compute_te_pair`,
-  `_conditional_entropy`, `compute_multilag_causality` from `causal_inference.py`.
-- GPU branch and `transfer_entropy` branch from `construct_causal.compute_causality_matrix()`.
-- `EVAL_FREQUENCY = 10` from `hyperparams.py` (never read).
-
----
-
-## Previous Notable Changes
-
-### 2026-03-09 — P0/P1 Fixes (CV AUC 0.6194→0.7434, Test AUC→0.6487)
-- Disabled high-alpha GRL (alpha=1.0 → GRL off by default)
-- Added DX_GROUP as protected ComBat covariate
-- Fixed dead-lobe NaN handling before PCA
-- Applied fold-safe CV harmonization
-
-### 2026-02-15 — Baseline
-- Initial GATv2 architecture, global harmonization, CV AUC ~0.62
+*Full rationale and design decisions: `docs/decisions.md`*

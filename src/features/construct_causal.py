@@ -35,8 +35,9 @@ from src.core.config import (
     PARTIAL_CORR_FDR_ALPHA,
     MULTIVIEW_GENERATION_ENFORCE_QUALITY_GATE,
     MULTIVIEW_GENERATION_MAX_ZERO_EDGE_RATE,
-    MULTIVIEW_GENERATION_POLICY,
+MULTIVIEW_GENERATION_POLICY,
 )
+from src.core.hyperparams import _MULTIVIEW_VIEW_ORDER
 
 # Numerical guardrails for Fisher-Z and confidence transforms.
 _FISHER_EPS = 1e-6
@@ -51,15 +52,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-_MULTIVIEW_VIEW_ORDER = (
-    "base",
-    "extended_lag",
-    "bootstrap_0",
-    "bootstrap_1",
-    "bootstrap_2",
-    "high_confidence",
-)
 
 
 class _LobeWarningTracker:
@@ -120,7 +112,7 @@ def _stabilize_sign(dominant_signal: torch.Tensor, roi_data: torch.Tensor) -> to
     return dominant_signal if dot >= 0 else -dominant_signal
 
 
-def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple:
+def aggregate_to_lobes(ts_raw: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Aggregate 170-ROI time series to 12-lobe representations using smart aggregation.
 

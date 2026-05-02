@@ -115,10 +115,19 @@
 | **Where enforced** | Warning path in `validate_environment()` (`src/core/validators.py`) |
 | **Recovery** | ```bash\n# Reset to medical-safe defaults\nYOLO_FLIPLR = 0.0\nYOLO_DEGREES = 0.0\n``` |
 | **Status** | Resolved — defaults are intentionally conservative |
+--- 
+### 10) Brainstem Spatial Feature Constant Warning
+
+| Attribute | Details |
+|-----------|---------|
+| **Trigger** | Warning: "Brainstem spatial features are constant across all subjects (global detection fallback active)" |
+| **Causes** | No YOLO detections for Brainstem (lobe ID 11), fallback to zero/lobe priors |
+| **Where enforced** | Spatial feature extraction in `src/features/extract_spatial.py`, validation in `src/validation/pipeline_checks.py` |
+| **Recovery** | Audit YOLO class-11 detections, verify atlas fallback behavior; for publication runs, resolve detection gaps |
+| **Status** | Active — non-critical, audit required before publication (per 12lobes.txt:473) |
 
 ---
-
-### 10) Recovery Strategy: Minimal Rebuild
+### 11) Recovery Strategy: Minimal Rebuild
 
 Use the smallest rebuild that restores consistency:
 
@@ -181,23 +190,26 @@ Use the smallest rebuild that restores consistency:
 
 ### Artifact-Backed Model Performance Snapshot
 
-**Current Best (May 2026):**
+**Current Best (May 2, 2026 — Config hash 6b6ca55b):** [UPDATED — was May 2026, now May 2 per 12lobes.txt]
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| **CV AUC** | 0.8101 ± 0.0274 | 5-fold |
-| **Test AUC** | **0.8651** | Ensemble, 95% CI [~0.78–0.90] |
-| **Test F1** | **0.7651** | Youden threshold |
-| **Test Accuracy** | **0.7727** | |
+| **CV AUC** | 0.8102 ± 0.0273 [UPDATED — was 0.8101, now 0.8102 per 12lobes.txt:755] | 5-fold |
+| **Test AUC** | **0.8657** [UPDATED — was 0.8651, now 0.8657 per 12lobes.txt:1098] | Ensemble, 95% CI [0.8017, 0.9185] |
+| **Test F1** | **0.7733** [UPDATED — was 0.7651, now 0.7733 per 12lobes.txt:1100] | Youden threshold (0.6423) |
+| **Test Accuracy** | **0.7792** [UPDATED — was 0.7727, now 0.7792 per 12lobes.txt:1101] | |
+| **Test Sensitivity** | **0.7342** per 12lobes.txt:1102 |
+| **Test Specificity** | **0.8267** per 12lobes.txt:1103 |
+| **Permutation p** | **0.0010** per 12lobes.txt:1128 |
 
 **Method:** ridge_granger_hybrid (β=0.70)
 
 **Per-Fold Results (12-Lobe):**
-
+Provenance: Config hash 6b6ca55b, run log 12lobes.txt
 | Fold | AUC | F1 |
 |------|-----|-----|
-| 1 | 0.8039 | 0.7671 |
-| 2 | 0.7833 | 0.7077 |
+| 1 | 0.8027 [UPDATED — was 0.8039, now 0.8027 per 12lobes.txt:565] | 0.7671 |
+| 2 | 0.7841 [UPDATED — was 0.7833, now 0.7841 per 12lobes.txt:609] | 0.7500 [UPDATED — was 0.7077, now 0.7500 per 12lobes.txt:609] |
 | 3 | 0.8058 | 0.7682 |
 | 4 | 0.7951 | 0.6829 |
 | 5 | 0.8626 | 0.7692 |

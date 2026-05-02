@@ -53,14 +53,17 @@ Each split contains:
 
 ---
 
-## Final Cohort Table
+## Final Cohort Table`
 
-| Metric | Value |
-|--------|-------|
-| **Total subjects** | 1,015 |
-| **ASD** | 486 (47.9%) |
-| **Control (TYP)** | 514 (50.6%) |
-| **Sites** | ~20 |
+| Metric | Value | Provenance |
+|--------|-------|-----------|
+| **Total subjects** | 1,015 | `12lobes.txt:1015` |
+| **ASD** | 522 (51.4%) | `12lobes.txt:1384-1385` |
+| **Control (TYP)** | 493 (48.6%) | `12lobes.txt:1384-1385` |
+| **Sites** | 20 | `SITE_ID` column |
+| **Train/Val/Test** | 707 / 154 / 154 | Split (70/15/15) |
+| **Age avg** | 16.8 years | Pipeline diagnostics |
+| **Sex (M/F)** | 860/155 | Pipeline diagnostics |
 
 ---
 
