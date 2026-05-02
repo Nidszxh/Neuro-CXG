@@ -28,6 +28,7 @@ data/metadata/harmonized_folds_cv/*.feather
 data/metadata/harmonized_folds_cv/*.pkl
 data/metadata/harmonized_folds_cv/*.csv
 data/metadata/*_1015.csv
+!data/metadata/master_manifest_1015.csv
 data/metadata/active_subject_ids.txt
 data/metadata/subject_ids_1015.txt
 data/metadata/download_log.csv
@@ -37,6 +38,7 @@ data/metadata/harmonization_variance_retention.csv
 # Keep small metadata files only
 !data/metadata/atlas_metadata.json
 !data/metadata/roi_centroids.json
+!data/metadata/master_manifest.csv
 
 # Processed data
 data/processed/**
@@ -114,6 +116,7 @@ patch_*.py
 *.backup
 *.log
 # Documentation drafts (already moved to archive_docs/)
+docs/archive/**
 docs/deprecated/**
 archive_docs/**
 
