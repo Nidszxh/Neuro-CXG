@@ -3,6 +3,32 @@
 This guide covers installation, CLI usage, end-to-end workflow, and ABIDE data acquisition.
 
 ---
+## Quick Start (From Zero to Training in <20 Minutes)
+
+**Prerequisite**: Existing ABIDE data in `data/raw/` and existing train/val/test split.
+
+```bash
+# Step 1: Activate environment (or create one with Python 3.10+)
+source /home/nidszxh/.venvs/ichigo/bin/activate
+
+# Step 2: Verify environment (5 seconds)
+python -c "from src.core.config import validate_environment; validate_environment()"
+
+# Step 3: Run full pipeline with existing data (10-15 minutes)
+python src/run_pipeline.py --auto --skip-download --skip-split
+
+# Step 4: Verify training completed (should show 5 trained models)
+ls models/checkpoints/best_model_fold*.pt
+
+# Step 5: Run evaluation (<30 seconds)
+python src/run_evaluation.py
+
+# Expected: Test AUC ≈ 0.8657 [0.80, 0.92]
+```
+
+**What if I don't have data yet?** See Part D for ABIDE download (requires ~2 hours for full dataset).
+
+---
 
 ## Part A — Installation
 

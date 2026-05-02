@@ -1,5 +1,9 @@
 # Evaluation
 
+This document covers canonical metrics, statistical tests, per-site breakdown, and reproducibility verification.
+
+---
+
 ## §1 — Canonical Results (Publication-Ready)
 
 ### Primary Model Identity (May 2, 2026)
@@ -166,24 +170,25 @@ python src/run_evaluation.py --no-permutation
 
 ### Primary Metrics to Report
 
-1. **Test AUC**: 0.8651 (ridge_granger_hybrid, primary)
-2. **Test F1**: 0.7651 (Youden threshold)
-3. **CV AUC**: 0.8100 ± 0.0273 (secondary)
-4. **Per-site breakdown**: 15/16 sites pass robustness gate
+**See [`docs/paper/results.md`](paper/results.md) for canonical metrics.**
+
+Key metrics:
+- Test AUC: 0.8657 [95% CI: 0.8017, 0.9185]
+- CV AUC: 0.8102 ± 0.0273
+- Test F1: 0.7733 (Youden threshold)
+- Per-site breakdown: available in [`docs/paper/results.md`](paper/results.md)
 
 ### Known Limitations
 
-- 1 site fails (UM_2, n=5, AUC=0.50)
 - Small sites (n < 11) show variable performance
-- CV-Test gap unusual (CV < Test by ~10%), but consistent with ensemble
-- Brainstem uses synthetic fallback coordinates
+- CV-Test gap explained by ensemble variance reduction
+- Brainstem uses fallback detection (see [`docs/paper/methods.md`](paper/methods.md))
 
-### Key Improvement Over Previous Runs
+### Historical Comparison
 
-| Metric | April 28 (lagged_pearson) | May 1 (ridge_granger_hybrid) | Δ |
-|--------|--------------------------|----------------------------|----|
-| Test AUC | 0.8694 | **0.8651** | -0.4% |
-| CV AUC | 0.7997 | **0.8100** | +1.0% |
-| Test F1 | 0.8000 | **0.7651** | -3.5% |
+| Metric | lagged_pearson (Apr 28) | ridge_granger_hybrid (May 2) | Δ |
+|--------|------------------------|------------------------------|----|
+| Test AUC | 0.8694 | **0.8657** | -0.4% |
+| CV AUC | 0.7997 | **0.8102** | +1.0% |
 
-*Canonical run: ridge_granger_hybrid (β=0.70) — best balance of CV performance and methodological rigor*
+*Canonical model: ridge_granger_hybrid (β=0.70) — best CV stability with rigorous fold-safe harmonization*

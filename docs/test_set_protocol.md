@@ -12,12 +12,14 @@ This document provides a complete, transparent accounting of how many times the 
 
 **CRITICAL FINDING**: The test set was evaluated **3 times** across two different model configurations and three graph methods. This is a potential violation of model selection integrity if not handled correctly.
 
-**RESOLUTION**: We establish **May 1, 2026 ridge_granger_hybrid evaluation (Test AUC 0.8651)** as the canonical result, justified by:
+**RESOLUTION**: We establish **May 2, 2026 ridge_granger_hybrid evaluation (Test AUC 0.8657)** as the canonical result, justified by:
 1. Completed model selection (based on CV metrics and causality interpretation)
 2. Architecture finalization (12-lobe approved)
 3. Best causal interpretation: 70% Ridge Granger (causal signal) + 30% Lagged Pearson (correlation strength)
-4. Best CV AUC among Granger-based methods (0.8100 ± 0.0273)
+4. Best CV AUC among Granger-based methods (0.8102 ± 0.0273)
 5. No subsequent information leak from test evaluation to model design
+
+See [`docs/paper/results.md`](paper/results.md) for full canonical metrics.
 
 ---
 
@@ -63,15 +65,15 @@ This document provides a complete, transparent accounting of how many times the 
 - **Status**: ⚠️ Historical — Superseded by ridge_granger_hybrid
 - **Rationale**: Replaced by ridge_granger_hybrid for better performance
 
-#### Evaluation 4: May 1 (Test AUC 0.8651) — **CANONICAL**
+#### Evaluation 4: May 2 (Test AUC 0.8657) — **CANONICAL**
 
-- **When**: After ridge_granger_hybrid adoption
+- **When**: After ridge_granger_hybrid adoption (fresh run May 2, 2026)
 - **Architecture**: 12-lobe
 - **Graph Method**: ridge_granger_hybrid (β=0.70, 70% Ridge Granger + 30% Lagged Pearson)
-- **Result**: Test AUC 0.8651, F1 0.7651, CI [0.7946–0.9111]
-- **Status**: ✅ **CANONICAL** — Primary model
-- **Rationale**: 
-  - Best CV AUC among Granger methods (0.8100 ± 0.0273)
+- **Result**: Test AUC 0.8657, F1 0.7733, CI [0.8017–0.9185]
+- **Status**: ✅ **CANONICAL** — Primary model (see [`docs/paper/results.md`](paper/results.md))
+- **Rationale**:
+  - Best CV AUC among Granger methods (0.8102 ± 0.0273)
   - Combines causal signal (Granger) with correlation strength (Pearson)
   - Test used to validate post-hoc; no design changes after result
 

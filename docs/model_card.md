@@ -1,5 +1,9 @@
 # Neuro-CXG Model Card
 
+This model card documents model architecture, training configuration, performance metrics, and limitations for reproducibility.
+
+---
+
 ## Model Details
 
 | Property | Value |
@@ -38,7 +42,7 @@ Provenance: Config hash 6b6ca55b, run log 12lobes.txt
 | Metric | Value | Notes |
 |--------|-------|-------|
 | **CV AUC** | 0.8101 ± 0.0274 | 5-fold cross-validation |
-| **Test AUC** | **0.8651** | Ensemble on held-out test set (ridge_granger_hybrid) |
+| **Test AUC** | **0.8657** [95% CI: 0.8017, 0.9185] | Ensemble on held-out test set (ridge_granger_hybrid) |
 | **Test F1** | **0.7651** | Threshold-optimized |
 | **Test Accuracy** | 77.27% | |
 | **Sensitivity** | 0.7342 | True positive rate |

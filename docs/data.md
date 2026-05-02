@@ -1,5 +1,9 @@
 # Data
 
+This document covers ABIDE dataset curation, anatomical parcellation, feature extraction, and harmonization protocols.
+
+---
+
 ## Architecture Status: 12-Lobe Approved (April 28, 2026)
 
 The 12-lobe architecture is approved for publication. Key findings:
