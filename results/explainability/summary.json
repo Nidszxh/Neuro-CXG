@@ -1,6 +1,6 @@
 {
-  "fold_used": 4,
-  "checkpoint": "/home/nidszxh/Projects/Neuro-CXG/models/checkpoints/best_model_fold4.pt",
+  "fold_used": 1,
+  "checkpoint": "/home/nidszxh/Projects/Neuro-CXG/models/checkpoints/best_model_fold1.pt",
   "device": "cuda",
   "num_test_graphs": 154,
   "phases_run": [
@@ -10,12 +10,12 @@
     "literature"
   ],
   "top_regions": [
+    "Insula",
+    "Cerebellum",
     "Frontal_Superior",
     "Frontal_Orbital",
-    "Insula",
-    "Occipital",
     "Motor_Premotor",
-    "Cerebellum"
+    "Parietal"
   ],
   "top_networks": [
     "DMN",
@@ -27,34 +27,34 @@
     "FPC"
   ],
   "overlap_scores": {
-    "DMN": 0.2222,
+    "DMN": 0.375,
     "Social": 0.25,
     "Salience": 0.25,
-    "Sensorimotor": 0.1429,
+    "Sensorimotor": 0.3333,
     "Visual": 0.1429,
     "Subcortical": 0.125,
-    "FPC": 0.2857
+    "FPC": 0.5
   },
   "gradcam_top5_differential": [
     {
-      "region": "Motor_Premotor",
-      "delta": 0.014546262100338936
-    },
-    {
       "region": "Insula",
-      "delta": 0.014305567368865013
+      "delta": 0.019191112369298935
     },
     {
       "region": "Frontal_Orbital",
-      "delta": 0.013508128002285957
+      "delta": 0.01686820760369301
+    },
+    {
+      "region": "Motor_Premotor",
+      "delta": 0.01571912132203579
+    },
+    {
+      "region": "Cerebellum",
+      "delta": 0.014973333105444908
     },
     {
       "region": "Frontal_Superior",
-      "delta": 0.01265060156583786
-    },
-    {
-      "region": "Parietal",
-      "delta": 0.011669911444187164
+      "delta": 0.012362970039248466
     }
   ],
   "network_embeddings": {
@@ -64,38 +64,38 @@
       32
     ],
     "mean_abs_per_network": [
-      0.34798866510391235,
-      0.3533753752708435,
-      0.3561176359653473,
-      0.3509290814399719
+      0.3424769639968872,
+      0.34993216395378113,
+      0.3457536995410919,
+      0.3460269868373871
     ],
     "saved_path": "/home/nidszxh/Projects/Neuro-CXG/results/explainability/node/network_embeddings_last_batch.npy"
   },
   "top5_differential_edges": [
     {
+      "source": "Subcortical",
+      "target": "Cerebellum",
+      "delta": 0.002325651820680644
+    },
+    {
+      "source": "Limbic",
+      "target": "Temporal",
+      "delta": 0.001731304723660379
+    },
+    {
       "source": "Frontal_Orbital",
       "target": "Frontal_Superior",
-      "delta": 0.0010846803029940192
+      "delta": 0.0015710617538424833
+    },
+    {
+      "source": "Cerebellum",
+      "target": "Subcortical",
+      "delta": 0.001550450156952936
     },
     {
       "source": "Motor_Premotor",
       "target": "Frontal_Superior",
-      "delta": 0.0010679443665336324
-    },
-    {
-      "source": "Cingulate",
-      "target": "Subcortical",
-      "delta": 0.0009649460254273312
-    },
-    {
-      "source": "Motor_Premotor",
-      "target": "Occipital",
-      "delta": 0.0009508431095336652
-    },
-    {
-      "source": "Parietal",
-      "target": "Subcortical",
-      "delta": 0.0008895694796391492
+      "delta": 0.001456204761891235
     }
   ]
 }
