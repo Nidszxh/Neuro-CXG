@@ -45,6 +45,9 @@ import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import LOBE_NAMES, NUM_LOBES
+from src.core.plotting import ColorPalette, apply_publication_style
+
+palette = ColorPalette()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

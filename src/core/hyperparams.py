@@ -4,8 +4,8 @@ from src.core.paths import RESULTS_DIR
 
 # --- YOLO DETECTION PARAMETERS (Fixed for Medical Integrity) ---
 YOLO_MODEL_SIZE = "yolo26n.pt"
-YOLO_PROJECT_NAME = "ROI_Detection_v31"  # Output directory name from training
-YOLO_WEIGHTS_PATH = RESULTS_DIR / "experiments" / "detection" / "ROI_Detection_v31" / "weights" / "best.pt"
+YOLO_PROJECT_NAME = "ROI_Detection_v15"  # Output directory name from training
+YOLO_WEIGHTS_PATH = RESULTS_DIR / "experiments" / "detection" / "ROI_Detection_v15" / "weights" / "best.pt"
 YOLO_IMGSZ = 640
 YOLO_BATCH_SIZE = 32
 YOLO_EPOCHS = 100
@@ -73,7 +73,7 @@ GRANGER_USE_GPU = True  # Use GPU-accelerated Granger causality (auto-detects CU
 
 # Ridge-regularized pairwise VAR Granger controls.
 RIDGE_GRANGER_LAGS = (1, 2, 3, 4, 5)
-RIDGE_GRANGER_LAMBDA = 1.0
+RIDGE_GRANGER_LAMBDA = 0.1
 RIDGE_GRANGER_CONFIDENCE_ALPHA = 0.75  # w = effect * sigmoid(alpha * confidence)
 RIDGE_GRANGER_HIGH_CONF_P_THRESHOLD = 0.10
 RIDGE_GRANGER_P_PRUNE_THRESHOLD = 0.20
@@ -201,7 +201,7 @@ GNN_SITE_NORMALIZATION_MODE = "within_site"
 # absent in fold-train. Options:
 # - "passthrough": harmonize seen sites, leave unseen rows unchanged (default).
 # - "fail": abort fold harmonization when unseen sites are detected.
-HARMONIZATION_UNSEEN_SITE_POLICY = "passthrough"
+HARMONIZATION_UNSEEN_SITE_POLICY = "fail"
 
 # Multi-view integrity gate: disable invariance training when non-base views are
 # largely degenerate (zero-edge), rather than silently training on broken views.

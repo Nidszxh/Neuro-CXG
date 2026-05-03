@@ -57,9 +57,10 @@ SITE_TR_MAP = {
 }
 
 # ALFF slice extraction percentiles (single source of truth)
-# CRITICAL: 0.21 captures brainstem (ROIs 167-170 starting at z=38), fixes missing class 11
+# Matches EXISTING PNG z-indices: 12, 18, 24, 30, 36, 42, 48
+# Brainstem (ROIs 167-170) captured at z=24 (p=0.26) and z=30 (p=0.33) → 2/7 slices
 # These percentiles must match exactly between abide_download.py and generate_labels.py
-ALFF_SLICE_PERCENTILES = [0.21, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+ALFF_SLICE_PERCENTILES = [0.13, 0.20, 0.26, 0.33, 0.40, 0.46, 0.53]
 
 # --- FEATURE REGISTRY (The Golden Standard) ---
 # Explicit feature definitions. GNN_IN_CHANNELS is calculated dynamically from this.

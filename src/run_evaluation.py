@@ -111,6 +111,10 @@ from src.models.causal_gnn import CausalBrainGNN
 from src.models.factory import build_model, load_model
 from src.models.training_utils import make_loader, attach_feature_scaler_from_checkpoint
 
+from src.core.plotting import ColorPalette, apply_publication_style
+
+palette = ColorPalette()
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -607,9 +611,9 @@ def run_permutation_test(
     try:
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots(figsize=(8, 5))
-        ax.hist(null_aucs, bins=50, color="#3498db", alpha=0.7, edgecolor="white", label="Null distribution")
-        ax.axvline(observed_auc, color="#e74c3c", lw=2.5, label=f"Observed AUC={observed_auc:.4f}")
-        ax.axvline(np.percentile(null_aucs, 95), color="#f39c12", lw=1.5, ls="--",
+        ax.hist(null_aucs, bins=50, color=palette.CONTROL, alpha=0.7, edgecolor="white", label="Null distribution")
+        ax.axvline(observed_auc, color=palette.ASD, lw=2.5, label=f"Observed AUC={observed_auc:.4f}")
+        ax.axvline(np.percentile(null_aucs, 95), color=palette.AMBER, lw=1.5, ls="--",
                    label="95th percentile of null")
         ax.set(
             title=f"Permutation Test (n={n_permutations})\np={p_value:.4f}",
@@ -617,7 +621,8 @@ def run_permutation_test(
             ylabel="Count",
         )
         ax.legend(fontsize=10)
-        ax.grid(alpha=0.3)
+        apply_publication_style(ax)
+
         plt.tight_layout()
         out = output_dir / plot_name
         plt.savefig(out, dpi=300, bbox_inches="tight")
@@ -784,9 +789,9 @@ def _plot_subgroups(subgroups: Dict, save_path: Path) -> None:
         ns_plot     = [subgroups[k]["n"]   for k in labels_plot]
         colors      = []
         for k in labels_plot:
-            if k.startswith("sex"):   colors.append("#9b59b6")
-            elif k.startswith("age"): colors.append("#27ae60")
-            else:                     colors.append("#3498db")
+            if k.startswith("sex"):   colors.append(palette.PINK)
+            elif k.startswith("age"): colors.append(palette.GREEN)
+            else:                     colors.append(palette.CONTROL)
 
         fig, ax = plt.subplots(figsize=(10, max(4, len(labels_plot) * 0.7 + 1)))
         y = np.arange(len(labels_plot))
@@ -897,19 +902,19 @@ def _plot_baselines(baselines: Dict[str, float], save_path: Path) -> None:
         import matplotlib.pyplot as plt
         names = list(baselines.keys())
         aucs = list(baselines.values())
-        colors = ["#2ecc71" if "Ours" in n else "#3498db" for n in names]
-        
-        fig, ax = plt.subplots(figsize=(10, max(4, len(names) * 0.7)))
+        colors = [palette.GREEN if "Ours" in n else palette.CONTROL for n in names]
         y = range(len(names))
-        ax.barh(y, aucs, color=colors, alpha=0.85)
+        ax.barh(y, aucs, color=colors, alpha=0.85, edgecolor="black", linewidth=0.5)
         ax.set_yticks(y)
         ax.set_yticklabels(names)
-        ax.set_xlabel("AUC")
+        ax.set_xlabel("AUC", fontsize=12, fontweight="bold")
+        ax.set_title("Baseline Model Comparison", fontsize=13, fontweight="bold")
+        ax.axvline(0.5, color=palette.NEUTRAL, linestyle="--", lw=1.5, alpha=0.7)
         ax.set_xlim(0.5, 1.0)
-        ax.axvline(0.5, color="gray", ls="--", lw=1)
-        ax.grid(axis="x", alpha=0.3)
+        apply_publication_style(ax)
+
         plt.tight_layout()
-        plt.savefig(save_path, dpi=300)
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
         plt.close()
         logger.info(f"  Plot saved → {save_path}")
     except Exception as e:

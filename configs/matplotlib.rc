@@ -4,13 +4,13 @@
 # =============================================================================
 # DPI AND FIGURE SETTINGS
 # =============================================================================
-figure.dpi: 100
-figure.figsize: 7, 5
+figure.dpi: 300
+figure.figsize: 7.0, 5.0
 figure.constrained_layout.use: True
 
 # Save settings - high DPI for publication
 savefig.dpi: 300
-savefig.bbox: tight
+savefig.bbox_inches: tight
 savefig.format: png
 savefig.transparent: False
 savefig.pad_inches: 0.1
@@ -21,22 +21,22 @@ savefig.pad_inches: 0.1
 # Primary: serif (most journals accept), fallback to sans-serif
 font.family: serif
 font.serif: Times New Roman, Georgia, DejaVu Serif
-font.size: 10
+font.size: 12
 axes.titleweight: bold
 
 # Axis labels
-axes.labelsize: 10
-axes.titlesize: 11
+axes.labelsize: 12
+axes.titlesize: 14
 axes.labelweight: normal
 
 # Tick labels
-xtick.labelsize: 9
-ytick.labelsize: 9
+xtick.labelsize: 10
+ytick.labelsize: 10
 xtick.direction: out
 ytick.direction: out
 
 # Legend
-legend.fontsize: 9
+legend.fontsize: 10
 legend.frameon: True
 legend.framealpha: 0.8
 legend.numpoints: 1
@@ -46,8 +46,8 @@ legend.scatterpoints: 1
 # COLOR CYCLES - COLORBLIND-SAFE AND GRAYSCALE-DISTINGUISHABLE
 # =============================================================================
 # Okabe-Ito color palette (colorblind-safe, 8 colors)
-# Set via code in generate_paper_figures.py to avoid rc parsing issues
-# axes.prop_cycle: cycler('color', ['#0072B2', '#D55E00', '#CC79A7', '#009E73', '#F0E442', '#56B4E9', '#E69F00', '#000000'])
+# Source: https://jfly.uni-koeln.de/color/
+# Note: set via code to avoid deprecated cycler() syntax
 
 # Alternative: Viridis for heatmaps (perceptually uniform, colorblind-safe)
 # Set via code: plt.set_cmap('viridis')
@@ -90,7 +90,7 @@ boxplot.capprops.linewidth: 1.0
 # violinplot.showmedians: True
 # violinplot.showextrema: True
 
-# Bar plots - set via code to avoid rc parsing issues
+# Bar plots
 # bar.width: 0.6
 # bar.edgecolor: black
 # bar.linewidth: 0.5

@@ -1346,6 +1346,11 @@ def construct_graph(subject_id: str, split: str, tr: float = 2.0, method: str = 
         ts_std  = torch.where(torch.isnan(ts_std), ts_std, ts_std.clamp(min=1e-8))
         ts_data = (ts_data - ts_mean) / ts_std
 
+        # Fill NaN values with 0 before Granger computation
+        # These correspond to edge ROIs that are systematically missing across all subjects
+        # (ROIs 34, 35, 80, 81, 133, 166, 169 - Brainstem/Cerebellum edge regions)
+        ts_data = torch.nan_to_num(ts_data, nan=0.0)
+
         # Validate input data
         if ts_data.shape[0] < 10:
             logger.warning(f"{subject_id}: Insufficient timepoints ({ts_data.shape[0]})")

@@ -39,6 +39,9 @@ from src.core.config import (
     RESULTS_DIR,
     get_active_checkpoint_dir,
 )
+from src.core.plotting import ColorPalette, FigureSize, apply_publication_style
+
+palette = ColorPalette()
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.factory import build_model
 from src.models.training_utils import make_loader, attach_feature_scaler_from_checkpoint
@@ -107,7 +110,7 @@ def visualize_basic_statistics(output_dir: Path):
         splits = list(splits_stats.keys())
         totals = [splits_stats[s]["total"] for s in splits]
 
-        axes[0].bar(splits, totals, color=["#3498db", "#2ecc71", "#e74c3c"])
+        axes[0].bar(splits, totals, color=[palette.CONTROL, palette.GREEN, palette.ASD])
         axes[0].set_ylabel("Number of Subjects")
         axes[0].set_title("Dataset Split Distribution")
         axes[0].grid(axis="y", alpha=0.3)
@@ -121,8 +124,8 @@ def visualize_basic_statistics(output_dir: Path):
         asd_counts = [splits_stats[s]["asd"] for s in splits]
         control_counts = [splits_stats[s]["control"] for s in splits]
 
-        axes[1].bar(x_pos - width / 2, control_counts, width, label="Control", color="#3498db")
-        axes[1].bar(x_pos + width / 2, asd_counts, width, label="ASD", color="#e74c3c")
+        axes[1].bar(x_pos - width / 2, control_counts, width, label="Control", color=palette.CONTROL)
+        axes[1].bar(x_pos + width / 2, asd_counts, width, label="ASD", color=palette.ASD)
 
         axes[1].set_ylabel("Number of Subjects")
         axes[1].set_title("Class Distribution Across Splits")

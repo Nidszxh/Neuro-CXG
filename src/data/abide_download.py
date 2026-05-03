@@ -265,7 +265,8 @@ def process_subject(sub_id, tr_val):
             alff_data = alff_img.get_fdata()
             
             # Slice percentiles from config (single source of truth)
-            # CRITICAL: 0.21 captures brainstem (region 11, ROIs 167-170 starting at z=38)
+            # Matches EXISTING PNG z-indices: 12, 18, 24, 30, 36, 42, 48
+            # Brainstem (region 11, ROIs 167-170) captured at z=24 and z=30
             # Must match generate_labels.py exactly for atlas-to-image alignment
             for p in ALFF_SLICE_PERCENTILES:
                 z = int(alff_data.shape[2] * p)

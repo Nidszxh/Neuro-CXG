@@ -714,17 +714,17 @@ def _plot_error_feature_profiles(
                 ax.set_title(f"{a_name} vs {b_name} (no data)")
                 continue
             diff = profiles[a_name] - profiles[b_name]
-            colors = ["#e74c3c" if d > 0 else "#3498db" for d in diff]
+            colors = [palette.ASD if d > 0 else palette.CONTROL for d in diff]
             y = np.arange(len(diff))
-            ax.barh(y, diff, color=colors, alpha=0.8, edgecolor="white")
-            ax.axvline(0, color="black", lw=0.8)
+            ax.barh(y, diff, color=colors, alpha=0.8, edgecolor="black", linewidth=0.5)
+            ax.axvline(0, color="black", lw=0.8, linestyle="--")
             ax.set_yticks(y)
-            ax.set_yticklabels(feature_names[:len(diff)], fontsize=7)
-            ax.set_xlabel(f"Mean feature diff ({a_name} − {b_name})", fontsize=10)
-            ax.set_title(f"{a_name} − {b_name}: Feature Profile Difference", fontsize=11, fontweight="bold")
+            ax.set_yticklabels(feature_names[:len(diff)], fontsize=10)
+            ax.set_xlabel(f"Mean feature diff ({a_name} − {b_name})", fontsize=12, fontweight="bold")
+            ax.set_title(f"{a_name} − {b_name}: Feature Profile Difference", fontsize=12, fontweight="bold")
             ax.grid(axis="x", alpha=0.3)
-
-        plt.suptitle("Misclassification Feature Profiles", fontsize=13, fontweight="bold", y=1.02)
+        
+        plt.suptitle("Misclassification Feature Profiles", fontsize=14, fontweight="bold", y=1.02)
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
         plt.close()
@@ -856,12 +856,13 @@ def _plot_site_bias(site_stats: List[Dict], save_path: Path) -> None:
         for bar, pct in zip(bars, asd_pct):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
                     f"{pct:.0f}%", ha="center", va="bottom", fontsize=8)
-        ax.axhline(50, color="gray", lw=1.2, ls="--", label="50% balanced")
+        ax.axhline(50, color=palette.NEUTRAL, linestyle="--", lw=1.5, alpha=0.7, label="50% balanced")
         ax.set_ylim(0, 110)
         ax.set_ylabel("% ASD subjects", fontsize=12, fontweight="bold")
-        ax.set_title("ASD Prevalence per Site (Potential Site Bias)", fontsize=13, fontweight="bold")
-        plt.xticks(rotation=30, ha="right", fontsize=9)
+        ax.set_title("ASD Prevalence per Site (Potential Site Bias)", fontsize=14, fontweight="bold")
+        plt.xticks(rotation=30, ha="right", fontsize=10)
         ax.grid(axis="y", alpha=0.3)
+        ax.legend(fontsize=10)
         ax.legend(fontsize=10)
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
@@ -937,8 +938,8 @@ def _plot_calibration(
 
         # ── Middle: confidence by prediction correctness ───────────────────
         ax2 = fig.add_subplot(gs[1])
-        ax2.hist(df[df["correct"] == 1]["confidence"], bins=20, alpha=0.8, color="#2ecc71",  label="Correct", density=True)
-        ax2.hist(df[df["correct"] == 0]["confidence"], bins=20, alpha=0.8, color="#e74c3c",  label="Wrong",   density=True)
+        ax2.hist(df[df["correct"] == 1]["confidence"], bins=20, alpha=0.8, color=palette.GREEN,  label="Correct", density=True)
+        ax2.hist(df[df["correct"] == 0]["confidence"], bins=20, alpha=0.8, color=palette.ASD,  label="Wrong",   density=True)
         ax2.set_xlabel("Confidence", fontsize=11)
         ax2.set_title("Confidence vs\nCorrectness", fontsize=11, fontweight="bold")
         ax2.legend(fontsize=9)
@@ -947,8 +948,8 @@ def _plot_calibration(
         ax3 = fig.add_subplot(gs[2])
         if bin_labels:
             x   = np.arange(len(bin_labels))
-            ax3.bar(x, frac_correct, color="#9b59b6", alpha=0.8, edgecolor="white")
-            ax3.axhline(1.0, color="gray", lw=0.8, ls="--")
+            ax3.bar(x, frac_correct, color=palette.PINK, alpha=0.8, edgecolor="black")
+            ax3.axhline(1.0, color=palette.NEUTRAL, lw=0.8, ls="--")
             ax3.set_xticks(x)
             ax3.set_xticklabels(bin_labels, rotation=35, ha="right", fontsize=7)
             ax3.set_ylabel("Fraction Correct", fontsize=11)

@@ -247,7 +247,7 @@ class FeatureAttributionAnalyzer:
             ax=ax,
         )
 
-        ax.set_title("Feature Importance by Brain Lobe (Integrated Gradients)", fontsize=16, pad=20, fontweight="bold")
+        ax.set_title("Feature Importance by Brain Lobe (Integrated Gradients)", fontsize=14, pad=20, fontweight="bold")
         ax.set_xlabel("Brain Lobe", fontsize=14, fontweight="bold")
         ax.set_ylabel("Node Feature", fontsize=14, fontweight="bold")
 
@@ -290,7 +290,8 @@ class FeatureAttributionAnalyzer:
 
         if output_path is not None:
             fig, ax = plt.subplots(figsize=(8, 6))
-            ax.bar(["Temporal", "Spatial"], [temporal_pct, spatial_pct], color=["#3498db", "#e74c3c"])
+            ax.bar(["Temporal", "Spatial"], [temporal_pct, spatial_pct], 
+                        color=[palette.TEMPORAL, palette.SPATIAL])
             ax.set_ylabel("Contribution (%)")
             ax.set_title("Temporal vs Spatial Feature Contribution")
             for i, v in enumerate([temporal_pct, spatial_pct]):

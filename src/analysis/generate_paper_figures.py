@@ -40,9 +40,13 @@ if matplotlib_rc_path.exists():
 else:
     print(f"  Warning: {matplotlib_rc_path} not found, using defaults")
 
-# Set color cycle manually (rc file has parsing issues with hex colors)
-from matplotlib import cycler
-plt.rcParams['axes.prop_cycle'] = cycler('color', ['#0072B2', '#D55E00', '#CC79A7', '#009E73', '#F0E442', '#56B4E9', '#E69F00', '#000000'])
+# Import ColorPalette for consistent styling
+from src.core.plotting import ColorPalette, FigureSize, apply_publication_style
+
+# Set color cycle consistently
+palette = ColorPalette()
+from cycler import cycler
+plt.rcParams['axes.prop_cycle'] = cycler(color=palette.cycle())
 
 # Override DPI for publication
 plt.rcParams.update({"figure.dpi": 300, "savefig.dpi": 300})
@@ -96,10 +100,11 @@ def generate_roc_curves(output_dir: Path):
     ax.set_xlabel("False Positive Rate")
     ax.set_ylabel("True Positive Rate")
     ax.set_title("ROC Curve - Neuro-CXG Ensemble")
-    ax.legend(loc="lower right")
+    ax.legend(loc="lower right", fontsize=11)
     ax.grid(True, alpha=0.3)
+    apply_publication_style(ax)
 
-    # Save
+    # Save with both formats
     fig.savefig(output_dir / "roc_curves" / "roc_curve.png", bbox_inches="tight")
     fig.savefig(output_dir / "roc_curves" / "roc_curve.pdf", bbox_inches="tight")
     plt.close(fig)
@@ -137,20 +142,19 @@ def generate_ablation_figure(output_dir: Path):
         print("  No ablation data found")
         return
 
-    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
-    bars = ax.barh(names, aucs, color=colors)
-    ax.set_xlabel("Test AUC")
-    ax.set_title("Ablation Study Results")
-    ax.axvline(x=0.5, color="gray", linestyle="--", alpha=0.5)
+    fig, ax = plt.subplots(1, 1, figsize=FigureSize.BAR_CHART)
+    bars = ax.barh(names, aucs, color=[palette.ASD if "baseline" not in k.lower() else palette.CONTROL for k in names])
+    ax.set_xlabel("Test AUC", fontsize=12)
+    ax.set_title("Ablation Study Results", fontsize=14, fontweight="bold")
+    ax.axvline(x=0.5, color=palette.NEUTRAL, linestyle="--", alpha=0.5, lw=1.5)
 
     # Add value labels
     for bar, auc in zip(bars, aucs):
-        ax.text(bar.get_width() + 0.01, bar.get_y() + bar.get_height() / 2, f"{auc:.3f}", va="center")
+        ax.text(bar.get_width() + 0.01, bar.get_y() + bar.get_height() / 2, f"{auc:.3f}", 
+                va="center", fontsize=10)
 
-    fig.savefig(output_dir / "ablations" / "ablation_bar_chart.png", bbox_inches="tight")
-    fig.savefig(output_dir / "ablations" / "ablation_bar_chart.pdf", bbox_inches="tight")
-    plt.close(fig)
-    print("  Saved ablation figure to ablations/")
+    ax.set_xlim(0.4, 1.0)
+    apply_publication_style(ax)
 
 
 def generate_training_curves(output_dir: Path):
@@ -173,7 +177,7 @@ def generate_training_curves(output_dir: Path):
             f"Fix: Run training with --auto flag"
         )
 
-    fig, axes = plt.subplots(2, 1, figsize=(10, 8))
+    fig, axes = plt.subplots(2, 1, figsize=FigureSize.QUAD_PANEL)
     ax_loss, ax_auc = axes
 
     for i, mf in enumerate(sorted(monitor_files)[:5]):  # Max 5 folds
@@ -184,20 +188,21 @@ def generate_training_curves(output_dir: Path):
         train_loss = data.get("train_loss", [])
         val_auc = data.get("val_auc", [])
 
-        ax_loss.plot(epochs, train_loss, label=f"Fold {i+1} Train Loss")
-        ax_auc.plot(epochs, val_auc, label=f"Fold {i+1} Val AUC")
+        color = palette.cycle()[i]
+        ax_loss.plot(epochs, train_loss, label=f"Fold {i+1} Train", 
+                    color=color, lw=2.5, alpha=0.8)
+        ax_auc.plot(epochs, val_auc, label=f"Fold {i+1} Val", 
+                    color=color, lw=2.5, alpha=0.8)
 
-    ax_loss.set_xlabel("Epoch")
-    ax_loss.set_ylabel("Loss")
-    ax_loss.set_title("Training Loss by Fold")
-    ax_loss.legend()
-    ax_loss.grid(True, alpha=0.3)
+    ax_loss.set(xlabel="Epoch", ylabel="Loss", title="Training Loss by Fold")
+    ax_loss.legend(fontsize=10)
+    apply_publication_style(ax_loss)
 
-    ax_auc.set_xlabel("Epoch")
-    ax_auc.set_ylabel("AUC")
-    ax_auc.set_title("Validation AUC by Fold")
-    ax_auc.legend()
-    ax_auc.grid(True, alpha=0.3)
+    ax_auc.set(xlabel="Epoch", ylabel="AUC", title="Validation AUC by Fold")
+    ax_auc.legend(loc="lower right", fontsize=10)
+    ax_auc.set_ylim([0.4, 1.0])
+    apply_publication_style(ax_auc)
+    apply_publication_style(ax_auc)
 
     fig.savefig(output_dir / "training_curves" / "training_curves.png", bbox_inches="tight")
     fig.savefig(output_dir / "training_curves" / "training_curves.pdf", bbox_inches="tight")
@@ -230,14 +235,17 @@ def generate_attention_heatmap(output_dir: Path):
                 lobe_scores[lobe_idx] = delta
 
     # Create heatmap
-    fig, ax = plt.subplots(1, 1, figsize=(6, 8))
+    fig, ax = plt.subplots(figsize=FigureSize.HEATMAP)
     im = ax.imshow(lobe_scores.reshape(-1, 1), cmap="RdBu_r", aspect="auto")
 
     ax.set_yticks(range(NUM_LOBES))
     ax.set_yticklabels(LOBE_NAMES)
     ax.set_xticks([])
-    ax.set_title("Brain Region Importance (Attention)")
-    plt.colorbar(im, ax=ax, label="Importance Score")
+    ax.set_title("Brain Region Importance (Attention)", fontsize=14, fontweight="bold", pad=20)
+    
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label("Importance Score", fontsize=12)
+    cbar.ax.tick_params(labelsize=10)
 
     fig.savefig(output_dir / "attention" / "attention_heatmap.png", bbox_inches="tight")
     fig.savefig(output_dir / "attention" / "attention_heatmap.pdf", bbox_inches="tight")
@@ -290,7 +298,7 @@ def generate_causal_graphs(output_dir: Path):
             asd_subject,
             control_subject,
             output_path,
-            threshold=0.3,
+            threshold=0.0,
             dpi=300,
         )
         if result is not None:
@@ -369,22 +377,24 @@ def generate_architecture_diagram(output_dir: Path):
 
     y_positions = np.linspace(0.9, 0.1, len(pipeline_steps))
     for i, (step, y) in enumerate(zip(pipeline_steps, y_positions)):
-        color = "lightblue" if i % 2 == 0 else "lightgreen"
+        color = palette.cycle()[i % 8]
         ax1.text(
             0.5,
             y,
             step,
             ha="center",
             va="center",
-            bbox=dict(boxstyle="round,pad=0.5", facecolor=color, edgecolor="black"),
-            fontsize=10,
+            bbox=dict(boxstyle="round,pad=0.5", facecolor=color, edgecolor="black", 
+                    linewidth=1.5, alpha=0.85),
+            fontsize=11,
+            fontweight="bold",
         )
         if i < len(pipeline_steps) - 1:
             ax1.annotate(
                 "",
                 xy=(0.5, y_positions[i + 1] + 0.05),
                 xytext=(0.5, y - 0.05),
-                arrowprops=dict(arrowstyle="->", lw=2, color="gray"),
+                arrowprops=dict(arrowstyle="->", lw=2.5, color=palette.NEUTRAL),
             )
 
     # Panel B: GNN Architecture
@@ -401,22 +411,24 @@ def generate_architecture_diagram(output_dir: Path):
 
     y_positions = np.linspace(0.9, 0.1, len(gnn_layers))
     for i, (layer, y) in enumerate(zip(gnn_layers, y_positions)):
-        color = cm.tab10(i / len(gnn_layers))
+        color = palette.cycle()[i % 8]
         ax2.text(
             0.5,
             y,
             layer,
             ha="center",
             va="center",
-            bbox=dict(boxstyle="round,pad=0.5", facecolor=color, edgecolor="black", alpha=0.7),
-            fontsize=10,
+            bbox=dict(boxstyle="round,pad=0.5", facecolor=color, edgecolor="black",
+                    linewidth=1.5, alpha=0.85),
+            fontsize=11,
+            fontweight="bold",
         )
         if i < len(gnn_layers) - 1:
             ax2.annotate(
                 "",
                 xy=(0.5, y_positions[i + 1] + 0.05),
                 xytext=(0.5, y - 0.05),
-                arrowprops=dict(arrowstyle="->", lw=2, color="darkblue"),
+                arrowprops=dict(arrowstyle="->", lw=2.5, color=palette.POSITIVE),
             )
 
     fig.savefig(output_dir / "architecture_diagram.png", bbox_inches="tight")
@@ -452,16 +464,18 @@ def generate_per_site_chart(output_dir: Path):
     aucs = [site_data[k].get("auc", 0.5) for k in names]
     ns = [site_data[k].get("n", 0) for k in names]
 
-    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
-    colors = ["steelblue" if site_data[k].get("n_asd", 0) > 0 else "gray" for k in names]
-    bars = ax.bar(range(len(names)), aucs, color=colors)
+    fig, ax = plt.subplots(1, 1, figsize=FigureSize.BAR_CHART)
+    colors = [palette.ASD if site_data[k].get("n_asd", 0) > 0 else palette.NEUTRAL for k in names]
+    bars = ax.bar(range(len(names)), aucs, color=colors, edgecolor="black", linewidth=0.5)
 
     ax.set_xticks(range(len(names)))
-    ax.set_xticklabels([f"{n}\n(n={ns[i]})" for i, n in enumerate(names)], rotation=45, ha="right")
-    ax.set_ylabel("Test AUC")
-    ax.set_title("Per-Site AUC (n per site shown)")
-    ax.axhline(y=0.5, color="gray", linestyle="--", alpha=0.5)
+    ax.set_xticklabels([f"{n}\n(n={ns[i]})" for i, n in enumerate(names)], rotation=45, ha="right", fontsize=10)
+    ax.set_ylabel("Test AUC", fontsize=12)
+    ax.set_title("Per-Site AUC (n per site shown)", fontsize=14, fontweight="bold")
+    ax.axhline(y=0.5, color=palette.NEUTRAL, linestyle="--", alpha=0.5, lw=1.5)
     ax.set_ylim(0, 1)
+    ax.legend(fontsize=10)
+    apply_publication_style(ax)
 
     fig.savefig(output_dir / "per_site_auc.png", bbox_inches="tight")
     fig.savefig(output_dir / "per_site_auc.pdf", bbox_inches="tight")
@@ -495,20 +509,22 @@ def generate_bootstrap_ci_figure(output_dir: Path):
     metric_names = ["auc", "f1", "accuracy", "sensitivity", "specificity"]
     labels = ["AUC", "F1", "Accuracy", "Sensitivity", "Specificity"]
 
-    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
-
+    fig, ax = plt.subplots(1, 1, figsize=FigureSize.SINGLE)
+    
     y_pos = np.arange(len(metric_names))
     values = [metrics.get(m, 0.5) for m in metric_names]
     errors = [[metrics.get(m, 0.5) - ci.get(m, [0.5, 0.5])[0] for m in metric_names],
              [ci.get(m, [0.5, 0.5])[1] - metrics.get(m, 0.5) for m in metric_names]]
-
-    bars = ax.barh(y_pos, values, xerr=errors, capsize=5, color="steelblue", edgecolor="black")
-
+    
+    bars = ax.barh(y_pos, values, xerr=errors, capsize=5, 
+                      color=palette.CONTROL, edgecolor="black", linewidth=0.5)
+    
     ax.set_yticks(y_pos)
-    ax.set_yticklabels(labels)
-    ax.set_xlabel("Value (with 95% CI)")
-    ax.set_title("Bootstrap 95% Confidence Intervals")
+    ax.set_yticklabels(labels, fontsize=10)
+    ax.set_xlabel("Value (with 95% CI)", fontsize=12)
+    ax.set_title("Bootstrap 95% Confidence Intervals", fontsize=14, fontweight="bold")
     ax.set_xlim(0, 1)
+    apply_publication_style(ax)
 
     fig.savefig(output_dir / "bootstrap_ci.png", bbox_inches="tight")
     fig.savefig(output_dir / "bootstrap_ci.pdf", bbox_inches="tight")

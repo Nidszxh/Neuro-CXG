@@ -34,11 +34,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch_geometric.data import Batch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import LOBE_NAMES, NUM_LOBES, GNN_IN_CHANNELS
 from src.core.atlas_config import LOBE_TO_NETWORK, NETWORK_TO_LOBES, NUM_NETWORKS, NETWORK_NAMES
+from src.core.plotting import ColorPalette, FigureSize, apply_publication_style
+
+palette = ColorPalette()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -558,7 +560,7 @@ class NodeImportanceAnalyzer:
         order = np.argsort(diff)
         sorted_diff   = diff[order]
         sorted_labels = [REGION_LABELS[i] for i in order]
-        colors = ["#e74c3c" if v > 0 else "#3498db" for v in sorted_diff]
+        colors = [palette.ASD if v > 0 else palette.CONTROL for v in sorted_diff]
 
         fig, ax = plt.subplots(figsize=(9, 7))
         y = np.arange(NUM_LOBES)
@@ -574,8 +576,8 @@ class NodeImportanceAnalyzer:
 
         from matplotlib.patches import Patch
         legend_elements = [
-            Patch(facecolor="#e74c3c", label="Higher in ASD"),
-            Patch(facecolor="#3498db", label="Higher in Control"),
+            Patch(facecolor=palette.ASD, label="Higher in ASD"),
+            Patch(facecolor=palette.CONTROL, label="Higher in Control"),
         ]
         ax.legend(handles=legend_elements, loc="lower right", fontsize=10)
         ax.grid(axis="x", alpha=0.3)

@@ -374,33 +374,55 @@ def _harmonize_fold(
 ) -> Tuple[Optional[object], pd.DataFrame, pd.DataFrame]:
     """Harmonize one CV fold via neuroHarmonize; falls back to raw data on error."""
     try:
+        # Ensure column alignment between train and val BEFORE harmonization
+        if not val_features.empty:
+            # Validate shapes match
+            if val_features.shape[1] != train_features.shape[1]:
+                raise ValueError(
+                    f"Feature column mismatch: train has {train_features.shape[1]} cols, "
+                    f"val has {val_features.shape[1]} cols"
+                )
+            # Ensure column order matches exactly
+            val_features = val_features[train_features.columns].copy()
+            
         # Tiny epsilon noise prevents singular-matrix errors for near-constant columns
         rng = np.random.default_rng(seed=0)
-        tf, vf = train_features.copy(), val_features.copy()
+        tf = train_features.copy()
+        vf = val_features.copy() if not val_features.empty else val_features
+        
         for col in train_features.columns:
             if train_features[col].std() < 1e-5:
-                tf[col] += rng.normal(0, 1e-8, len(tf))
+                tf.loc[:, col] += rng.normal(0, 1e-8, len(tf))
                 if not vf.empty:
-                    vf[col] += rng.normal(0, 1e-8, len(vf))
+                    vf.loc[:, col] += rng.normal(0, 1e-8, len(vf))
+                    
         model, train_harm = harmonizationLearn(
             tf.values,
             train_covariates,
         )
+        
         if vf.empty:
             val_harm = np.empty((0, len(train_features.columns)))
         else:
             train_sites = set(train_covariates["SITE"].astype(str).tolist())
-            val_harm = _safe_harmonization_apply(
-                vf,
-                val_covariates,
-                model,
-                seen_sites=train_sites,
-                context="Fold validation apply",
-            )
+            # Use simple harmonization without the complex seen_mask logic
+            # which seems to cause shape issues in some edge cases
+            try:
+                val_harm = harmonizationApply(
+                    vf.values,
+                    val_covariates.reset_index(drop=True),
+                    model,
+                )
+            except Exception as apply_err:
+                logger.warning(
+                    "harmonizationApply failed (%s); using raw val features", apply_err
+                )
+                val_harm = vf.values
+                
         return (
             model,
             pd.DataFrame(train_harm, columns=train_features.columns, index=train_features.index),
-            pd.DataFrame(val_harm, columns=val_features.columns, index=val_features.index),
+            pd.DataFrame(val_harm, columns=train_features.columns, index=val_features.index),
         )
     except Exception as exc:
         logger.error(
@@ -446,8 +468,23 @@ def _harmonize_train_apply_pair(
     else:
         apply_features = apply_data.drop(columns=["subject_id"])
 
+    # Remove constant features from training data
     train_features, kept_cols, dropped_cols = _remove_constant_features(train_features)
-    apply_features = apply_features.reindex(columns=kept_cols, fill_value=0.0)
+    
+    # CRITICAL: Ensure apply features have EXACTLY the same columns as train
+    # Use explicit column selection rather than reindex to avoid silent failures
+    if not apply_features.empty:
+        # Filter to only columns that exist in both
+        valid_cols = [c for c in kept_cols if c in apply_features.columns]
+        apply_features = apply_features[valid_cols].copy()
+        
+        # Add any missing columns with zeros
+        for col in kept_cols:
+            if col not in apply_features.columns:
+                apply_features[col] = 0.0
+        
+        # Ensure exact column order matches train
+        apply_features = apply_features[kept_cols]
 
     model, train_harmonized, apply_harmonized = _harmonize_fold(
         train_features,

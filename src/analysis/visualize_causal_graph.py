@@ -178,22 +178,28 @@ def draw_graph(
         w_max = float(abs_weights.max())
         scale = max(w_max - w_min, 1e-8)
         norm = (abs_weights - w_min) / scale
-        edge_widths = 0.7 + 3.3 * norm
+        edge_widths = 1.5 + 4.5 * norm
         edge_colors = plt.cm.RdYlBu_r(norm)
-
-        nx.draw_networkx_edges(
-            graph,
-            pos,
-            ax=ax,
-            width=edge_widths,
-            edge_color=edge_colors,
-            arrows=True,
-            arrowstyle="-|>",
-            arrowsize=16,
-            connectionstyle="arc3,rad=0.14",
-            min_source_margin=20,
-            min_target_margin=20,
-        )
+        
+        # Draw edges with z-order: stronger edges on top
+        abs_weights_sorted = sorted(zip(edge_widths, edge_colors, graph.edges()), 
+                                       key=lambda x: x[0])
+        
+        for width, color, (u, v) in abs_weights_sorted:
+            nx.draw_networkx_edges(
+                graph,
+                pos,
+                edgelist=[(u, v)],
+                edge_color=[color],
+                width=width,
+                arrows=True,
+                arrowstyle="-|>",
+                arrowsize=12,
+                connectionstyle="arc3,rad=0.14",
+                min_source_margin=20,
+                min_target_margin=20,
+                ax=ax
+            )
 
     ax.set_title(title, fontsize=11, fontweight="bold", pad=8)
     ax.text(

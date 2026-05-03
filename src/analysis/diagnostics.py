@@ -26,6 +26,9 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import LOBE_NAMES, NUM_LOBES
+from src.core.plotting import ColorPalette, FigureSize, apply_publication_style
+
+palette = ColorPalette()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -121,17 +124,18 @@ class TrainingMonitor:
 
         # Loss
         ax = axes[0, 0]
-        ax.plot(epochs, h["train_loss"], label="Train Loss", lw=2.5, color="#3498db", alpha=0.8)
-        ax.plot(epochs, h["val_loss"], label="Val Loss", lw=2.5, color="#e74c3c", alpha=0.8)
+        ax.plot(epochs, h["train_loss"], label="Train Loss", lw=2.5, color=palette.CONTROL, alpha=0.8)
+        ax.plot(epochs, h["val_loss"], label="Val Loss", lw=2.5, color=palette.ASD, alpha=0.8)
         best_idx = int(np.argmin(h["val_loss"]))
         ax.scatter([best_idx + 1], [h["val_loss"][best_idx]], color="#e74c3c", s=200, zorder=5,
                    marker="*", label=f"Best Val (Epoch {best_idx + 1})")
         ax.set(xlabel="Epoch", ylabel="Loss", title="Loss Curves")
-        ax.legend(fontsize=10); ax.grid(alpha=0.3, ls="--"); ax.set_ylim(bottom=0)
+        ax.legend(fontsize=10)
+        apply_publication_style(ax)
 
         # AUC
         ax = axes[0, 1]
-        ax.plot(epochs, h["val_auc"], color="#2ecc71", lw=2.5, alpha=0.8, label="Validation AUC")
+        ax.plot(epochs, h["val_auc"], color=palette.GREEN, lw=2.5, alpha=0.8, label="Validation AUC")
         ax.axhline(0.5, color="#95a5a6", ls="--", alpha=0.7, lw=2, label="Random (0.5)")
         best_auc = max(h["val_auc"]); best_auc_ep = h["val_auc"].index(best_auc) + 1
         ax.axhline(best_auc, color="#27ae60", ls="--", alpha=0.7, lw=2,
@@ -140,17 +144,11 @@ class TrainingMonitor:
         ax.set(xlabel="Epoch", ylabel="Validation AUC", title="AUC Progression")
         ax.legend(loc="lower right", fontsize=10); ax.grid(alpha=0.3, ls="--"); ax.set_ylim([0.4, 1.0])
 
-        # LR schedule
         ax = axes[1, 0]
-        ax.plot(epochs, h["learning_rate"], color="#f39c12", lw=2.5, alpha=0.8)
-        ax.set(xlabel="Epoch", ylabel="Learning Rate", title="LR Schedule (Warmup + Cosine)")
-        ax.set_yscale("log"); ax.grid(alpha=0.3, ls="--")
-
-        # Gradient norms
-        ax = axes[1, 1]
         if h["grad_norm"]:
-            ax.plot(epochs, h["grad_norm"], color="#9b59b6", lw=2.5, alpha=0.8, label="Gradient Norm")
-            ax.axhline(1.0, color="#e74c3c", ls="--", lw=2, alpha=0.7, label="Clip Threshold (1.0)")
+            ax.plot(epochs, h["grad_norm"], color=palette.PINK, lw=2.5, alpha=0.8, label="Gradient Norm")
+            ax.axhline(1.0, color=palette.NEGATIVE, ls="--", lw=2, alpha=0.7, 
+                        label="Clip Threshold (1.0)")
             ax.set(xlabel="Epoch", ylabel="Gradient Norm", title="Gradient Stability")
             ax.legend(fontsize=10); ax.grid(alpha=0.3, ls="--"); ax.set_ylim(bottom=0)
         else:
@@ -207,15 +205,19 @@ class TrainingMonitor:
         fig, axes = plt.subplots(1, 2, figsize=figsize)
         for fold_id, h in self.fold_histories.items():
             if h["val_auc"]:
-                axes[0].plot(range(1, len(h["val_auc"]) + 1), h["val_auc"], label=f"Fold {fold_id}")
+                axes[0].plot(range(1, len(h["val_auc"]) + 1), h["val_auc"], 
+                            label=f"Fold {fold_id}", 
+                            color=palette.cycle()[fold_id % 8], lw=2.5, alpha=0.8)
         axes[0].set(title="Validation AUC by Fold", xlabel="Epoch", ylabel="AUC")
         axes[0].legend(); axes[0].grid(alpha=0.3)
 
         final = [h["val_auc"][-1] for h in self.fold_histories.values() if h["val_auc"]]
         if final:
-            axes[1].bar(range(len(final)), final, color="#3498db")
+            axes[1].bar(range(len(final)), final, color=palette.CONTROL, 
+                        edgecolor="black", linewidth=0.5)
             axes[1].set(title="Final Validation AUC per Fold", xlabel="Fold", ylabel="AUC")
             axes[1].grid(axis="y", alpha=0.3)
+            apply_publication_style(axes[1])
 
         plt.tight_layout()
         out = self.output_dir / "fold_comparison.png"
@@ -385,7 +387,7 @@ class CausalGraphAnalyzer:
         palette = {"ASD": "#e74c3c", "Control": "#3498db"}
         fig, axes = plt.subplots(2, 3, figsize=(18, 12))
         for ax, metric in zip(axes.flatten(), sig_metrics):
-            sns.boxplot(data=gm, x="dx_group", y=metric, ax=ax, palette=palette)
+            sns.boxplot(data=gm, x="dx_group", y=metric, ax=ax, palette=palette, hue="dx_group", legend=False)
             ax.set(title=metric.replace("_", " ").title(), xlabel="Diagnosis")
         plt.tight_layout()
         out = output_dir / "topology_comparison.png"
@@ -455,16 +457,18 @@ class CausalGraphAnalyzer:
         avg = np.mean(np.stack(matrices), axis=0)
         labels = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
         title_suffix = f" ({group})" if group else ""
-        fig, ax = plt.subplots(figsize=(10, 8))
-        sns.heatmap(avg, xticklabels=labels, yticklabels=labels, cmap="RdYlBu_r",
-                    center=0, linewidths=0.5, ax=ax)
+        fig, ax = plt.subplots(figsize=FigureSize.HEATMAP)
+        
+        vmax = max(abs(avg.min()), abs(avg.max()))
+        sns.heatmap(avg, xticklabels=labels, yticklabels=labels, 
+                    cmap="RdYlBu_r", center=0, linewidths=0.5, 
+                    vmin=-vmax, vmax=vmax, ax=ax)
+        
         ax.set(title=f"Average Causal Adjacency Matrix{title_suffix}",
                xlabel="Target Region", ylabel="Source Region")
         plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
         plt.setp(ax.get_yticklabels(), rotation=0)
-
-        out = Path(output_path)
-        out.parent.mkdir(parents=True, exist_ok=True)
+        
         plt.tight_layout()
         plt.savefig(out, dpi=300, bbox_inches="tight"); plt.close()
         logger.info("Average causal graph saved → %s", out)

@@ -11,9 +11,14 @@ import json
 from pathlib import Path
 from typing import Optional, List, Dict
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from src.core.plotting import ColorPalette, FigureSize, apply_publication_style
+
+palette = ColorPalette()
 
 TRAINING_DIR = Path(__file__).parent.parent.parent / "results" / "experiments" / "training"
 
@@ -43,19 +48,19 @@ def generate_training_curves(output_dir: Optional[Path] = None, dpi: int = 300) 
         print("No training history found")
         return output_dir / "training_curves.png"  # Return expected path
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    fig, axes = plt.subplots(2, 2, figsize=FigureSize.QUAD_PANEL)
 
-    colors = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00"]
+    colors = palette.cycle()[:5]
 
     for fold_idx, history in enumerate(histories):
         epochs = range(1, len(history["train_loss"]) + 1)
         color = colors[fold_idx]
 
-        axes[0, 0].plot(epochs, history["train_loss"], color=color, alpha=0.7,
-                       label=f"Fold {fold_idx}", linewidth=1.5)
-
-        axes[0, 1].plot(epochs, history["val_loss"], color=color, alpha=0.7,
-                       label=f"Fold {fold_idx}", linewidth=1.5)
+        axes[0, 0].plot(epochs, history["train_loss"], color=palette.CONTROL, alpha=0.7,
+                        label=f"Fold {fold_idx}", linewidth=1.5)
+        
+        axes[0, 1].plot(epochs, history["val_loss"], color=palette.ASD, alpha=0.7,
+                        label=f"Fold {fold_idx}", linewidth=1.5)
 
         axes[1, 0].plot(epochs, history["val_auc"], color=color, alpha=0.7,
                        label=f"Fold {fold_idx}", linewidth=1.5)
