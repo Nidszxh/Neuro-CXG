@@ -140,6 +140,7 @@ htmlcov/
 # SECTION 11: ML Experiment Tracking
 mlruns/
 .mlflow/
+runs/
 
 # Ignore script implementations
 tree/

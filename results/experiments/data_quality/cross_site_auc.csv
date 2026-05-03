@@ -4,18 +4,18 @@ CMU,4,2,2,,skip
 KKI,7,3,4,1.0,✓ strong signal
 LEUVEN_1,4,2,2,,skip
 LEUVEN_2,5,2,3,1.0,✓ strong signal
-MAX_MUN,7,3,4,0.5833333333333334,
-NYU,27,12,15,0.9055555555555556,✓ strong signal
+MAX_MUN,7,3,4,0.8333333333333334,✓ strong signal
+NYU,27,12,15,0.9722222222222222,✓ strong signal
 OHSU,4,2,2,,skip
-OLIN,5,3,2,0.8333333333333334,✓ strong signal
+OLIN,5,3,2,0.6666666666666667,
 PITT,9,5,4,0.75,✓ strong signal
 SBL,5,3,2,0.6666666666666667,
 SDSU,4,1,3,,skip
 STANFORD,6,3,3,1.0,✓ strong signal
-TRINITY,7,3,4,0.8333333333333334,✓ strong signal
-UCLA_1,11,6,5,0.7666666666666666,✓ strong signal
+TRINITY,7,3,4,0.9166666666666667,✓ strong signal
+UCLA_1,11,6,5,0.9333333333333333,✓ strong signal
 UCLA_2,4,2,2,,skip
-UM_1,16,8,8,0.71875,✓ strong signal
-UM_2,5,2,3,0.5,⚠  site-driven failure
-USM,11,7,4,0.7857142857142857,✓ strong signal
+UM_1,16,8,8,0.6875,
+UM_2,5,2,3,0.8333333333333333,✓ strong signal
+USM,11,7,4,0.6428571428571428,
 YALE,8,4,4,1.0,✓ strong signal

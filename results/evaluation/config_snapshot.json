@@ -66,7 +66,7 @@
   "GRANGER_USE_GPU": "True",
   "GRAPH_DENSITY_TARGET": "0.3",
   "GRL_ALPHA_CANDIDATES": "[0.1, 0.25, 0.5, 1.0]",
-  "HARMONIZATION_UNSEEN_SITE_POLICY": "passthrough",
+  "HARMONIZATION_UNSEEN_SITE_POLICY": "fail",
   "K_FOLDS": "5",
   "LAGGED_PEARSON_CONFIDENCE_ALPHA": "0.75",
   "LAGGED_PEARSON_LAGS": "(1, 2, 3, 4)",
@@ -93,7 +93,7 @@
   "RIDGE_GRANGER_HIGH_CONF_P_THRESHOLD": "0.1",
   "RIDGE_GRANGER_HYBRID_BETA": "0.7",
   "RIDGE_GRANGER_LAGS": "(1, 2, 3, 4, 5)",
-  "RIDGE_GRANGER_LAMBDA": "1.0",
+  "RIDGE_GRANGER_LAMBDA": "0.1",
   "RIDGE_GRANGER_P_PRUNE_THRESHOLD": "0.2",
   "SITE_ROBUSTNESS_GATE_ENABLED": "True",
   "SITE_ROBUSTNESS_GATE_POLICY": "warn",
@@ -118,7 +118,7 @@
   "YOLO_IMGSZ": "640",
   "YOLO_MODEL_SIZE": "yolo26n.pt",
   "YOLO_MOSAIC": "0.0",
-  "YOLO_PROJECT_NAME": "ROI_Detection_v31",
+  "YOLO_PROJECT_NAME": "ROI_Detection_v15",
   "YOLO_TRAIN_CONFIG": "{'epochs': 100, 'imgsz': 640, 'batch': 32, 'device': 0, 'seed': 42, 'deterministic': True, 'plots': True, 'save': True, 'val': True, 'patience': 25, 'workers': 8, 'optimizer': 'AdamW', 'lr0': 0.001, 'label_smoothing': 0.0, 'box': 7.5, 'cls': 2.0, 'hsv_h': 0.0, 'hsv_s': 0.0, 'hsv_v': 0.1, 'degrees': 0.0, 'fliplr': 0.0, 'flipud': 0.0, 'mosaic': 0.0, 'mixup': 0.0}",
-  "YOLO_WEIGHTS_PATH": "/home/nidszxh/Projects/Neuro-CXG/results/experiments/detection/ROI_Detection_v31/weights/best.pt"
+  "YOLO_WEIGHTS_PATH": "/home/nidszxh/Projects/Neuro-CXG/results/experiments/detection/ROI_Detection_v15/weights/best.pt"
 }

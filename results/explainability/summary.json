@@ -1,6 +1,6 @@
 {
-  "fold_used": 1,
-  "checkpoint": "/home/nidszxh/Projects/Neuro-CXG/models/checkpoints/best_model_fold1.pt",
+  "fold_used": 4,
+  "checkpoint": "/home/nidszxh/Projects/Neuro-CXG/models/checkpoints/best_model_fold4.pt",
   "device": "cuda",
   "num_test_graphs": 154,
   "phases_run": [
@@ -10,16 +10,15 @@
     "literature"
   ],
   "top_regions": [
-    "Insula",
-    "Cerebellum",
+    "Cingulate",
     "Frontal_Superior",
-    "Frontal_Orbital",
-    "Motor_Premotor",
-    "Parietal"
+    "Occipital",
+    "Cerebellum",
+    "Parietal",
+    "Motor_Premotor"
   ],
   "top_networks": [
     "DMN",
-    "Social",
     "Salience",
     "Sensorimotor",
     "Visual",
@@ -28,33 +27,33 @@
   ],
   "overlap_scores": {
     "DMN": 0.375,
-    "Social": 0.25,
+    "Social": 0.0,
     "Salience": 0.25,
     "Sensorimotor": 0.3333,
-    "Visual": 0.1429,
+    "Visual": 0.3333,
     "Subcortical": 0.125,
     "FPC": 0.5
   },
   "gradcam_top5_differential": [
     {
-      "region": "Insula",
-      "delta": 0.019191112369298935
-    },
-    {
-      "region": "Frontal_Orbital",
-      "delta": 0.01686820760369301
+      "region": "Cingulate",
+      "delta": 0.01896604150533676
     },
     {
       "region": "Motor_Premotor",
-      "delta": 0.01571912132203579
+      "delta": 0.016526393592357635
+    },
+    {
+      "region": "Frontal_Orbital",
+      "delta": 0.01530103012919426
+    },
+    {
+      "region": "Occipital",
+      "delta": 0.014479674398899078
     },
     {
       "region": "Cerebellum",
-      "delta": 0.014973333105444908
-    },
-    {
-      "region": "Frontal_Superior",
-      "delta": 0.012362970039248466
+      "delta": 0.014385569840669632
     }
   ],
   "network_embeddings": {
@@ -64,38 +63,38 @@
       32
     ],
     "mean_abs_per_network": [
-      0.3424769639968872,
-      0.34993216395378113,
-      0.3457536995410919,
-      0.3460269868373871
+      0.34711652994155884,
+      0.35790735483169556,
+      0.36574941873550415,
+      0.348349004983902
     ],
     "saved_path": "/home/nidszxh/Projects/Neuro-CXG/results/explainability/node/network_embeddings_last_batch.npy"
   },
   "top5_differential_edges": [
     {
-      "source": "Subcortical",
-      "target": "Cerebellum",
-      "delta": 0.002325651820680644
+      "source": "Parietal",
+      "target": "Motor_Premotor",
+      "delta": 0.001002871153412915
     },
     {
-      "source": "Limbic",
-      "target": "Temporal",
-      "delta": 0.001731304723660379
-    },
-    {
-      "source": "Frontal_Orbital",
-      "target": "Frontal_Superior",
-      "delta": 0.0015710617538424833
-    },
-    {
-      "source": "Cerebellum",
+      "source": "Frontal_Superior",
       "target": "Subcortical",
-      "delta": 0.001550450156952936
+      "delta": 0.0009185772560262892
     },
     {
-      "source": "Motor_Premotor",
-      "target": "Frontal_Superior",
-      "delta": 0.001456204761891235
+      "source": "Frontal_Superior",
+      "target": "Frontal_Orbital",
+      "delta": 0.0008112636469087205
+    },
+    {
+      "source": "Parietal",
+      "target": "Occipital",
+      "delta": 0.0006884061446337138
+    },
+    {
+      "source": "Frontal_Superior",
+      "target": "Motor_Premotor",
+      "delta": 0.0006524427448486278
     }
   ]
 }
