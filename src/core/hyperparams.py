@@ -277,3 +277,26 @@ _MULTIVIEW_VIEW_ORDER = (
     "bootstrap_2",
     "high_confidence",
 )
+
+# --- DEMOGRAPHIC NORMALIZATION CONSTANTS (REFACTOR) ---
+# Hardcoded normalization values in graph_factory.py that should be configurable
+DEMO_AGE_CENTER = 15.0
+DEMO_AGE_SCALE = 20.0
+DEMO_SEX_CENTER = 1.5
+DEMO_FIQ_CENTER = 100.0
+DEMO_FIQ_SCALE = 30.0
+
+# --- GRL ANNEALING CONFIG (REFACTOR) ---
+# Hardcoded GRL annealing parameters in causal_gnn.py
+GRL_ANNEAL_STEEPNESS = 5.0
+
+# --- AUDIT SAMPLING CONFIG (REFACTOR) ---
+# Hardcoded sampling constants in pipeline_checks.py
+AUDIT_SAMPLE_PNG = 20
+AUDIT_SAMPLE_TS = 10
+AUDIT_MAX_EMPTY_ROI_FRACTION = 0.50
+
+# --- CAUSALITY NUMERICAL CONSTANTS (REFACTOR) ---
+# Module-level constants that should live in hyperparams
+FISHER_Z_EPS = 1e-6
+CONFIDENCE_LOG_EPS = 1e-8

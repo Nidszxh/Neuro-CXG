@@ -5,7 +5,7 @@ import random
 from sklearn.feature_selection import mutual_info_classif
 from sklearn.metrics import (
     roc_auc_score, f1_score, confusion_matrix,
-    accuracy_score, roc_curve
+    accuracy_score
 )
 import numpy as np
 import pandas as pd
@@ -81,9 +81,9 @@ from src.models.training_utils import (
     train_fold_with_onecycle,
 )
 from src.core.experiment_tracker import ExperimentTracker
-from src.models.evaluation import evaluate_loader, optimal_threshold
+from src.models.evaluation import evaluate_loader
 from src.models.factory import build_model
-from src.models.losses import FocalLoss
+from src.models.losses import FocalLoss, build_criterion
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
@@ -104,60 +104,6 @@ from src.models.losses import CausalInvarianceLoss, SpatialInvarianceLoss
 
 
 # UTILITY FUNCTIONS
-
-def compute_class_weights(labels):
-    """
-    Compute inverse frequency class weights.
-    
-    Args:
-        labels: List of labels (0=Control, 1=ASD)
-    
-    Returns:
-        Tensor of class weights [weight_control, weight_asd]
-    """
-    labels_array = np.array(labels)
-    n_control = (labels_array == 0).sum()
-    n_asd = (labels_array == 1).sum()
-    total = len(labels_array)
-    
-    weight_control = total / (2 * n_control) if n_control > 0 else 1.0
-    weight_asd = total / (2 * n_asd) if n_asd > 0 else 1.0
-    
-    logger.info(f"Class distribution: Control={n_control}, ASD={n_asd}")
-    logger.info(f"Class weights: Control={weight_control:.3f}, ASD={weight_asd:.3f}")
-    
-    return torch.tensor([weight_control, weight_asd], dtype=torch.float32)
-
-
-def find_optimal_threshold(y_true, y_probs):
-    """Compatibility wrapper around the shared threshold utility.
-
-    Uses EVAL_THRESHOLD_POLICY so training/evaluation report the same operating
-    point family ("f1" or "youden").
-    """
-    policy = str(EVAL_THRESHOLD_POLICY).strip().lower()
-    if policy == "fixed":
-        thr = float(np.clip(EVAL_FIXED_THRESHOLD, 0.0, 1.0))
-        if len(np.unique(y_true)) < 2:
-            return thr, 0.0
-        fpr, tpr, thresholds = roc_curve(y_true, y_probs)
-        if thresholds.size == 0:
-            return thr, 0.0
-        idx = int(np.argmin(np.abs(thresholds - thr)))
-        j = tpr - fpr
-        return thr, float(j[idx])
-    if policy == "youden":
-        if len(np.unique(y_true)) < 2:
-            return 0.5, 0.0
-        fpr, tpr, thresholds = roc_curve(y_true, y_probs)
-        if thresholds.size == 0:
-            return 0.5, 0.0
-        j = tpr - fpr
-        best_idx = int(np.argmax(j))
-        thr = float(thresholds[best_idx]) if np.isfinite(thresholds[best_idx]) else 0.5
-        return thr, float(j[best_idx])
-    return optimal_threshold(y_probs, y_true)
-
 
 @torch.no_grad()
 def evaluate(model, loader, threshold=0.5):
@@ -298,122 +244,6 @@ def _site_stats_to_serializable(site_stats):
         means[str(int(sid))] = mean.squeeze(0).detach().cpu().numpy().tolist()
         stds[str(int(sid))] = std.squeeze(0).detach().cpu().numpy().tolist()
     return means, stds
-
-
-def evaluate_ensemble(
-    tracker: TrainingTracker,
-    checkpoint_manager: CheckpointManager,
-    use_grl: bool,
-    grl_alpha: float,
-):
-    """
-    Evaluate ensemble of all fold models on test set.
-
-    DEPRECATED: This function is kept for backward compatibility only.
-    For canonical results, use: python src/run_evaluation.py
-
-    The authoritative evaluation (with bootstrap CIs, permutation tests,
-    baseline comparisons) is run via run_evaluation.py. This function may
-    produce slightly different numbers due to different threshold selection.
-
-    Args:
-        tracker: TrainingTracker with fold results
-        checkpoint_manager: CheckpointManager for loading models
-    """
-    logger.warning(
-        "DEPRECATED: evaluate_ensemble() is deprecated. "
-        "Use 'python src/run_evaluation.py' for canonical results."
-    )
-
-    from src.features.graph_factory import ABIDECausalDataset
-
-    logger.info(f"\n{'='*70}")
-    logger.info("ENSEMBLE EVALUATION (TEST SET)")
-    logger.info(f"{'='*70}")
-    
-    try:
-        # Load test dataset
-        test_dataset = ABIDECausalDataset(split='test')
-        test_data = [test_dataset[i] for i in range(len(test_dataset)) if test_dataset[i] is not None]
-        
-        if len(test_data) == 0:
-            logger.warning("Test set is empty, skipping ensemble evaluation")
-            return
-        
-        test_loader = make_loader(test_data, batch_size=GNN_BATCH_SIZE)
-        
-        # Collect predictions from all folds
-        test_fold_probs = []
-        test_labels_ref = None
-        fold_aucs = []
-        
-        for fold in range(K_FOLDS):
-            # Initialize model
-            model = build_model(
-                device=DEVICE,
-                use_grl=use_grl,
-                grl_alpha=grl_alpha,
-            )
-            try:
-                checkpoint = checkpoint_manager.load(model, fold=fold)
-                threshold = checkpoint.get('threshold', 0.5)
-                fold_auc = checkpoint.get('auc', 0.0)
-                fold_aucs.append(fold_auc)
-            except FileNotFoundError:
-                logger.warning(f"Checkpoint for fold {fold} not found, skipping")
-                continue
-            
-            # Evaluate on test set
-            metrics = evaluate(model, test_loader, threshold=threshold)
-            test_fold_probs.append(metrics['probs'])
-            
-            if test_labels_ref is None:
-                test_labels_ref = metrics['labels']
-        
-        if not test_fold_probs:
-            logger.warning("No fold predictions collected")
-            return
-
-        if test_labels_ref is None or len(test_labels_ref) == 0:
-            logger.warning("No reference labels collected from test set")
-            return
-
-        # Compute weighted ensemble
-        prob_matrix = np.stack(test_fold_probs, axis=0)  # (K_folds, N_samples)
-        
-        # Weight by validation AUC
-        weights = np.array(fold_aucs)
-        if np.all(np.isfinite(weights)) and weights.sum() > 0:
-            weights = weights / weights.sum()
-            ensemble_probs = np.average(prob_matrix, axis=0, weights=weights)
-            logger.info(f"Using AUC-weighted ensemble: {weights}")
-        else:
-            ensemble_probs = prob_matrix.mean(axis=0)
-            logger.info("Using uniform ensemble averaging")
-        
-        # Compute ensemble metrics
-        ensemble_auc = roc_auc_score(test_labels_ref, ensemble_probs)
-        
-        # Find optimal threshold for ensemble
-        opt_threshold, _ = find_optimal_threshold(test_labels_ref, ensemble_probs)
-        ensemble_preds = (ensemble_probs > opt_threshold).astype(int)
-        ensemble_f1 = f1_score(test_labels_ref, ensemble_preds, zero_division=0)
-        ensemble_acc = accuracy_score(test_labels_ref, ensemble_preds)
-        ensemble_cm = confusion_matrix(test_labels_ref, ensemble_preds)
-        
-        # Report results
-        logger.info(f"\nEnsemble Results (Test Set):")
-        logger.info(f"  AUC: {ensemble_auc:.4f}")
-        logger.info(f"  F1: {ensemble_f1:.4f} (threshold={opt_threshold:.3f})")
-        logger.info(f"  Accuracy: {ensemble_acc:.4f}")
-        logger.info(f"  Confusion Matrix:")
-        logger.info(f"    {ensemble_cm}")
-        logger.info(f"{'='*70}\n")
-        
-    except Exception as e:
-        logger.error(f"Ensemble evaluation failed: {e}")
-        import traceback
-        logger.debug(traceback.format_exc())
 
 
 # MAIN TRAINING FUNCTION
@@ -977,17 +807,21 @@ def _run_training_once(
         n_asd = max((np.array(train_labels) == 1).sum(), 1)
         class_weight_tensor = None
         if USE_CLASS_WEIGHTS:
-            class_weight_tensor = compute_class_weights(train_labels).to(DEVICE)
+            total = len(train_labels)
+            weight_control = total / (2 * n_control)
+            weight_asd = total / (2 * n_asd)
+            class_weight_tensor = torch.tensor([weight_control, weight_asd], dtype=torch.float32).to(DEVICE)
+            logger.info(f"Class distribution: Control={n_control}, ASD={n_asd}")
+            logger.info(f"Class weights: Control={weight_control:.3f}, ASD={weight_asd:.3f}")
 
-        if USE_FOCAL_LOSS:
-            pos_weight = float(n_control / n_asd) if USE_CLASS_WEIGHTS else None
-            criterion = FocalLoss(
-                alpha=FOCAL_LOSS_ALPHA,
-                gamma=FOCAL_LOSS_GAMMA,
-                pos_weight=pos_weight,
-            )
-        else:
-            criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
+        criterion = build_criterion(
+            train_labels,
+            device=DEVICE,
+            use_focal_loss=USE_FOCAL_LOSS,
+            use_class_weights=USE_CLASS_WEIGHTS,
+            focal_alpha=FOCAL_LOSS_ALPHA,
+            focal_gamma=FOCAL_LOSS_GAMMA,
+        )
         checkpoint_manager.reset()
 
         # Task 4: residual site signal adversarial regularization on spatial channels.
@@ -1149,10 +983,6 @@ def _run_training_once(
         site_auc_variance,
         len(site_auc_values),
     )
-    
-    # Ensemble evaluation on test set (combine all folds)
-    if run_post_analysis:
-        evaluate_ensemble(tracker, checkpoint_manager, use_grl=use_grl, grl_alpha=grl_alpha)
     
     # POST-TRAINING ANALYSIS
     if run_post_analysis:

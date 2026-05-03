@@ -59,9 +59,6 @@ VARIANCE_RETENTION_HIGH = 1.3    # flag features gaining  >30 % of original vari
 COMBAT_MIN_VARIANCE = 1e-8       # treat near-constant channels as constant for ComBat stability
 QUALITY_MIN_REFERENCE_VARIANCE = 1e-8  # avoid unstable retention ratios from tiny denominators
 
-COMBAT_SHRINKAGE = 0.0  # Disabled - neuroHarmonize doesn't support shrink param directly
-                      # Use EB.extend = False for less aggressive harmonization instead
-
 
 @dataclass
 class HarmonizationFold:
@@ -294,19 +291,13 @@ def _restore_constant_features(
     dropped_cols: List[str],
 ) -> pd.DataFrame:
     """Re-attach zero-variance columns that were removed pre-harmonization."""
-    result = pd.DataFrame(harmonized.values, columns=kept_cols)
-    
-    # Build all dropped columns at once to avoid fragmentation
-    if dropped_cols:
-        dropped_data = {
-            col: original[col].values if col in original.columns else 0.0
-            for col in dropped_cols
-        }
-        dropped_df = pd.DataFrame(dropped_data, index=result.index)
-        result = pd.concat([result, dropped_df], axis=1)
-    
+    df = pd.DataFrame(harmonized.values, columns=kept_cols, index=original.index)
+
+    for col in dropped_cols:
+        df[col] = original[col].values if col in original.columns else 0.0
+
     all_cols = [c for c in original.columns if c != "subject_id"]
-    return result[[c for c in all_cols if c in result.columns]]
+    return df[[c for c in all_cols if c in df.columns]]
 
 
 def _safe_harmonization_apply(

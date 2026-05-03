@@ -1,4 +1,5 @@
 from collections import OrderedDict
+import functools
 import logging
 import hashlib
 import torch
@@ -18,7 +19,7 @@ from src.core.config import (
     NUM_TEMPORAL_FEATURES, NUM_SPATIAL_FEATURES, GNN_IN_CHANNELS,
     EXCLUDED_SUBJECTS, MAX_NAN_ROIS,
 )
-from src.core.hyperparams import GNN_MAX_DEGENERATE_GRAPH_RATE
+from src.core.hyperparams import GNN_MAX_DEGENERATE_GRAPH_RATE, DEMO_AGE_CENTER, DEMO_AGE_SCALE, DEMO_SEX_CENTER, DEMO_FIQ_CENTER, DEMO_FIQ_SCALE
 
 # Setup logging
 logging.basicConfig(
@@ -41,25 +42,22 @@ def _log_exclusions_once():
         _exclusion_logged = True
 
 
-def _load_csv_cached(csv_path: Path, index_col: Optional[str] = None) -> pd.DataFrame:
-    """Load CSV and cache to Feather when available for faster subsequent reads."""
-    cache_path = csv_path.with_suffix(".feather")
+def _trim_to_num_lobes(tensor: torch.Tensor, name: str) -> Optional[torch.Tensor]:
+    """Handle lobe count mismatch (12→11) for compatibility."""
+    if tensor.shape[0] == NUM_LOBES:
+        return tensor
+    if tensor.shape[0] == 12 and NUM_LOBES == 11:
+        logger.debug(f"{name} has 12 lobes, trimming to {NUM_LOBES} (excluding Brainstem)")
+        return tensor[:NUM_LOBES] if tensor.dim() == 1 else tensor[:NUM_LOBES, ...]
+    logger.warning(f"{name} shape {tensor.shape} mismatches NUM_LOBES={NUM_LOBES}")
+    return None
 
-    df = None
-    if cache_path.exists() and cache_path.stat().st_mtime_ns >= csv_path.stat().st_mtime_ns:
-        try:
-            df = pd.read_feather(cache_path)
-        except Exception:
-            df = None
 
-    if df is None:
-        df = pd.read_csv(csv_path)
-        try:
-            df.to_feather(cache_path)
-        except Exception:
-            # Feather requires pyarrow; silently fall back to CSV-only loading.
-            pass
-
+@functools.lru_cache(maxsize=64)
+def _load_csv_cached(csv_path_str: str, index_col: Optional[str] = None) -> pd.DataFrame:
+    """Load CSV with in-memory caching for faster repeated reads."""
+    csv_path = Path(csv_path_str)
+    df = pd.read_csv(csv_path)
     if index_col is not None:
         df = df.set_index(index_col)
     return df
@@ -118,10 +116,10 @@ class ABIDECausalDataset(Dataset):
     def _load_data_sources(self):
         """Load the harmonized 12-region features and spatial coordinates."""
         # 1. Master manifest
-        self.manifest_raw = _load_csv_cached(MASTER_MANIFEST)
+        self.manifest_raw = _load_csv_cached(str(MASTER_MANIFEST))
         
         # 2. Harmonized temporal features (aggregated to 12 regions)
-        self.node_attr = _load_csv_cached(self.temporal_features_path, index_col='subject_id')
+        self.node_attr = _load_csv_cached(str(self.temporal_features_path), index_col='subject_id')
         logger.info("  Temporal features: %s", Path(self.temporal_features_path).name)
         
         # 3. Spatial coordinates and geometric features (6 per lobe).
@@ -133,7 +131,7 @@ class ABIDECausalDataset(Dataset):
             else NODE_FEATURES_3D
         )
         logger.info("  Spatial features: %s", _spatial_path.name)
-        self.coords = _load_csv_cached(_spatial_path, index_col='subject_id')
+        self.coords = _load_csv_cached(str(_spatial_path), index_col='subject_id')
         self._spatial_missing_cols = [
             f"{name}_spatial_missing" for name in LOBE_NAMES.values()
         ]
@@ -186,7 +184,7 @@ class ABIDECausalDataset(Dataset):
             graph_path = self.adj_dir / f"{sub}_graph.pt"
             if graph_path.exists():
                 try:
-                    graph_data = torch.load(graph_path, map_location='cpu', weights_only=False)
+                    graph_data = torch.load(graph_path, map_location='cpu', weights_only=True)
                     if 'adj' not in graph_data:
                         invalid_count += 1
                         continue
@@ -298,7 +296,7 @@ class ABIDECausalDataset(Dataset):
             graph_dict = self._graph_cache.get(sub_id)
             if graph_dict is None:
                 graph_path = self.adj_dir / f"{sub_id}_graph.pt"
-                raw_graph = torch.load(graph_path, weights_only=False)
+                raw_graph = torch.load(graph_path, weights_only=True)
                 graph_dict = {
                     'adj': raw_graph['adj'].clone().to(torch.float32),
                     'internal_features': raw_graph.get('internal_features'),
@@ -316,15 +314,10 @@ class ABIDECausalDataset(Dataset):
 
             adj = graph_dict['adj'].clone()  # Should be (NUM_LOBES, NUM_LOBES) or (12, 12) in older graphs
             
-            # Handle lobe mismatch when switching between 11-lobe and 12-lobe modes
-            # If adj is 12x12 but NUM_LOBES=11, extract only first 11x11 (exclude Brainstem)
-            if adj.shape[0] != NUM_LOBES or adj.shape[1] != NUM_LOBES:
-                if adj.shape == (12, 12) and NUM_LOBES == 11:
-                    logger.debug(f"Subject {sub_id}: Adjacency matrix is 12x12, extracting first {NUM_LOBES}x{NUM_LOBES} (excluding Brainstem)")
-                    adj = adj[:NUM_LOBES, :NUM_LOBES]
-                else:
-                    logger.error(f"Subject {sub_id}: Adjacency matrix shape {adj.shape} incompatible with NUM_LOBES={NUM_LOBES}")
-                    return None
+            adj_trimmed = _trim_to_num_lobes(adj, f"Subject {sub_id}: Adjacency")
+            if adj_trimmed is None:
+                return None
+            adj = adj_trimmed
             
             if torch.isnan(adj).any() or torch.isinf(adj).any():
                 logger.error(f"Subject {sub_id}: Adjacency matrix contains NaN/Inf")
@@ -342,15 +335,11 @@ class ABIDECausalDataset(Dataset):
                 # SAFETY: Clean NaN/Inf in internal features
                 internal_features = internal_features.float()
                 
-                # Handle lobe mismatch when switching between 11-lobe and 12-lobe modes
-                # If internal_features has 12 rows but NUM_LOBES=11, extract only first 11 rows (exclude Brainstem)
-                if internal_features.shape[0] != NUM_LOBES:
-                    if internal_features.shape[0] == 12 and NUM_LOBES == 11:
-                        logger.debug(f"Subject {sub_id}: Internal features have 12 lobes, extracting first {NUM_LOBES} (excluding Brainstem)")
-                        internal_features = internal_features[:NUM_LOBES, :]
-                    else:
-                        logger.warning(f"Subject {sub_id}: Internal features shape {internal_features.shape} mismatches NUM_LOBES={NUM_LOBES}, using zeros")
-                        internal_features = torch.zeros((NUM_LOBES, 2), dtype=torch.float32)
+                internal_trimmed = _trim_to_num_lobes(internal_features, f"Subject {sub_id}: Internal features")
+                if internal_trimmed is None:
+                    internal_features = torch.zeros((NUM_LOBES, 2), dtype=torch.float32)
+                else:
+                    internal_features = internal_trimmed
                 
                 if torch.isnan(internal_features).any() or torch.isinf(internal_features).any():
                     logger.warning(f"Subject {sub_id}: Internal features contain NaN/Inf, replacing with 0")
@@ -367,14 +356,11 @@ class ABIDECausalDataset(Dataset):
                 torch.zeros(NUM_LOBES, dtype=torch.bool)
             ).bool()
             
-            # Handle lobe mismatch in zero_lobe_mask when switching between 11-lobe and 12-lobe modes
-            if zero_lobe_mask.shape[0] != NUM_LOBES:
-                if zero_lobe_mask.shape[0] == 12 and NUM_LOBES == 11:
-                    logger.debug(f"Subject {sub_id}: Zero mask is for 12 lobes, extracting first {NUM_LOBES} (excluding Brainstem)")
-                    zero_lobe_mask = zero_lobe_mask[:NUM_LOBES]
-                else:
-                    logger.warning(f"Subject {sub_id}: Zero mask shape {zero_lobe_mask.shape} mismatches NUM_LOBES={NUM_LOBES}, using all-False")
-                    zero_lobe_mask = torch.zeros(NUM_LOBES, dtype=torch.bool)
+            zero_lobe_mask_trimmed = _trim_to_num_lobes(zero_lobe_mask.float(), f"Subject {sub_id}: Zero mask")
+            if zero_lobe_mask_trimmed is None:
+                zero_lobe_mask = torch.zeros(NUM_LOBES, dtype=torch.bool)
+            else:
+                zero_lobe_mask = zero_lobe_mask_trimmed.bool()
 
             spatial_missing_mask = self._get_subject_spatial_missing_mask(sub_id)
             if spatial_missing_mask is not None and spatial_missing_mask.numel() == NUM_LOBES:
@@ -446,9 +432,9 @@ class ABIDECausalDataset(Dataset):
             site_idx = self._encode_site(site_id)
             
             # Normalize covariates
-            age_norm = (age - 15) / 20 if pd.notna(age) else 0  # Roughly 5-35 years
-            sex_norm = (sex - 1.5) if pd.notna(sex) else 0  # Normalize to ~[-0.5, 0.5]
-            fiq_norm = (fiq - 100) / 30 if pd.notna(fiq) and fiq > 0 else 0  # Normalize IQ
+            age_norm = (age - DEMO_AGE_CENTER) / DEMO_AGE_SCALE if pd.notna(age) else 0
+            sex_norm = (sex - DEMO_SEX_CENTER) if pd.notna(sex) else 0
+            fiq_norm = (fiq - DEMO_FIQ_CENTER) / DEMO_FIQ_SCALE if pd.notna(fiq) and fiq > 0 else 0
             
             data_obj = Data(
                 x=x,

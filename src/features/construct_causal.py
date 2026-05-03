@@ -37,11 +37,11 @@ from src.core.config import (
     MULTIVIEW_GENERATION_MAX_ZERO_EDGE_RATE,
 MULTIVIEW_GENERATION_POLICY,
 )
-from src.core.hyperparams import _MULTIVIEW_VIEW_ORDER
+from src.core.hyperparams import _MULTIVIEW_VIEW_ORDER, FISHER_Z_EPS, CONFIDENCE_LOG_EPS
 
-# Numerical guardrails for Fisher-Z and confidence transforms.
-_FISHER_EPS = 1e-6
-_CONFIDENCE_EPS = 1e-8
+# For backwards compatibility with existing code
+_FISHER_EPS = FISHER_Z_EPS
+_CONFIDENCE_EPS = CONFIDENCE_LOG_EPS
 from src.features.causal_inference import (
     compute_granger_causality,
 )
@@ -52,6 +52,34 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def _zero_lagged_payload(device: torch.device) -> Dict[str, Any]:
+    """Return zero-matrix payload for failed lagged correlation computation."""
+    z = torch.zeros(NUM_LOBES, NUM_LOBES, device=device)
+    o = torch.ones(NUM_LOBES, NUM_LOBES, device=device)
+    return {
+        "weighted_z_matrix": z,
+        "z_matrix": z,
+        "p_matrix": o,
+        "confidence_matrix": z,
+        "selected_lag_matrix": torch.zeros(NUM_LOBES, NUM_LOBES, dtype=torch.long, device=device),
+        "low_confidence_mask": o.to(torch.bool),
+        "selected_r_matrix": z,
+    }
+
+
+def _zero_ridge_payload(device: torch.device) -> Dict[str, Any]:
+    """Return zero-matrix payload for failed ridge Granger computation."""
+    z = torch.zeros(NUM_LOBES, NUM_LOBES, device=device)
+    o = torch.ones(NUM_LOBES, NUM_LOBES, device=device)
+    return {
+        "weighted_effect_matrix": z,
+        "effect_matrix": z,
+        "p_matrix": o,
+        "confidence_matrix": z,
+        "low_confidence_mask": o.to(torch.bool),
+    }
 
 
 class _LobeWarningTracker:
@@ -289,31 +317,11 @@ def _compute_lagged_pearson_multilag(
     """
     if ts_lobe.shape[0] <= max(lags):
         logger.warning("Insufficient timepoints for multi-lag correlation")
-        zeros = torch.zeros(NUM_LOBES, NUM_LOBES, device=ts_lobe.device)
-        ones = torch.ones(NUM_LOBES, NUM_LOBES, device=ts_lobe.device)
-        return {
-            "weighted_z_matrix": zeros,
-            "z_matrix": zeros,
-            "p_matrix": ones,
-            "confidence_matrix": zeros,
-            "selected_lag_matrix": torch.zeros(NUM_LOBES, NUM_LOBES, dtype=torch.long, device=ts_lobe.device),
-            "low_confidence_mask": torch.ones(NUM_LOBES, NUM_LOBES, dtype=torch.bool, device=ts_lobe.device),
-            "selected_r_matrix": zeros,
-        }
+        return _zero_lagged_payload(ts_lobe.device)
 
     if torch.isnan(ts_lobe).any() or torch.isinf(ts_lobe).any():
         logger.warning("Input contains NaN/Inf values - returning zero matrix")
-        zeros = torch.zeros(NUM_LOBES, NUM_LOBES, device=ts_lobe.device)
-        ones = torch.ones(NUM_LOBES, NUM_LOBES, device=ts_lobe.device)
-        return {
-            "weighted_z_matrix": zeros,
-            "z_matrix": zeros,
-            "p_matrix": ones,
-            "confidence_matrix": zeros,
-            "selected_lag_matrix": torch.zeros(NUM_LOBES, NUM_LOBES, dtype=torch.long, device=ts_lobe.device),
-            "low_confidence_mask": torch.ones(NUM_LOBES, NUM_LOBES, dtype=torch.bool, device=ts_lobe.device),
-            "selected_r_matrix": zeros,
-        }
+        return _zero_lagged_payload(ts_lobe.device)
 
     # Standardize per lobe before lagged correlation.
     ts_mean = ts_lobe.mean(dim=0, keepdim=True)
@@ -620,27 +628,11 @@ def _compute_ridge_granger_matrix(
     max_lag = max(lags)
     if ts_lobe.shape[0] <= max_lag + 2:
         logger.warning("Insufficient timepoints for ridge Granger")
-        zeros = torch.zeros(NUM_LOBES, NUM_LOBES, device=ts_lobe.device)
-        ones = torch.ones(NUM_LOBES, NUM_LOBES, device=ts_lobe.device)
-        return {
-            "weighted_effect_matrix": zeros,
-            "effect_matrix": zeros,
-            "p_matrix": ones,
-            "confidence_matrix": zeros,
-            "low_confidence_mask": torch.ones(NUM_LOBES, NUM_LOBES, dtype=torch.bool, device=ts_lobe.device),
-        }
+        return _zero_ridge_payload(ts_lobe.device)
 
     if torch.isnan(ts_lobe).any() or torch.isinf(ts_lobe).any():
         logger.warning("Input contains NaN/Inf values - returning zero ridge Granger matrix")
-        zeros = torch.zeros(NUM_LOBES, NUM_LOBES, device=ts_lobe.device)
-        ones = torch.ones(NUM_LOBES, NUM_LOBES, device=ts_lobe.device)
-        return {
-            "weighted_effect_matrix": zeros,
-            "effect_matrix": zeros,
-            "p_matrix": ones,
-            "confidence_matrix": zeros,
-            "low_confidence_mask": torch.ones(NUM_LOBES, NUM_LOBES, dtype=torch.bool, device=ts_lobe.device),
-        }
+        return _zero_ridge_payload(ts_lobe.device)
 
     # Standardize per lobe before regression.
     ts_mean = ts_lobe.mean(dim=0, keepdim=True)
@@ -658,9 +650,7 @@ def _compute_ridge_granger_matrix(
     for dst in range(NUM_LOBES):
         y = ts_np[max_lag:, dst]
 
-        y_lags = np.zeros((n_obs, lag_count), dtype=np.float64)
-        for idx, lag in enumerate(lags):
-            y_lags[:, idx] = ts_np[max_lag - lag:n_time - lag, dst]
+        y_lags = np.column_stack([ts_np[max_lag - lag:n_time - lag, dst] for lag in lags])
 
         beta_restricted = _ridge_solve(y_lags, y, ridge_lambda)
         y_hat_restricted = y_lags @ beta_restricted
@@ -670,9 +660,7 @@ def _compute_ridge_granger_matrix(
             if src == dst:
                 continue
 
-            x_lags = np.zeros((n_obs, lag_count), dtype=np.float64)
-            for idx, lag in enumerate(lags):
-                x_lags[:, idx] = ts_np[max_lag - lag:n_time - lag, src]
+            x_lags = np.column_stack([ts_np[max_lag - lag:n_time - lag, src] for lag in lags])
 
             full_design = np.concatenate([y_lags, x_lags], axis=1)
             beta_full = _ridge_solve(full_design, y, ridge_lambda)
@@ -780,7 +768,6 @@ def compute_causality_matrix(
     ts_lobe: torch.Tensor,
     method: str = None,
     max_lag: int = None,
-    use_gpu: bool = None,
     return_metadata: bool = False,
 ) -> Any:
     """
@@ -789,12 +776,11 @@ def compute_causality_matrix(
     Args:
         ts_lobe: Time series for lobes (shape: [timepoints, n_lobes])
         method: Causality method
-            ('granger', 'ridge_granger', 'ridge_granger_hybrid',
+            ('ridge_granger', 'ridge_granger_hybrid',
              'lagged_pearson', 'partial_corr_glasso')
                 If None, uses CAUSALITY_METHOD from config
         max_lag: Max lag in timepoints for Granger causality. If None, uses GRANGER_MAX_LAG from config.
                  For multi-site studies, this allows per-subject adaptation based on TR.
-        use_gpu: Use GPU-accelerated Granger. If None, auto-detect from GRANGER_USE_GPU.
 
     Returns:
         If return_metadata=False:
@@ -814,18 +800,7 @@ def compute_causality_matrix(
     ts_numpy = ts_lobe.cpu().numpy()
 
     try:
-        if method == 'granger':
-            from src.core.hyperparams import GRANGER_USE_GPU
-            if use_gpu is None:
-                use_gpu = GRANGER_USE_GPU and torch.cuda.is_available()
-            logger.debug(f"Computing Granger causality (GPU={use_gpu}, max_lag={max_lag})")
-            causal_matrix_np = compute_granger_causality(
-                ts_numpy,
-                max_lag=max_lag,
-                use_gpu=use_gpu,
-            )
-
-        elif method == 'ridge_granger':
+        if method == 'ridge_granger':
             logger.debug(
                 "Computing ridge Granger causality (lags=%s, lambda=%.4f)",
                 RIDGE_GRANGER_LAGS,
@@ -1658,7 +1633,6 @@ def construct_multiview_graphs(
     tr: float,
     output_dir: Path,
     rng: np.random.Generator = None,
-    use_gpu: bool = None,
 ) -> bool:
     """
     Generate 6 causal graph views per subject for CausalInvarianceLoss training.
@@ -1680,17 +1654,11 @@ def construct_multiview_graphs(
         tr: Repetition time in seconds.
         output_dir: Root directory for multiview outputs (CAUSAL_GRAPHS_MULTIVIEW_DIR).
         rng: Optional numpy Generator for reproducible bootstrap sampling.
-        use_gpu: Use GPU-accelerated Granger. If None, auto-detect from GRANGER_USE_GPU.
 
     Returns:
         True if all 6 views were successfully generated and saved, False otherwise.
     """
     from src.features.causal_inference import compute_granger_causality
-    from src.core.hyperparams import GRANGER_USE_GPU
-
-    if use_gpu is None:
-        use_gpu = GRANGER_USE_GPU and torch.cuda.is_available()
-        logger.debug(f"Auto-detected GPU for multiview: use_gpu={use_gpu}")
 
     if rng is None:
         rng = np.random.default_rng(seed=42)
@@ -1743,7 +1711,7 @@ def construct_multiview_graphs(
 
         # 1. Extended-lag view
         try:
-            adj_ext_np = compute_granger_causality(lobe_ts, max_lag=ext_lag, use_gpu=use_gpu)
+            adj_ext_np = compute_granger_causality(lobe_ts, max_lag=ext_lag)
             if np.count_nonzero(adj_ext_np) == 0:
                 raise ValueError("extended-lag causality returned all-zero matrix")
             adj_extended = torch.tensor(adj_ext_np, dtype=torch.float32)
@@ -1776,7 +1744,7 @@ def construct_multiview_graphs(
             idx = np.sort(idx)
             lobe_ts_sub = lobe_ts[idx]
             try:
-                adj_np = compute_granger_causality(lobe_ts_sub, max_lag=base_lag, use_gpu=use_gpu)
+                adj_np = compute_granger_causality(lobe_ts_sub, max_lag=base_lag)
                 if np.count_nonzero(adj_np) == 0:
                     raise ValueError("bootstrap causality returned all-zero matrix")
                 adj_bootstraps.append(torch.tensor(adj_np, dtype=torch.float32))
@@ -2028,7 +1996,6 @@ def main_multiview():
                 lobe_to_roi=lobe_to_roi,
                 tr=tr,
                 output_dir=CAUSAL_GRAPHS_MULTIVIEW_DIR,
-                use_gpu=None,  # None = auto-detect inside function
             )
             if ok:
                 success += 1

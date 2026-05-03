@@ -440,7 +440,7 @@ def _extract_temporal_vectorized(
             freq_feature_arr[:, idx + n_bands] = _compute_peak_freqs_vectorized(psd_full, freqs_full, band_mask)
 
         freq_feature_arr[:, 2 * n_bands] = _compute_spectral_entropy_vectorized(psd_full, total_power)
-        freq_feature_arr[:, 2 * n_bands + 1] = _compute_phase_std_vectorized(ts_clean)
+        freq_feature_arr[:, 2 * n_bands + 1] = _compute_phase_std_vectorized(ts_clean, bad_rois)
 
         output_features = np.concatenate([base_features, freq_feature_arr], axis=1)
 
@@ -507,13 +507,21 @@ def _compute_spectral_entropy_vectorized(
     return spectral_entropy
 
 
-def _compute_phase_std_vectorized(ts: np.ndarray) -> np.ndarray:
-    """Vectorized instantaneous phase std via Hilbert transform."""
+def _compute_phase_std_vectorized(ts: np.ndarray, bad_rois: np.ndarray) -> np.ndarray:
+    """Vectorized instantaneous phase std via Hilbert transform.
+    
+    Args:
+        ts: Time series array (n_timepoints, n_rois), with bad ROIs already zeroed.
+        bad_rois: Boolean mask of bad ROI indices.
+    """
     n_timepoints, n_rois = ts.shape
-    analytic = hilbert(ts, axis=0)
-    instantaneous_phase = np.angle(analytic)
-    phase_std = np.std(instantaneous_phase, axis=0)
-    phase_std = np.where(np.isfinite(phase_std), phase_std, 0.0)
+    phase_std = np.zeros(n_rois)
+    valid = ~bad_rois
+    if valid.any():
+        analytic = hilbert(ts[:, valid], axis=0)
+        instantaneous_phase = np.angle(analytic)
+        phase_std[valid] = np.std(instantaneous_phase, axis=0)
+        phase_std[valid] = np.where(np.isfinite(phase_std[valid]), phase_std[valid], 0.0)
     return phase_std
 
 

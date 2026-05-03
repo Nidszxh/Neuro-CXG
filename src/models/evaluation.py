@@ -243,3 +243,30 @@ def resolve_threshold(
     else:
         # Default fallback is F1 maximization
         return optimal_threshold(probs, labels)
+
+
+def _json_safe(value):
+    """Recursively convert values into JSON-safe finite primitives."""
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+
+    if isinstance(value, np.ndarray):
+        return _json_safe(value.tolist())
+
+    if isinstance(value, (np.floating, float)):
+        val = float(value)
+        return val if np.isfinite(val) else None
+
+    if isinstance(value, (np.integer, int)):
+        return int(value)
+
+    if isinstance(value, (np.bool_, bool)):
+        return bool(value)
+
+    if torch.is_tensor(value):
+        return _json_safe(value.detach().cpu().tolist())
+
+    return value

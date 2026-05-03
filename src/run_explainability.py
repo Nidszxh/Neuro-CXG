@@ -87,8 +87,8 @@ from src.core.config import (
 from src.core.hyperparams import GNN_SITE_EMBEDDING_DIM
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
-from src.models.factory import build_model
-from src.models.training_utils import make_loader, attach_feature_scaler_from_checkpoint
+from src.models.factory import build_model, load_model
+from src.models.training_utils import make_loader
 
 logging.basicConfig(
     level=logging.INFO,
@@ -100,38 +100,6 @@ REGION_LABELS: List[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
-
-def _load_model(checkpoint_path: Path, device: torch.device) -> CausalBrainGNN:
-    """Load a CausalBrainGNN from a fold checkpoint."""
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-
-    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    state_dict = ckpt["model_state"] if isinstance(ckpt, dict) and "model_state" in ckpt else ckpt
-
-    site_dim = GNN_SITE_EMBEDDING_DIM if GNN_USE_SITE_EMBEDDING else 0
-    saved_in_features = state_dict["lin_in.weight"].shape[1]
-    node_emb_dim = saved_in_features - GNN_IN_CHANNELS - site_dim
-
-    model = build_model(
-        device=device,
-        use_grl=GNN_USE_GRL,
-        grl_alpha=GNN_GRL_ALPHA,
-        node_emb_dim=node_emb_dim,
-    )
-
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    if missing:
-        logger.warning("Missing keys in checkpoint: %s", missing)
-    if unexpected:
-        logger.warning("Unexpected keys in checkpoint: %s", unexpected)
-
-    attach_feature_scaler_from_checkpoint(model, ckpt, expected_dim=GNN_IN_CHANNELS)
-
-    model.eval()
-    logger.info("Loaded model from %s", checkpoint_path)
-    return model
-
 
 def _build_test_loader(batch_size: int = 16) -> DataLoader:
     """Build a DataLoader for the held-out test split."""
@@ -289,8 +257,7 @@ def run_explainability_pipeline(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("Device: %s", device)
 
-    checkpoint_path = get_active_checkpoint_dir() / f"best_model_fold{fold_id}.pt"
-    model       = _load_model(checkpoint_path, device)
+    model = load_model(checkpoint_path=get_active_checkpoint_dir() / f"best_model_fold{fold_id}.pt", device=device)
     test_loader = _build_test_loader(batch_size=batch_size)
 
     summary: Dict = {

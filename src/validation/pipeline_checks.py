@@ -41,7 +41,7 @@ from src.core.config import (
     SPARSITY_QUANTILE,
     HARMONIZED_FOLDS_DIR,
 )
-from src.core.hyperparams import GNN_MAX_DEGENERATE_GRAPH_RATE
+from src.core.hyperparams import GNN_MAX_DEGENERATE_GRAPH_RATE, AUDIT_SAMPLE_PNG, AUDIT_SAMPLE_TS, AUDIT_MAX_EMPTY_ROI_FRACTION
 from src.core.validators import summarize_graph_degeneracy_from_adj
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
@@ -53,6 +53,15 @@ TARGET_SLICES = 7
 VALID_ROI_RANGE = (164, 170)  # AAL3v1 atlas variants
 PNG_DIR = DATA_ROOT / "images"
 TS_DIR = DATA_PROCESSED
+
+
+def _collect_split_files(subdir: str, pattern: str = "*.png") -> List[Path]:
+    """Collect files from train/val/test splits into a single list."""
+    return [
+        p for split in ("train", "val", "test")
+        for p in (DATA_FINAL / split / subdir).glob(pattern)
+        if (DATA_FINAL / split / subdir).exists()
+    ]
 
 
 def _redownload_npy(corrupted_npy_paths: list, incomplete_subs: list) -> None:
@@ -147,8 +156,7 @@ def check_dataset_integrity() -> None:
     # After split.py runs it moves all PNGs into data/final/{split}/images/,
     # leaving the source-pool dir (PNG_DIR) empty.  Prefer the split dirs.
     _split_img_dirs = [DATA_FINAL / sp / "images" for sp in ("train", "val", "test")]
-    _split_pngs = [p for d in _split_img_dirs if d.exists() for p in d.glob("*.png")]
-    png_files = _split_pngs if _split_pngs else list(PNG_DIR.glob("*.png"))
+    png_files = _collect_split_files("images", "*.png") or list(PNG_DIR.glob("*.png"))
     corrupted_pngs = []
     subject_counts = Counter()
 
@@ -212,7 +220,7 @@ def check_dataset_integrity() -> None:
                     )
                 # >50% empty ROIs means the masker extracted almost nothing useful.
                 # Treat these as corrupted so the interactive prompt can delete them.
-                MAX_EMPTY_ROI_FRACTION = 0.50
+                MAX_EMPTY_ROI_FRACTION = AUDIT_MAX_EMPTY_ROI_FRACTION
                 max_allowed_empty = int(num_rois * MAX_EMPTY_ROI_FRACTION)
                 if empty_roi_cols > max_allowed_empty:
                     raise ValueError(
@@ -294,17 +302,16 @@ def check_dataset_integrity() -> None:
             # After split.py runs, subject files live in the split dirs, not in the
             # source-pool dirs (PNG_DIR / TS_DIR).  Search all split dirs for a
             # complete purge of the requested subjects.
-            _split_img_dirs_d2 = [DATA_FINAL / sp / "images" for sp in ("train", "val", "test")]
-            _split_ts_dirs_d2  = [DATA_FINAL / sp / "time_series" for sp in ("train", "val", "test")]
             deleted = 0
             for sub in incomplete_subs:
-                for img_d in _split_img_dirs_d2:
-                    for path in img_d.glob(f"{sub}_z*.png"):
-                        os.remove(path)
-                        deleted += 1
-                for ts_d in _split_ts_dirs_d2:
+                for path in _collect_split_files("images", f"{sub}_z*.png"):
+                    os.remove(path)
+                    deleted += 1
+                for ts_dir in (DATA_FINAL / "train" / "time_series", DATA_FINAL / "val" / "time_series", DATA_FINAL / "test" / "time_series"):
+                    if not ts_dir.exists():
+                        continue
                     for pattern in (f"{sub}_ts.npy", f"{sub}_roi_labels.npy", f"{sub}_qc.json"):
-                        for path in ts_d.glob(pattern):
+                        for path in ts_dir.glob(pattern):
                             os.remove(path)
                             deleted += 1
             if deleted:
@@ -533,8 +540,8 @@ def analyze_class_distribution() -> None:
 
 def generate_health_report(
     pheno_path: Optional[Path] = None,
-    sample_png: int = 20,
-    sample_ts: int = 10,
+    sample_png: int = AUDIT_SAMPLE_PNG,
+    sample_ts: int = AUDIT_SAMPLE_TS,
     run_deep_checks: bool = False,
 ) -> bool:
     """
@@ -559,14 +566,11 @@ def generate_health_report(
 
     # Collect PNGs from split directories (data/final/{train,val,test}/images/)
     # Fall back to legacy data/images/ if splits don't exist yet.
-    split_image_dirs = [DATA_FINAL / split / "images" for split in ("train", "val", "test")]
-    split_images_exist = any(d.exists() for d in split_image_dirs)
+    png_files = _collect_split_files("images", "*.png")
+    split_images_exist = len(png_files) > 0
 
     if split_images_exist:
-        downloaded_files = []
-        for d in split_image_dirs:
-            if d.exists():
-                downloaded_files.extend([f.name for f in d.glob("*.png")])
+        downloaded_files = [f.name for f in png_files]
         png_dir = DATA_FINAL  # used only for deep-check path resolution below
     else:
         # Legacy fallback
@@ -1043,8 +1047,7 @@ class PipelineValidator:
         all_passed = True
 
         # Images may live in split dirs (post-split) or the legacy pre-split dir
-        split_image_dirs = [DATA_FINAL / s / "images" for s in ("train", "val", "test")]
-        png_files = [p for d in split_image_dirs if d.exists() for p in d.glob("*.png")]
+        png_files = _collect_split_files("images", "*.png")
         if not png_files:
             legacy_dir = DATA_ROOT / "images"
             png_files = list(legacy_dir.glob("*.png")) if legacy_dir.exists() else []

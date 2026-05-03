@@ -72,6 +72,30 @@ from src.core.config import (
     HARMONIZED_FOLDS_DIR,
 )
 from src.models.losses import FocalLoss
+
+
+def _build_criterion(labels) -> nn.Module:
+    """Build loss criterion based on config and label distribution."""
+    labels_arr = np.array(labels)
+    n_control = max(int((labels_arr == 0).sum()), 1)
+    n_asd = max(int((labels_arr == 1).sum()), 1)
+
+    class_weight_tensor = None
+    if USE_CLASS_WEIGHTS:
+        total = max(len(labels_arr), 1)
+        class_weight_tensor = torch.tensor(
+            [total / (2 * n_control), total / (2 * n_asd)],
+            dtype=torch.float32,
+            device=DEVICE,
+        )
+
+    if USE_FOCAL_LOSS:
+        pos_weight = None
+        if USE_CLASS_WEIGHTS:
+            pos_weight = float(n_control / n_asd)
+        return FocalLoss(alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA, pos_weight=pos_weight)
+    else:
+        return nn.CrossEntropyLoss(weight=class_weight_tensor)
 from src.models.factory import build_model
 from src.models.training_utils import make_loader, train_fold_with_onecycle
 from src.models.gnn_model import _set_global_seed
@@ -338,27 +362,7 @@ def run_kfold(
     fold_f1s: List[float] = []
 
     class_weight_tensor = None
-    if USE_CLASS_WEIGHTS:
-        labels_arr = np.array(labels)
-        n_control = max(int((labels_arr == 0).sum()), 1)
-        n_asd = max(int((labels_arr == 1).sum()), 1)
-        total = max(len(labels_arr), 1)
-        class_weight_tensor = torch.tensor(
-            [total / (2 * n_control), total / (2 * n_asd)],
-            dtype=torch.float32,
-            device=DEVICE,
-        )
-
-    if USE_FOCAL_LOSS:
-        pos_weight = None
-        if USE_CLASS_WEIGHTS:
-            labels_arr = np.array(labels)
-            n_control = max(int((labels_arr == 0).sum()), 1)
-            n_asd = max(int((labels_arr == 1).sum()), 1)
-            pos_weight = float(n_control / n_asd)
-        criterion = FocalLoss(alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA, pos_weight=pos_weight)
-    else:
-        criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
+    criterion = _build_criterion(labels)
 
     for fold, (train_idx, val_idx) in enumerate(cv_splits):
         _set_global_seed(42)  # deterministic initialization per fold (like main pipeline)

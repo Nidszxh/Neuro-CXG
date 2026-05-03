@@ -80,10 +80,11 @@ from src.models.evaluation import (
     apply_per_site_calibration,
     optimal_threshold,
     youden_threshold,
+    _json_safe,
 )
 from src.models.causal_gnn import CausalBrainGNN
 from src.models.factory import build_model, load_model
-from src.models.training_utils import make_loader, attach_feature_scaler_from_checkpoint
+from src.models.training_utils import make_loader
 
 logging.basicConfig(
     level=logging.INFO,
@@ -94,33 +95,6 @@ logger = logging.getLogger(__name__)
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 OUTPUT_DIR  = RESULTS_DIR / "analysis"
 LOBE_LABELS = {v: k for k, v in LOBE_NAMES.items()} if isinstance(LOBE_NAMES, dict) else {}
-
-
-def _json_safe(value):
-    """Recursively convert values into JSON-safe finite primitives."""
-    if isinstance(value, dict):
-        return {str(k): _json_safe(v) for k, v in value.items()}
-
-    if isinstance(value, (list, tuple, set)):
-        return [_json_safe(v) for v in value]
-
-    if isinstance(value, np.ndarray):
-        return _json_safe(value.tolist())
-
-    if isinstance(value, (np.floating, float)):
-        val = float(value)
-        return val if np.isfinite(val) else None
-
-    if isinstance(value, (np.integer, int)):
-        return int(value)
-
-    if isinstance(value, (np.bool_, bool)):
-        return bool(value)
-
-    if torch.is_tensor(value):
-        return _json_safe(value.detach().cpu().tolist())
-
-    return value
 
 
 def _safe_roc_auc(labels: np.ndarray, probs: np.ndarray) -> Optional[float]:
@@ -141,11 +115,6 @@ def _safe_roc_auc(labels: np.ndarray, probs: np.ndarray) -> Optional[float]:
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
-
-def _load_model(fold_id: int) -> CausalBrainGNN:
-    """Load a trained fold checkpoint using the centralized factory function."""
-    return load_model(fold_id=fold_id, device=DEVICE)
-
 
 def _site_ids_from_graphs(graphs: List) -> np.ndarray:
     """Extract integer site_id vector aligned to graph order."""
@@ -215,7 +184,7 @@ def _collect_per_subject(
 
     for fold_id in range(K_FOLDS):
         try:
-            model = _load_model(fold_id)
+            model = load_model(fold_id=fold_id, device=DEVICE)
         except FileNotFoundError:
             continue
         probs, _ = _predict_probs(model, graphs)
@@ -252,7 +221,7 @@ def _collect_per_subject(
             calibration_labels = None
             for fold_id in loaded_fold_ids:
                 try:
-                    model = _load_model(fold_id)
+                    model = load_model(fold_id=fold_id, device=DEVICE)
                 except FileNotFoundError:
                     continue
                 c_probs, c_labels = _predict_probs(model, calibration_graphs)
@@ -481,7 +450,7 @@ def _resolve_analysis_threshold(
     labels_ref = None
     for fold_id in range(K_FOLDS):
         try:
-            model = _load_model(fold_id)
+            model = load_model(fold_id=fold_id, device=DEVICE)
         except FileNotFoundError:
             continue
         probs, labels = _predict_probs(model, calibration_graphs)

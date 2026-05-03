@@ -72,6 +72,47 @@ class FocalLoss(nn.Module):
         return (alpha_weight * focal_weight * ce_loss).mean()
 
 
+def build_criterion(
+    train_labels,
+    device: torch.device,
+    use_focal_loss: bool = True,
+    use_class_weights: bool = False,
+    focal_alpha: float = 0.75,
+    focal_gamma: float = 3.0,
+) -> nn.Module:
+    """Build loss criterion based on config and training label distribution.
+    
+    Args:
+        train_labels: List or array of labels (0=Control, 1=ASD)
+        device: Torch device for class weights tensor
+        use_focal_loss: Whether to use FocalLoss (else CrossEntropyLoss)
+        use_class_weights: Whether to apply class reweighting
+        focal_alpha: Focal loss alpha parameter
+        focal_gamma: Focal loss gamma parameter
+    
+    Returns:
+        Initialized loss module
+    """
+    labels_arr = np.array(train_labels)
+    n_control = max(int((labels_arr == 0).sum()), 1)
+    n_asd = max(int((labels_arr == 1).sum()), 1)
+    
+    class_weight_tensor = None
+    if use_class_weights:
+        total = max(len(labels_arr), 1)
+        class_weight_tensor = torch.tensor(
+            [total / (2 * n_control), total / (2 * n_asd)],
+            dtype=torch.float32,
+            device=device,
+        )
+    
+    if use_focal_loss:
+        pos_weight = float(n_control / n_asd) if use_class_weights else None
+        return FocalLoss(alpha=focal_alpha, gamma=focal_gamma, pos_weight=pos_weight)
+    else:
+        return nn.CrossEntropyLoss(weight=class_weight_tensor)
+
+
 # ── Causal Invariance Loss (DD-010) ───────────────────────────────────────────────
 
 class CausalInvarianceLoss(nn.Module):

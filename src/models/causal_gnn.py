@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import LOBE_TO_NETWORK, NETWORK_TO_LOBES, NUM_NETWORKS, NUM_LOBES
+from src.core.hyperparams import GRL_ANNEAL_STEEPNESS
 
 logger = logging.getLogger(__name__)
 
@@ -91,21 +92,6 @@ class AnatomicalHierarchyPool(nn.Module):
         # Precompute and pad per-network lobe indices to avoid rebuilding tensors
         # in every forward pass.
         max_lobes_per_network = max(len(v) for v in self.network_to_lobes.values())
-        
-        # For 11-lobe mode: ensure lobe indices don't exceed NUM_LOBES-1
-        # This handles the case where Brainstem (lobe 11) was excluded
-        def clamp_lobe_indices(net_idx, lobe_list):
-            return [idx for idx in lobe_list if idx < NUM_LOBES]
-        
-        # Rebuild network_to_lobes to exclude missing lobes
-        if NUM_LOBES < 12:
-            original_network_to_lobes = self.network_to_lobes
-            self.network_to_lobes = {}
-            for net_idx, lobe_list in original_network_to_lobes.items():
-                clamped = clamp_lobe_indices(net_idx, lobe_list)
-                if clamped:  # Only include networks that have valid lobes
-                    self.network_to_lobes[net_idx] = clamped
-            max_lobes_per_network = max(len(v) for v in self.network_to_lobes.values()) if self.network_to_lobes else 1
         
         lobe_idx_padded = torch.full(
             (self.num_networks, max_lobes_per_network),
@@ -346,7 +332,7 @@ class CausalBrainGNN(torch.nn.Module):
             self.grl_alpha = 0.0
             return
         adjusted_progress = (p - 0.2) / 0.8
-        alpha = 2.0 / (1.0 + math.exp(-5.0 * adjusted_progress)) - 1.0
+        alpha = 2.0 / (1.0 + math.exp(-GRL_ANNEAL_STEEPNESS * adjusted_progress)) - 1.0
         self.grl_alpha = alpha * max(float(alpha_max), 0.0)
 
     def forward_batch(self, batch) -> torch.Tensor:
