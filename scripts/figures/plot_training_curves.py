@@ -9,21 +9,21 @@ Output: results/paper_figures/training_curves/training_curves.png
 
 import json
 from pathlib import Path
-from typing import Optional, List, Dict
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.core.plotting import ColorPalette, FigureSize, apply_publication_style
+from src.core.plotting import ColorPalette, FigureSize
 
 palette = ColorPalette()
 
 TRAINING_DIR = Path(__file__).parent.parent.parent / "results" / "experiments" / "training"
 
 
-def load_training_history() -> List[Dict]:
+def load_training_history() -> list[dict]:
     """Load training history from all folds."""
     histories = []
     for fold in range(5):
@@ -34,7 +34,7 @@ def load_training_history() -> List[Dict]:
     return histories
 
 
-def generate_training_curves(output_dir: Optional[Path] = None, dpi: int = 300) -> Path:
+def generate_training_curves(output_dir: Path | None = None, dpi: int = 300) -> Path:
     """Generate training curves figure."""
 
     if output_dir is None:
@@ -58,7 +58,7 @@ def generate_training_curves(output_dir: Optional[Path] = None, dpi: int = 300) 
 
         axes[0, 0].plot(epochs, history["train_loss"], color=palette.CONTROL, alpha=0.7,
                         label=f"Fold {fold_idx}", linewidth=1.5)
-        
+
         axes[0, 1].plot(epochs, history["val_loss"], color=palette.ASD, alpha=0.7,
                         label=f"Fold {fold_idx}", linewidth=1.5)
 
@@ -102,7 +102,7 @@ def generate_training_curves(output_dir: Optional[Path] = None, dpi: int = 300) 
     return output_path
 
 
-def generate_mean_training_curves(output_dir: Optional[Path] = None, dpi: int = 300) -> Path:
+def generate_mean_training_curves(output_dir: Path | None = None, dpi: int = 300) -> Path:
     """Generate mean training curves across folds."""
 
     if output_dir is None:

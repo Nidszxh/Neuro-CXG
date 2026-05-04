@@ -8,12 +8,17 @@ Tests:
 """
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import torch
-import pytest
 
-from src.core.atlas_config import NUM_LOBES, NUM_NETWORKS, LOBE_TO_NETWORK, NETWORK_TO_LOBES
+from src.core.atlas_config import (
+    LOBE_TO_NETWORK,
+    NETWORK_TO_LOBES,
+    NUM_LOBES,
+    NUM_NETWORKS,
+)
 from src.models.causal_gnn import AnatomicalHierarchyPool
 
 

@@ -7,14 +7,16 @@ Tests:
 """
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+import copy
 
 import numpy as np
 import pytest
 import torch
 import torch.nn as nn
-import copy
-from torch_geometric.data import Data, Batch
+from torch_geometric.data import Batch, Data
 
 from src.analysis.edge_importance import GradientEdgeAttributor
 from src.models.losses import EdgeStructureContrastiveLoss

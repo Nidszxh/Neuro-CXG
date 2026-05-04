@@ -7,14 +7,9 @@ Generates publication-quality bar chart comparing all ablation experiments.
 Output: results/paper_figures/ablations/ablation_comparison.png
 """
 
-import json
 from pathlib import Path
-from typing import Optional
 
 import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-
 
 ABLATION_DATA = {
     "Full Model": {"auc": 0.8587, "std": 0.0240, "f1": 0.8121},
@@ -30,7 +25,7 @@ ABLATION_DATA = {
 BASELINE_AUC = 0.8587
 
 
-def generate_ablation_figure(output_dir: Optional[Path] = None, dpi: int = 300) -> Path:
+def generate_ablation_figure(output_dir: Path | None = None, dpi: int = 300) -> Path:
     """Generate ablation comparison figure."""
 
     if output_dir is None:

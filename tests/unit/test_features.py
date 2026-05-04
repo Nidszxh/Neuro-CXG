@@ -10,14 +10,14 @@ Run:
 """
 import sys
 from pathlib import Path
+
 import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import ACTIVE_FREQ_BANDS
-from src.features.extract_temporal import extract_band_power
 from src.features.causal_inference import compute_granger_causality
-
+from src.features.extract_temporal import extract_band_power
 
 # ══════════════════════════════════════════════════════════════════════════════
 # extract_band_power

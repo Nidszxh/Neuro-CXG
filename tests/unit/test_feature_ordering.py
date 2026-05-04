@@ -26,9 +26,8 @@ import pytest
 # Ensure project root is importable
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from src.core.config import FEATURE_GROUPS, ALL_FEATURE_NAMES, NUM_LOBES, LOBE_NAMES
+from src.core.config import FEATURE_GROUPS, LOBE_NAMES, NUM_LOBES
 from src.features.fold_safe_harmonization import FEATURE_TYPES, aggregate_to_lobes
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 1. FEATURE_TYPES ordering matches config source of truth
@@ -183,6 +182,7 @@ class TestSingleZScore:
     def test_zscore_present_in_construct_graph(self):
         """construct_graph() source must contain the z-score block."""
         import inspect
+
         from src.features.construct_causal import construct_graph
         source = inspect.getsource(construct_graph)
         assert "ts_mean" in source and "ts_std" in source, (
@@ -191,7 +191,6 @@ class TestSingleZScore:
         )
         # The import of NiftiLabelsMasker must NOT appear (only in abide_download.py).
         # Check outside docstring by verifying no assignment like "masker = NiftiLabelsMasker("
-        import re
         code_lines = [
             line for line in source.splitlines()
             if not line.strip().startswith('"""') and not line.strip().startswith('#')
@@ -236,6 +235,7 @@ class TestEvaluationThreshold:
         """
         import inspect
         import re
+
         from src.run_evaluation import run_ensemble_evaluation
 
         source = inspect.getsource(run_ensemble_evaluation)
@@ -252,6 +252,7 @@ class TestEvaluationThreshold:
         Inspect source: fold_thresholds list must be built from ckpt.get('threshold').
         """
         import inspect
+
         from src.run_evaluation import run_ensemble_evaluation
 
         source = inspect.getsource(run_ensemble_evaluation)
@@ -269,6 +270,7 @@ class TestEvaluationThreshold:
     def test_fixed_threshold_policy_supported(self):
         """Evaluation must support a fixed deployment threshold policy."""
         import inspect
+
         from src.run_evaluation import run_ensemble_evaluation
 
         source = inspect.getsource(run_ensemble_evaluation)

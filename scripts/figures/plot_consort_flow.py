@@ -8,12 +8,10 @@ Output: results/paper_figures/consort_flow.png
 """
 
 from pathlib import Path
-from typing import Optional
 
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
-
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch
 
 SUBJECT_FLOW = {
     "initial": {"n": 1112, "label": "ABIDE-I Assessed for Eligibility"},
@@ -41,7 +39,7 @@ SUBJECT_FLOW = {
 }
 
 
-def generate_consort_diagram(output_dir: Optional[Path] = None, dpi: int = 300) -> Path:
+def generate_consort_diagram(output_dir: Path | None = None, dpi: int = 300) -> Path:
     """Generate CONSORT-style subject flow diagram."""
 
     if output_dir is None:
@@ -73,35 +71,35 @@ def generate_consort_diagram(output_dir: Optional[Path] = None, dpi: int = 300) 
                    arrowprops=dict(arrowstyle="->", color="black", lw=1.5),
                    zorder=1)
 
-    draw_box(6, 13, box_width, box_height, f"Assessed for Eligibility (n=1112)", "#D5E8D4")
+    draw_box(6, 13, box_width, box_height, "Assessed for Eligibility (n=1112)", "#D5E8D4")
 
     draw_arrow(6, 12.6, 6, 11.8)
 
-    draw_box(6, 11.3, box_width, box_height, f"Not Eligible (n=97)", "#F8C8C8")
+    draw_box(6, 11.3, box_width, box_height, "Not Eligible (n=97)", "#F8C8C8")
     ax.text(6, 10.7, "• Phantoms: 24", ha="center", va="top", fontsize=8)
     ax.text(6, 10.3, "• Corrupted volumes: 73", ha="center", va="top", fontsize=8)
 
     draw_arrow(6, 10.1, 6, 9.3)
 
-    draw_box(6, 8.8, box_width, box_height, f"Analyzed (n=1015)", "#D5E8D4")
+    draw_box(6, 8.8, box_width, box_height, "Analyzed (n=1015)", "#D5E8D4")
 
     draw_arrow(6, 8.4, 4, 7.6)
 
-    draw_box(4, 7.1, 4, box_height, f"Training + Validation (n=707)", "#DAE8FC")
+    draw_box(4, 7.1, 4, box_height, "Training + Validation (n=707)", "#DAE8FC")
     ax.text(4, 6.5, "ASD: 423, Control: 284", ha="center", va="top", fontsize=8)
     ax.text(4, 6.1, "13 sites", ha="center", va="top", fontsize=8)
 
     draw_arrow(8, 7.6, 8, 7.1)
-    draw_box(8, 6.6, 3.5, box_height, f"Test Set (n=308)", "#FCF3CF")
+    draw_box(8, 6.6, 3.5, box_height, "Test Set (n=308)", "#FCF3CF")
     ax.text(8, 6.0, "ASD: 175, Control: 133", ha="center", va="top", fontsize=8)
     ax.text(8, 5.6, "13 sites", ha="center", va="top", fontsize=8)
 
     draw_arrow(4, 6.7, 2.5, 5.9)
-    draw_box(2.5, 5.4, 3, box_height, f"Training (n=566)", "#E1D5E7")
+    draw_box(2.5, 5.4, 3, box_height, "Training (n=566)", "#E1D5E7")
     ax.text(2.5, 4.8, "ASD: 341, Control: 225", ha="center", va="top", fontsize=8)
 
     draw_arrow(4, 6.7, 5.5, 5.9)
-    draw_box(5.5, 5.4, 3, box_height, f"Validation (n=141)", "#E1D5E7")
+    draw_box(5.5, 5.4, 3, box_height, "Validation (n=141)", "#E1D5E7")
     ax.text(5.5, 4.8, "ASD: 82, Control: 59", ha="center", va="top", fontsize=8)
 
     ax.text(6, 1.0, "5-Fold Cross-Validation (Training + Validation)", ha="center", fontsize=9,

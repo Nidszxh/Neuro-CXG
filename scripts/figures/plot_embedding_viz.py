@@ -12,16 +12,14 @@ This script provides the visualization code and generates a placeholder if no em
 
 import json
 from pathlib import Path
-from typing import Optional, Dict, List
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-
 NODE_IMPORTANCE_FILE = Path(__file__).parent.parent.parent / "results" / "explainability" / "node" / "aggregated_importance.json"
 
 
-def load_node_importance() -> Optional[Dict]:
+def load_node_importance() -> dict | None:
     """Load node importance scores."""
     if NODE_IMPORTANCE_FILE.exists():
         with open(NODE_IMPORTANCE_FILE) as f:
@@ -29,7 +27,7 @@ def load_node_importance() -> Optional[Dict]:
     return None
 
 
-def generate_embedding_visualization(output_dir: Optional[Path] = None, dpi: int = 300) -> Path:
+def generate_embedding_visualization(output_dir: Path | None = None, dpi: int = 300) -> Path:
     """Generate embedding visualization figure."""
 
     if output_dir is None:

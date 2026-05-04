@@ -16,9 +16,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.figures.plot_ablation_comparison import generate_ablation_figure
-from scripts.figures.plot_training_curves import generate_training_curves
 from scripts.figures.plot_consort_flow import generate_consort_diagram
 from scripts.figures.plot_embedding_viz import generate_embedding_visualization
+from scripts.figures.plot_training_curves import generate_training_curves
 
 OUTPUT_DIR = Path(__file__).parent.parent / "results" / "paper_figures"
 

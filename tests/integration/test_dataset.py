@@ -15,21 +15,21 @@ Run:
 Note: no GPU / real ABIDE data required.
 """
 import sys
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
-import torch
 import pytest
+import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import src.core.config as cfg
 from src.core.config import (
-    NUM_LOBES, LOBE_NAMES, NUM_TEMPORAL_FEATURES,
-    NUM_SPATIAL_FEATURES, GNN_IN_CHANNELS, FEATURE_GROUPS,
+    FEATURE_GROUPS,
+    GNN_IN_CHANNELS,
+    LOBE_NAMES,
+    NUM_LOBES,
 )
 
 # ── Constants for mock data ───────────────────────────────────────────────────
@@ -243,7 +243,7 @@ class TestABIDECausalDataset:
         sample = dataset.get(0)
         assert sample is not None
         assert torch.isfinite(sample.x).all(), (
-            f"Node feature tensor x contains non-finite values"
+            "Node feature tensor x contains non-finite values"
         )
 
     def test_edge_attr_are_finite(self, dataset):

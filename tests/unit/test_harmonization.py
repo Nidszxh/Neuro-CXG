@@ -47,7 +47,7 @@ def _make_manifest(n: int = 20, seed: int = 0) -> pd.DataFrame:
 def _make_temporal_features(manifest: pd.DataFrame, n_feat: int = None) -> pd.DataFrame:
     """Create a mock temporal features DataFrame aligned to manifest subjects."""
     rng = np.random.default_rng(42)
-    from src.core.config import LOBE_NAMES, FEATURE_GROUPS
+    from src.core.config import FEATURE_GROUPS, LOBE_NAMES
     feat_names = FEATURE_GROUPS["temporal"] + FEATURE_GROUPS["frequency"]
     if n_feat is None:
         n_feat = len(feat_names)
@@ -131,7 +131,10 @@ class TestOutlierClipFoldSafe:
 
     def test_clip_bounds_from_train_only(self):
         """Injecting a large outlier only in the test set must not shift the clip boundary."""
-        from src.features.fold_safe_harmonization import _outlier_clip_fit, _outlier_clip_apply
+        from src.features.fold_safe_harmonization import (
+            _outlier_clip_apply,
+            _outlier_clip_fit,
+        )
 
         rng = np.random.default_rng(7)
         n_train = 50
@@ -189,6 +192,7 @@ class TestSpatialHarmonization:
     def test_site_variance_reduced(self, tmp_path):
         """After harmonization, inter-site variance in conf_std should decrease."""
         from scipy.stats import kruskal
+
         from src.features.fold_safe_harmonization import harmonize_spatial_features
 
         manifest = _make_manifest(n=40, seed=1)
@@ -231,8 +235,8 @@ class TestSpatialHarmonization:
 
     def test_anatomical_columns_unchanged(self, tmp_path):
         """x, y, z_depth, size must be identical before and after harmonization."""
-        from src.features.fold_safe_harmonization import harmonize_spatial_features
         from src.core.config import LOBE_NAMES
+        from src.features.fold_safe_harmonization import harmonize_spatial_features
 
         manifest  = _make_manifest(n=24, seed=2)
         spatial   = _make_spatial_features(manifest)

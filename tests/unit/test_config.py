@@ -6,16 +6,16 @@ Run:
 """
 import sys
 from pathlib import Path
+
 import pytest
 
 # Ensure project root is on the path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
-    validate_lobe_mapping,
     LOBE_MAPPING,
     NUM_LOBES,
+    validate_lobe_mapping,
 )
-
 
 # ── Happy-path tests ───────────────────────────────────────────────────────────
 

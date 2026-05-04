@@ -21,19 +21,17 @@ import sys
 import tempfile
 from pathlib import Path
 
-import numpy as np
 import pytest
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.core.config import NUM_LOBES, LOBE_MAPPING
+from src.core.config import NUM_LOBES
 from src.features.construct_causal import (
+    adaptive_sparsification,
     aggregate_to_lobes,
     compute_causality_matrix,
-    adaptive_sparsification,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

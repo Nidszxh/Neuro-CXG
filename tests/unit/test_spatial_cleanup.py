@@ -8,16 +8,19 @@ Tests:
 """
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 
 import numpy as np
 import pandas as pd
-import pytest
-import tempfile
 
 from src.core.config import (
-    NUM_LOBES, NUM_SPATIAL_FEATURES, GNN_IN_CHANNELS, LOBE_NAMES,
-    NUM_TEMPORAL_FEATURES, ALL_FEATURE_NAMES,
+    ALL_FEATURE_NAMES,
+    GNN_IN_CHANNELS,
+    LOBE_NAMES,
+    NUM_LOBES,
+    NUM_SPATIAL_FEATURES,
 )
 
 
@@ -76,8 +79,8 @@ class TestGraphFactorySpatialExtraction:
 
     def test_spatial_shape_without_confounders(self):
         """_get_subject_spatial must return (NUM_LOBES, 4) without conf_std columns."""
+
         from src.features.graph_factory import ABIDECausalDataset
-        import inspect
 
         # Directly call the private method on a minimal stub
         coords_df = self._make_coords_df(include_confounders=False)
