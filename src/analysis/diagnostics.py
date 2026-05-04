@@ -13,7 +13,6 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -68,7 +67,7 @@ class TrainingMonitor:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.num_folds = num_folds
 
-        self.fold_histories: Dict[int, Dict] = {
+        self.fold_histories: dict[int, dict] = {
             fold_id: {
                 "train_loss": [],
                 "val_loss": [],
@@ -89,9 +88,9 @@ class TrainingMonitor:
         self,
         fold_id: int,
         epoch: int,
-        metrics: Dict[str, float],
-        grad_norm: Optional[float] = None,
-        confusion_matrix: Optional[np.ndarray] = None,
+        metrics: dict[str, float],
+        grad_norm: float | None = None,
+        confusion_matrix: np.ndarray | None = None,
     ) -> None:
         """Append one epoch's metrics to the fold history."""
         if fold_id not in self.fold_histories:
@@ -111,8 +110,8 @@ class TrainingMonitor:
     # ── plotting ──────────────────────────────────────────────────────────────
 
     def plot_training_curves(
-        self, fold_id: int, figsize: Tuple[int, int] = (18, 12)
-    ) -> Optional[Path]:
+        self, fold_id: int, figsize: tuple[int, int] = (18, 12)
+    ) -> Path | None:
         """4-panel training diagnostic: loss · AUC · LR schedule · gradient norm."""
         h = self.fold_histories[fold_id]
         if not h["train_loss"]:
@@ -137,20 +136,25 @@ class TrainingMonitor:
         ax = axes[0, 1]
         ax.plot(epochs, h["val_auc"], color=palette.GREEN, lw=2.5, alpha=0.8, label="Validation AUC")
         ax.axhline(0.5, color="#95a5a6", ls="--", alpha=0.7, lw=2, label="Random (0.5)")
-        best_auc = max(h["val_auc"]); best_auc_ep = h["val_auc"].index(best_auc) + 1
+        best_auc = max(h["val_auc"])
+        best_auc_ep = h["val_auc"].index(best_auc) + 1
         ax.axhline(best_auc, color="#27ae60", ls="--", alpha=0.7, lw=2,
                    label=f"Best: {best_auc:.4f} (Epoch {best_auc_ep})")
         ax.scatter([best_auc_ep], [best_auc], color="#27ae60", s=200, zorder=5, marker="*")
         ax.set(xlabel="Epoch", ylabel="Validation AUC", title="AUC Progression")
-        ax.legend(loc="lower right", fontsize=10); ax.grid(alpha=0.3, ls="--"); ax.set_ylim([0.4, 1.0])
+        ax.legend(loc="lower right", fontsize=10)
+        ax.grid(alpha=0.3, ls="--")
+        ax.set_ylim([0.4, 1.0])
 
         ax = axes[1, 0]
         if h["grad_norm"]:
             ax.plot(epochs, h["grad_norm"], color=palette.PINK, lw=2.5, alpha=0.8, label="Gradient Norm")
-            ax.axhline(1.0, color=palette.NEGATIVE, ls="--", lw=2, alpha=0.7, 
+            ax.axhline(1.0, color=palette.NEGATIVE, ls="--", lw=2, alpha=0.7,
                         label="Clip Threshold (1.0)")
             ax.set(xlabel="Epoch", ylabel="Gradient Norm", title="Gradient Stability")
-            ax.legend(fontsize=10); ax.grid(alpha=0.3, ls="--"); ax.set_ylim(bottom=0)
+            ax.legend(fontsize=10)
+            ax.grid(alpha=0.3, ls="--")
+            ax.set_ylim(bottom=0)
         else:
             ax.text(0.5, 0.5, "Gradient norm not tracked", ha="center", va="center",
                     transform=ax.transAxes, fontsize=14, color="#7f8c8d")
@@ -169,9 +173,9 @@ class TrainingMonitor:
     def plot_confusion_evolution(
         self,
         fold_id: int,
-        key_epochs: Optional[List[int]] = None,
-        figsize: Tuple[int, int] = (18, 12),
-    ) -> Optional[Path]:
+        key_epochs: list[int] | None = None,
+        figsize: tuple[int, int] = (18, 12),
+    ) -> Path | None:
         """Visualise confusion matrix changes across epochs."""
         cm_history = self.fold_histories[fold_id]["confusion_matrices"]
         if not cm_history:
@@ -196,7 +200,7 @@ class TrainingMonitor:
         logger.info("Confusion evolution saved → %s", out)
         return out
 
-    def plot_fold_comparison(self, figsize: Tuple[int, int] = (14, 8)) -> Optional[Path]:
+    def plot_fold_comparison(self, figsize: tuple[int, int] = (14, 8)) -> Path | None:
         """Compare validation AUC curves across all folds."""
         if not any(h["val_auc"] for h in self.fold_histories.values()):
             logger.warning("No validation AUC data to compare")
@@ -205,15 +209,15 @@ class TrainingMonitor:
         fig, axes = plt.subplots(1, 2, figsize=figsize)
         for fold_id, h in self.fold_histories.items():
             if h["val_auc"]:
-                axes[0].plot(range(1, len(h["val_auc"]) + 1), h["val_auc"], 
-                            label=f"Fold {fold_id}", 
+                axes[0].plot(range(1, len(h["val_auc"]) + 1), h["val_auc"],
+                            label=f"Fold {fold_id}",
                             color=palette.cycle()[fold_id % 8], lw=2.5, alpha=0.8)
         axes[0].set(title="Validation AUC by Fold", xlabel="Epoch", ylabel="AUC")
         axes[0].legend(); axes[0].grid(alpha=0.3)
 
         final = [h["val_auc"][-1] for h in self.fold_histories.values() if h["val_auc"]]
         if final:
-            axes[1].bar(range(len(final)), final, color=palette.CONTROL, 
+            axes[1].bar(range(len(final)), final, color=palette.CONTROL,
                         edgecolor="black", linewidth=0.5)
             axes[1].set(title="Final Validation AUC per Fold", xlabel="Fold", ylabel="AUC")
             axes[1].grid(axis="y", alpha=0.3)
@@ -227,7 +231,7 @@ class TrainingMonitor:
 
     # ── persistence ───────────────────────────────────────────────────────────
 
-    def save_histories(self, output_dir: Optional[Path] = None) -> None:
+    def save_histories(self, output_dir: Path | None = None) -> None:
         """Save all fold histories to JSON files."""
         out = Path(output_dir) if output_dir else self.output_dir
         out.mkdir(parents=True, exist_ok=True)
@@ -237,7 +241,7 @@ class TrainingMonitor:
                 json.dump(_to_json_safe(h), f)
         logger.info("Training histories saved → %s", out)
 
-    def save_history(self, fold_id: int, output_dir: Optional[Path] = None) -> Optional[Path]:
+    def save_history(self, fold_id: int, output_dir: Path | None = None) -> Path | None:
         """Save a single fold history and return the file path."""
         if fold_id not in self.fold_histories:
             logger.warning("Invalid fold_id for save_history: %d", fold_id)
@@ -270,7 +274,7 @@ class CausalGraphAnalyzer:
 
     # ── graph metrics ─────────────────────────────────────────────────────────
 
-    def compute_graph_properties(self, max_graphs: Optional[int] = None) -> pd.DataFrame:
+    def compute_graph_properties(self, max_graphs: int | None = None) -> pd.DataFrame:
         """Compute standard graph metrics (degree, density, clustering) for each subject."""
         graph_files = list(self.graphs_dir.glob("*_graph.pt"))
         if max_graphs is not None:
@@ -299,9 +303,9 @@ class CausalGraphAnalyzer:
                 try:
                     betw = nx.betweenness_centrality(G)
                 except Exception:
-                    betw = {i: 0.0 for i in range(NUM_LOBES)}
+                    betw = dict.fromkeys(range(NUM_LOBES), 0.0)
 
-                row: Dict = {
+                row: dict = {
                     "subject_id": subject_id,
                     "dx_group": dx_group,
                     "site_id": site_id,
@@ -327,8 +331,8 @@ class CausalGraphAnalyzer:
     # ── ASD vs Control comparison ─────────────────────────────────────────────
 
     def compare_asd_vs_control(
-        self, graph_metrics: pd.DataFrame, output_dir: Optional[Path] = None
-    ) -> Dict[str, Dict]:
+        self, graph_metrics: pd.DataFrame, output_dir: Path | None = None
+    ) -> dict[str, dict]:
         """Mann-Whitney U comparison of graph metrics between ASD and Control."""
         logger.info("Comparing ASD vs Control graph topology…")
         asd = graph_metrics[graph_metrics["dx_group"] == 2]
@@ -339,7 +343,7 @@ class CausalGraphAnalyzer:
             "num_edges", "density", "avg_clustering",
             *[f"{n.lower()}_{s}" for n in self.lobe_names for s in ("in_degree", "out_degree")],
         ]
-        results: Dict[str, Dict] = {}
+        results: dict[str, dict] = {}
 
         print("\n" + "=" * 70)
         print("GRAPH TOPOLOGY COMPARISON (ASD vs CONTROL)")
@@ -355,10 +359,10 @@ class CausalGraphAnalyzer:
             u, p = mannwhitneyu(a, c, alternative="two-sided")
             pooled = np.sqrt((a.std() ** 2 + c.std() ** 2) / 2)
             d = (a.mean() - c.mean()) / pooled if pooled else 0.0
-            results[metric] = dict(asd_mean=a.mean(), asd_std=a.std(),
-                                   control_mean=c.mean(), control_std=c.std(),
-                                   u_statistic=u, p_value=p, cohens_d=d,
-                                   significant=p < 0.05)
+            results[metric] = {"asd_mean": a.mean(), "asd_std": a.std(),
+                                   "control_mean": c.mean(), "control_std": c.std(),
+                                   "u_statistic": u, "p_value": p, "cohens_d": d,
+                                   "significant": p < 0.05}
             print(f"\n{metric.replace('_', ' ').title()}:")
             print(f"  ASD:     {a.mean():.4f} ± {a.std():.4f}")
             print(f"  Control: {c.mean():.4f} ± {c.std():.4f}")
@@ -374,7 +378,7 @@ class CausalGraphAnalyzer:
         return results
 
     def _plot_topology_comparison(
-        self, gm: pd.DataFrame, comparison: Dict, output_dir: Path
+        self, gm: pd.DataFrame, comparison: dict, output_dir: Path
     ) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
         gm = gm.copy()
@@ -386,7 +390,7 @@ class CausalGraphAnalyzer:
             sig_metrics = list(comparison.keys())[:6]
         palette = {"ASD": "#e74c3c", "Control": "#3498db"}
         fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-        for ax, metric in zip(axes.flatten(), sig_metrics):
+        for ax, metric in zip(axes.flatten(), sig_metrics, strict=False):
             sns.boxplot(data=gm, x="dx_group", y=metric, ax=ax, palette=palette, hue="dx_group", legend=False)
             ax.set(title=metric.replace("_", " ").title(), xlabel="Diagnosis")
         plt.tight_layout()
@@ -397,11 +401,11 @@ class CausalGraphAnalyzer:
     # ── visualisation ─────────────────────────────────────────────────────────
 
     def visualize_average_causal_graph(
-        self, output_path: Path, max_graphs: Optional[int] = None,
-        group: Optional[str] = None
-    ) -> Optional[Path]:
+        self, output_path: Path, max_graphs: int | None = None,
+        group: str | None = None
+    ) -> Path | None:
         """Heatmap of the mean causal adjacency matrix across subjects.
-        
+
         Args:
             output_path: Save location for the figure
             max_graphs: Maximum number of graphs to sample (None = all)
@@ -411,7 +415,7 @@ class CausalGraphAnalyzer:
         if not graph_files:
             logger.warning("No causal graphs found for average visualisation")
             return None
-        
+
         # Filter by group if requested
         if group is not None and self.manifest is not None:
             # Convert group name to numeric DX_GROUP value
@@ -425,18 +429,18 @@ class CausalGraphAnalyzer:
                     dx_value = 0
             else:
                 dx_value = group
-            
+
             group_subjects = set(
                 self.manifest[self.manifest["DX_GROUP"] == dx_value]["subject_id"].astype(str)
             )
             graph_files = [
-                gf for gf in graph_files 
+                gf for gf in graph_files
                 if gf.stem.replace("_graph", "") in group_subjects
             ]
             if not graph_files:
                 logger.warning(f"No causal graphs found for group={group}")
                 return None
-        
+
         if max_graphs is not None:
             graph_files = list(
                 np.random.choice(graph_files, min(max_graphs, len(graph_files)), replace=False)
@@ -458,18 +462,18 @@ class CausalGraphAnalyzer:
         labels = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
         title_suffix = f" ({group})" if group else ""
         fig, ax = plt.subplots(figsize=FigureSize.HEATMAP)
-        
+
         vmax = max(abs(avg.min()), abs(avg.max()))
-        sns.heatmap(avg, xticklabels=labels, yticklabels=labels, 
-                    cmap="RdYlBu_r", center=0, linewidths=0.5, 
+        sns.heatmap(avg, xticklabels=labels, yticklabels=labels,
+                    cmap="RdYlBu_r", center=0, linewidths=0.5,
                     vmin=-vmax, vmax=vmax, ax=ax)
-        
+
         ax.set(title=f"Average Causal Adjacency Matrix{title_suffix}",
                xlabel="Target Region", ylabel="Source Region")
         plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
         plt.setp(ax.get_yticklabels(), rotation=0)
-        
+
         plt.tight_layout()
-        plt.savefig(out, dpi=300, bbox_inches="tight"); plt.close()
-        logger.info("Average causal graph saved → %s", out)
-        return out
+        plt.savefig(output_path, dpi=300, bbox_inches="tight"); plt.close()
+        logger.info("Average causal graph saved → %s", output_path)
+        return output_path

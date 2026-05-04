@@ -32,58 +32,36 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
-    roc_auc_score,
-    f1_score,
     accuracy_score,
     confusion_matrix,
-    precision_recall_curve,
-    roc_curve,
+    f1_score,
+    roc_auc_score,
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.core.config import (
     ALL_FEATURE_NAMES,
-    CHECKPOINT_DIR,
-    get_active_checkpoint_dir,
-    GNN_BATCH_SIZE,
-    GNN_DROPOUT,
-    GNN_EDGE_GATE,
-    GNN_GRL_ALPHA,
-    GNN_HIDDEN_CHANNELS,
-    GNN_IN_CHANNELS,
-    GNN_NUM_LAYERS,
-    GNN_NUM_HEADS,
-    GNN_POOLING,
-    GNN_USE_DEMOGRAPHICS,
-    GNN_USE_GRL,
-    GNN_USE_SITE_EMBEDDING,
-    GNN_SITE_EMBEDDING_DIM,
+    EVAL_THRESHOLD_POLICY,
     K_FOLDS,
     LOBE_NAMES,
-    MASTER_MANIFEST,
-    NUM_LOBES,
     RESULTS_DIR,
-    EVAL_THRESHOLD_POLICY,
-    EVAL_FIXED_THRESHOLD,
-    EVAL_PER_SITE_MIN_SAMPLES,
+    get_active_checkpoint_dir,
 )
 from src.features.graph_factory import ABIDECausalDataset
+from src.models.causal_gnn import CausalBrainGNN
 from src.models.evaluation import (
-    fit_per_site_calibrators,
+    _json_safe,
     apply_per_site_calibration,
+    fit_per_site_calibrators,
     optimal_threshold,
     youden_threshold,
-    _json_safe,
 )
-from src.models.causal_gnn import CausalBrainGNN
-from src.models.factory import build_model, load_model
+from src.models.factory import load_model
 from src.models.training_utils import make_loader
 
 logging.basicConfig(
@@ -97,7 +75,7 @@ OUTPUT_DIR  = RESULTS_DIR / "analysis"
 LOBE_LABELS = {v: k for k, v in LOBE_NAMES.items()} if isinstance(LOBE_NAMES, dict) else {}
 
 
-def _safe_roc_auc(labels: np.ndarray, probs: np.ndarray) -> Optional[float]:
+def _safe_roc_auc(labels: np.ndarray, probs: np.ndarray) -> float | None:
     """Return ROC-AUC when both classes are present; else None."""
     if labels is None or probs is None:
         return None
@@ -116,7 +94,7 @@ def _safe_roc_auc(labels: np.ndarray, probs: np.ndarray) -> Optional[float]:
 # HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _site_ids_from_graphs(graphs: List) -> np.ndarray:
+def _site_ids_from_graphs(graphs: list) -> np.ndarray:
     """Extract integer site_id vector aligned to graph order."""
     return np.array([
         int(g.site_id.item())
@@ -126,7 +104,7 @@ def _site_ids_from_graphs(graphs: List) -> np.ndarray:
     ])
 
 
-def _load_last_fold_val_graphs() -> List:
+def _load_last_fold_val_graphs() -> list:
     """Use last fold validation partition from train split as calibration set."""
     train_dataset = ABIDECausalDataset(split="train")
     train_dataset.augment_graphs = False
@@ -140,7 +118,7 @@ def _load_last_fold_val_graphs() -> List:
 
 
 @torch.no_grad()
-def _predict_probs(model: CausalBrainGNN, graphs: List) -> Tuple[np.ndarray, np.ndarray]:
+def _predict_probs(model: CausalBrainGNN, graphs: list) -> tuple[np.ndarray, np.ndarray]:
     """Return (probs, labels) arrays — probs are ASD probability (class 1)."""
     loader = make_loader(graphs, batch_size=1, shuffle=False)
     all_probs, all_labels = [], []
@@ -169,11 +147,11 @@ def _predict_probs(model: CausalBrainGNN, graphs: List) -> Tuple[np.ndarray, np.
 
 @torch.no_grad()
 def _collect_per_subject(
-    graphs: List,
-    fold_aucs: List[float],
+    graphs: list,
+    fold_aucs: list[float],
     threshold: float,
-    per_site_calibration: Optional[Dict] = None,
-) -> Tuple[pd.DataFrame, Dict[str, object]]:
+    per_site_calibration: dict | None = None,
+) -> tuple[pd.DataFrame, dict[str, object]]:
     """
     Build a per-subject DataFrame with columns:
     subject_id, true_label, pred_label, prob_asd, confidence,
@@ -307,10 +285,10 @@ def _error_type(label: int, pred: int) -> str:
     return "FN" if label == 1 else "FP"
 
 
-def _ensemble_fold_aucs() -> List[float]:
+def _ensemble_fold_aucs() -> list[float]:
     """Load fold validation AUCs from checkpoints (same weighting as evaluation)."""
     active_dir = get_active_checkpoint_dir()
-    aucs: List[float] = []
+    aucs: list[float] = []
     for fold_id in range(K_FOLDS):
         ckpt_path = active_dir / f"best_model_fold{fold_id}.pt"
         if not ckpt_path.exists():
@@ -325,10 +303,10 @@ def _ensemble_fold_aucs() -> List[float]:
     return aucs if aucs else [0.5] * K_FOLDS
 
 
-def _ensemble_fold_thresholds() -> List[float]:
+def _ensemble_fold_thresholds() -> list[float]:
     """Load fold decision thresholds from checkpoints."""
     active_dir = get_active_checkpoint_dir()
-    thresholds: List[float] = []
+    thresholds: list[float] = []
     for fold_id in range(K_FOLDS):
         ckpt_path = active_dir / f"best_model_fold{fold_id}.pt"
         if not ckpt_path.exists():
@@ -345,7 +323,7 @@ def _ensemble_fold_thresholds() -> List[float]:
     return thresholds if thresholds else [0.5] * K_FOLDS
 
 
-def _load_evaluation_metadata() -> Dict:
+def _load_evaluation_metadata() -> dict:
     """Load evaluation metadata for threshold/calibration policy alignment."""
     json_path = RESULTS_DIR / "evaluation" / "comprehensive_results.json"
     if not json_path.exists():
@@ -363,7 +341,7 @@ def _classification_metrics_at_threshold(
     probs: np.ndarray,
     labels: np.ndarray,
     threshold: float,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Compute accuracy/F1/sensitivity/specificity at a fixed threshold."""
     if probs.size == 0 or labels.size == 0:
         return {
@@ -410,15 +388,14 @@ def _classification_metrics_at_threshold(
 
 
 def _resolve_analysis_threshold(
-    fold_aucs: List[float],
-    fold_thresholds: List[float],
-    eval_meta: Dict,
+    fold_aucs: list[float],
+    fold_thresholds: list[float],
+    eval_meta: dict,
     threshold_policy: str,
 ) -> float:
     # Use the shared threshold resolution
-    from src.models.evaluation import resolve_threshold
     from src.core.hyperparams import EVAL_FIXED_THRESHOLD
-    
+
     if isinstance(eval_meta, dict):
         stored = eval_meta.get("ensemble_metrics", {}).get("threshold", None)
         if stored is None:
@@ -431,20 +408,17 @@ def _resolve_analysis_threshold(
                     return thr
             except Exception:
                 pass
-                
+
     policy = str(threshold_policy).strip().lower()
-    
-    # Normally we need probs and labels, but for analysis when we don't have them
-    # and just want to fallback or use fixed, we can mock it
+
     if policy == "fixed":
-        thr = float(np.clip(EVAL_FIXED_THRESHOLD, 0.0, 1.0))
+        thr = float(np.clip(EVAL_FIXED_THRESHOLD,0.0, 1.0))
         logger.info("  Using fixed deployment threshold from config: %.4f", thr)
         return thr
-        
+
     fallback_threshold = float(np.mean(fold_thresholds)) if fold_thresholds else 0.5
-    return fallback_threshold
 
-
+    # For youden/f1: attempt to compute threshold from calibration data
     fold_probs = []
     loaded_fold_ids = []
     labels_ref = None
@@ -538,11 +512,11 @@ def _format_prediction_columns(df: pd.DataFrame) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run_per_subject_analysis(
-    test_graphs: List,
+    test_graphs: list,
     output_dir: Path,
     threshold: float,
-    per_site_calibration: Optional[Dict] = None,
-) -> Tuple[pd.DataFrame, Dict[str, object], Dict[str, float]]:
+    per_site_calibration: dict | None = None,
+) -> tuple[pd.DataFrame, dict[str, object], dict[str, float]]:
     logger.info("=" * 60)
     logger.info("SECTION 1 — PER-SUBJECT PREDICTIONS")
     logger.info("=" * 60)
@@ -609,8 +583,8 @@ def run_per_subject_analysis(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run_misclassification_analysis(
-    df: pd.DataFrame, test_graphs: List, output_dir: Path
-) -> Dict:
+    df: pd.DataFrame, test_graphs: list, output_dir: Path
+) -> dict:
     logger.info("=" * 60)
     logger.info("SECTION 2 — MISCLASSIFICATION ANALYSIS")
     logger.info("=" * 60)
@@ -636,7 +610,7 @@ def run_misclassification_analysis(
             if sub_id in sid_set:
                 feat_ix[gname].append(g.x.cpu().numpy())
 
-    profiles: Dict[str, np.ndarray] = {}
+    profiles: dict[str, np.ndarray] = {}
     for gname, feat_list in feat_ix.items():
         if feat_list:
             # Mean across subjects, then mean across nodes → (num_features,)
@@ -670,7 +644,7 @@ def run_misclassification_analysis(
 
 
 def _plot_error_feature_profiles(
-    profiles: Dict[str, np.ndarray], feature_names: List[str], save_path: Path
+    profiles: dict[str, np.ndarray], feature_names: list[str], save_path: Path
 ) -> None:
     try:
         import matplotlib.pyplot as plt
@@ -678,7 +652,7 @@ def _plot_error_feature_profiles(
         fig, axes = plt.subplots(1, 2, figsize=(16, 6), sharey=True)
         feature_names = list(feature_names)[:28]
 
-        for ax, (a_name, b_name) in zip(axes, [("FP", "TN"), ("FN", "TP")]):
+        for ax, (a_name, b_name) in zip(axes, [("FP", "TN"), ("FN", "TP")], strict=False):
             if a_name not in profiles or b_name not in profiles:
                 ax.set_title(f"{a_name} vs {b_name} (no data)")
                 continue
@@ -692,7 +666,7 @@ def _plot_error_feature_profiles(
             ax.set_xlabel(f"Mean feature diff ({a_name} − {b_name})", fontsize=12, fontweight="bold")
             ax.set_title(f"{a_name} − {b_name}: Feature Profile Difference", fontsize=12, fontweight="bold")
             ax.grid(axis="x", alpha=0.3)
-        
+
         plt.suptitle("Misclassification Feature Profiles", fontsize=14, fontweight="bold", y=1.02)
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
@@ -708,7 +682,7 @@ def _plot_error_feature_profiles(
 
 def run_site_effects(
     df: pd.DataFrame, output_dir: Path, no_heatmap: bool = False
-) -> Dict:
+) -> dict:
     logger.info("=" * 60)
     logger.info("SECTION 3 — SITE EFFECTS INVESTIGATION")
     logger.info("=" * 60)
@@ -728,7 +702,7 @@ def run_site_effects(
             return None, None
         denom = 1 + z**2 / n
         center = (p + z**2 / (2*n)) / denom
-        margin = z * np.sqrt((p * (1 - p) / n + z**2 / (4*n**2))) / denom
+        margin = z * np.sqrt(p * (1 - p) / n + z**2 / (4*n**2)) / denom
         return (max(0, round(center - margin, 3)), min(1, round(center + margin, 3)))
 
     for site in sorted(sites):
@@ -766,7 +740,7 @@ def run_site_effects(
     return {"per_site": site_stats}
 
 
-def _plot_site_auc(site_stats: List[Dict], save_path: Path) -> None:
+def _plot_site_auc(site_stats: list[dict], save_path: Path) -> None:
     try:
         import matplotlib.pyplot as plt
 
@@ -786,12 +760,12 @@ def _plot_site_auc(site_stats: List[Dict], save_path: Path) -> None:
         bars    = ax.bar(x_labels, aucs, color=colors, alpha=0.85, edgecolor="white")
 
         if has_ci:
-            yerrs = [[acc - lo if lo is not None else 0 for acc, lo in zip(accs, ci_lows)],
-                     [hi - acc if hi is not None else 0 for acc, hi in zip(accs, ci_highs)]]
+            yerrs = [[acc - lo if lo is not None else 0 for acc, lo in zip(accs, ci_lows, strict=False)],
+                     [hi - acc if hi is not None else 0 for acc, hi in zip(accs, ci_highs, strict=False)]]
             ax.errorbar(x_labels, accs, yerr=yerrs, fmt='s', color='darkgreen',
                         capsize=4, elinewidth=1.5, markersize=6, label='Accuracy (95% CI)')
 
-        for bar, auc, n in zip(bars, aucs, ns):
+        for bar, auc, n in zip(bars, aucs, ns, strict=False):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005,
                     f"{auc:.2f}\nn={n}", ha="center", va="bottom", fontsize=8)
         ax.axhline(0.5, color="gray", lw=1.2, ls="--", label="Chance (0.50)")
@@ -809,10 +783,10 @@ def _plot_site_auc(site_stats: List[Dict], save_path: Path) -> None:
         logger.warning("  Site AUC plot failed: %s", e)
 
 
-def _plot_site_bias(site_stats: List[Dict], save_path: Path) -> None:
+def _plot_site_bias(site_stats: list[dict], save_path: Path) -> None:
     try:
-        import matplotlib.pyplot as plt
         import matplotlib.colors as mcolors
+        import matplotlib.pyplot as plt
 
         sorted_sites = sorted(site_stats, key=lambda x: x["site_id"])
         labels = [f"Site {s['site_id']}" for s in sorted_sites]
@@ -822,7 +796,7 @@ def _plot_site_bias(site_stats: List[Dict], save_path: Path) -> None:
         norm    = mcolors.TwoSlopeNorm(vmin=0, vcenter=50, vmax=100)
         colors  = [plt.cm.RdYlGn(1 - norm(p)) for p in asd_pct]
         bars    = ax.bar(labels, asd_pct, color=colors, alpha=0.9, edgecolor="white")
-        for bar, pct in zip(bars, asd_pct):
+        for bar, pct in zip(bars, asd_pct, strict=False):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
                     f"{pct:.0f}%", ha="center", va="bottom", fontsize=8)
         ax.axhline(50, color=palette.NEUTRAL, linestyle="--", lw=1.5, alpha=0.7, label="50% balanced")
@@ -845,7 +819,7 @@ def _plot_site_bias(site_stats: List[Dict], save_path: Path) -> None:
 # SECTION 4: PREDICTION CONFIDENCE & CALIBRATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run_calibration_analysis(df: pd.DataFrame, output_dir: Path) -> Dict:
+def run_calibration_analysis(df: pd.DataFrame, output_dir: Path) -> dict:
     logger.info("=" * 60)
     logger.info("SECTION 4 — PREDICTION CONFIDENCE & CALIBRATION")
     logger.info("=" * 60)
@@ -853,7 +827,7 @@ def run_calibration_analysis(df: pd.DataFrame, output_dir: Path) -> Dict:
     # Fraction correct by confidence bin
     bins  = np.linspace(0.5, 1.0, 11)
     bin_labels, frac_correct = [], []
-    for lo, hi in zip(bins[:-1], bins[1:]):
+    for lo, hi in zip(bins[:-1], bins[1:], strict=False):
         mask = (df["confidence"] >= lo) & (df["confidence"] < hi)
         if mask.sum() > 0:
             bin_labels.append(f"{lo:.2f}–{hi:.2f}")
@@ -882,8 +856,8 @@ def run_calibration_analysis(df: pd.DataFrame, output_dir: Path) -> Dict:
 
 def _plot_calibration(
     df: pd.DataFrame,
-    bin_labels: List[str],
-    frac_correct: List[float],
+    bin_labels: list[str],
+    frac_correct: list[float],
     save_path: Path,
 ) -> None:
     try:
@@ -939,7 +913,7 @@ def _plot_calibration(
 # SECTION 5: SEVERITY CORRELATION (CONFIDENCE vs FIQ / AGE)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run_severity_correlation(df: pd.DataFrame, output_dir: Path) -> Dict:
+def run_severity_correlation(df: pd.DataFrame, output_dir: Path) -> dict:
     logger.info("=" * 60)
     logger.info("SECTION 5 — SEVERITY CORRELATION (CONFIDENCE vs FIQ / AGE)")
     logger.info("=" * 60)
@@ -974,7 +948,7 @@ def _plot_severity_scatter(df: pd.DataFrame, save_path: Path) -> None:
 
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-        for ax, col, xlabel in zip(axes, ["age_years", "fiq"], ["Age (years)", "FIQ"]):
+        for ax, col, xlabel in zip(axes, ["age_years", "fiq"], ["Age (years)", "FIQ"], strict=False):
             for label, color, marker in [(1, "#e74c3c", "^"), (0, "#3498db", "o")]:
                 mask = df["true_label"] == label
                 ax.scatter(
@@ -1002,7 +976,7 @@ def _plot_severity_scatter(df: pd.DataFrame, save_path: Path) -> None:
 # SECTION 6: CASE STUDIES
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run_case_studies(df: pd.DataFrame, test_graphs: List, n_cases: int, output_dir: Path) -> List[Dict]:
+def run_case_studies(df: pd.DataFrame, test_graphs: list, n_cases: int, output_dir: Path) -> list[dict]:
     """
     Identify and describe notable subjects:
       - Top-N most confident correct predictions (TP + TN)
@@ -1021,7 +995,7 @@ def run_case_studies(df: pd.DataFrame, test_graphs: List, n_cases: int, output_d
         if sub_id:
             graph_map[sub_id] = g
 
-    cases: List[Dict] = []
+    cases: list[dict] = []
 
     groups = {
         "HIGH_CONF_CORRECT": df[df["correct"] == 1].nlargest(n_cases, "confidence"),
@@ -1095,21 +1069,21 @@ def run_case_studies(df: pd.DataFrame, test_graphs: List, n_cases: int, output_d
 
 def save_summary(
     df: pd.DataFrame,
-    misclass_result: Dict,
-    site_result: Dict,
-    calib_result: Dict,
-    severity_result: Dict,
-    case_studies: List[Dict],
+    misclass_result: dict,
+    site_result: dict,
+    calib_result: dict,
+    severity_result: dict,
+    case_studies: list[dict],
     output_dir: Path,
     threshold: float,
     threshold_policy: str,
-    per_site_calibration: Optional[Dict],
-    requested_per_site_calibration: Optional[Dict],
-    youden_analysis: Optional[Dict] = None,
+    per_site_calibration: dict | None,
+    calibration_applied_in_eval: dict | None,
+    youden_analysis: dict | None = None,
 ) -> None:
     overall_auc = _safe_roc_auc(df["true_label"].to_numpy(), df["prob_asd"].to_numpy())
     effective_calibration = per_site_calibration or {"applied": False, "num_sites": 0}
-    requested_calibration = requested_per_site_calibration or effective_calibration
+    requested_calibration = calibration_applied_in_eval or effective_calibration
     summary = {
         "n_subjects":            len(df),
         "overall_accuracy":      float(df["correct"].mean()),
@@ -1196,7 +1170,8 @@ def main() -> None:
         threshold_policy=threshold_policy,
     )
     logger.info("Using threshold policy '%s' with threshold=%.4f", threshold_policy, float(threshold))
-    requested_per_site_calibration = (
+    # Reflects whether calibration was applied in the prior evaluation run (not a user request)
+    calibration_applied_in_eval = (
         eval_meta.get("per_site_calibration", {"applied": False, "num_sites": 0})
         if eval_meta
         else {"applied": True, "num_sites": 0}
@@ -1207,11 +1182,11 @@ def main() -> None:
         test_graphs,
         args.output_dir,
         threshold=threshold,
-        per_site_calibration=requested_per_site_calibration,
+        per_site_calibration=calibration_applied_in_eval,
     )
     effective_per_site_calibration = inference_meta.get(
         "per_site_calibration",
-        requested_per_site_calibration,
+        calibration_applied_in_eval,
     )
 
     # ── Section 2: Misclassification analysis ─────────────────────────────────
@@ -1243,7 +1218,7 @@ def main() -> None:
         threshold=threshold,
         threshold_policy=threshold_policy,
         per_site_calibration=effective_per_site_calibration,
-        requested_per_site_calibration=requested_per_site_calibration,
+        calibration_applied_in_eval=calibration_applied_in_eval,
         youden_analysis=youden_analysis,
     )
 

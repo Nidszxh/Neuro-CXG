@@ -1,17 +1,24 @@
-import torch
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from pathlib import Path
-from typing import List, Dict, Tuple, Optional
 import logging
-from tqdm import tqdm
 import sys
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+import torch
+from tqdm import tqdm
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src.core.config import LOBE_NAMES, NUM_LOBES, NUM_SPATIAL_FEATURES, NUM_TEMPORAL_FEATURES
+from src.core.config import (
+    LOBE_NAMES,
+    NUM_LOBES,
+    NUM_SPATIAL_FEATURES,
+    NUM_TEMPORAL_FEATURES,
+)
+from src.core.plotting import ColorPalette
+
+palette = ColorPalette()
 
 # Captum for interpretability
 try:
@@ -37,7 +44,7 @@ class FeatureAttributionAnalyzer:
         self,
         model: torch.nn.Module,
         test_loader: torch.utils.data.DataLoader,
-        feature_names: List[str],
+        feature_names: list[str],
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         """
@@ -217,7 +224,7 @@ class FeatureAttributionAnalyzer:
         self,
         attributions: np.ndarray,
         output_path: Path,
-        figsize: Tuple[int, int] = (14, 10),
+        figsize: tuple[int, int] = (14, 10),
     ):
         """
         Create heatmap showing which features matter for which brain regions.
@@ -264,10 +271,10 @@ class FeatureAttributionAnalyzer:
     def compare_temporal_vs_spatial(
         self,
         attributions: np.ndarray,
-        temporal_indices: Optional[List[int]] = None,
-        spatial_indices: Optional[List[int]] = None,
-        output_path: Optional[Path] = None,
-    ) -> Dict[str, float]:
+        temporal_indices: list[int] | None = None,
+        spatial_indices: list[int] | None = None,
+        output_path: Path | None = None,
+    ) -> dict[str, float]:
         """
         Compare how much temporal vs spatial features contribute.
 
@@ -290,7 +297,7 @@ class FeatureAttributionAnalyzer:
 
         if output_path is not None:
             fig, ax = plt.subplots(figsize=(8, 6))
-            ax.bar(["Temporal", "Spatial"], [temporal_pct, spatial_pct], 
+            ax.bar(["Temporal", "Spatial"], [temporal_pct, spatial_pct],
                         color=[palette.TEMPORAL, palette.SPATIAL])
             ax.set_ylabel("Contribution (%)")
             ax.set_title("Temporal vs Spatial Feature Contribution")
@@ -305,7 +312,7 @@ class FeatureAttributionAnalyzer:
     def visualize_per_class(
         self,
         output_path: Path,
-        figsize: Tuple[int, int] = (14, 10),
+        figsize: tuple[int, int] = (14, 10),
     ):
         """
         Create per-class feature importance heatmaps (ASD vs Control).

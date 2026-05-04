@@ -3,8 +3,6 @@ import logging
 import sys
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import torch
 
@@ -18,33 +16,23 @@ logger = logging.getLogger(__name__)
 # Setup paths
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
-    CAUSAL_GRAPHS_DIR,
     ALL_FEATURE_NAMES,
-    GNN_IN_CHANNELS,
-    GNN_HIDDEN_CHANNELS,
-    GNN_NUM_HEADS,
-    GNN_NUM_LAYERS,
-    GNN_POOLING,
-    GNN_USE_SITE_EMBEDDING,
-    GNN_SITE_EMBEDDING_DIM,
-    GNN_USE_DEMOGRAPHICS,
-    GNN_USE_GRL,
+    CAUSAL_GRAPHS_DIR,
     GNN_GRL_ALPHA,
-    GNN_EDGE_GATE,
-    LOBE_NAMES,
+    GNN_IN_CHANNELS,
+    GNN_SITE_EMBEDDING_DIM,
+    GNN_USE_GRL,
+    GNN_USE_SITE_EMBEDDING,
     MASTER_MANIFEST,
-    NUM_LOBES,
-    NUM_SPATIAL_FEATURES,
-    NUM_TEMPORAL_FEATURES,
     RESULTS_DIR,
     get_active_checkpoint_dir,
 )
-from src.core.plotting import ColorPalette, FigureSize, apply_publication_style
+from src.core.plotting import ColorPalette
 
 palette = ColorPalette()
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.factory import build_model
-from src.models.training_utils import make_loader, attach_feature_scaler_from_checkpoint
+from src.models.training_utils import attach_feature_scaler_from_checkpoint, make_loader
 
 # Import analysis modules
 try:
@@ -60,6 +48,14 @@ try:
 except ImportError:
     DIAGNOSTICS_AVAILABLE = False
     logger.warning("Diagnostics module (TrainingMonitor/CausalGraphAnalyzer) not available")
+
+def _parse_fold_id(history_file: Path) -> int:
+    """Extract fold ID from filename like 'training_history_fold0.json'."""
+    import re
+    match = re.search(r"fold(\d+)", history_file.stem)
+    if match:
+        return int(match.group(1))
+    return 0  # Default to fold 0 if parsing fails
 
 
 def create_feature_names():
@@ -144,7 +140,7 @@ def run_visualization_pipeline(output_dir: Path):
 
                 for history_file in history_files:
                     fold_id = _parse_fold_id(history_file)
-                    with open(history_file, "r") as f:
+                    with open(history_file) as f:
                         history_data = json.load(f)
                         for key in history_data:
                             if key in monitor.fold_histories[fold_id]:

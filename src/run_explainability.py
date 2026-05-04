@@ -57,7 +57,6 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 import torch
@@ -67,27 +66,13 @@ from torch_geometric.loader import DataLoader
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.core.config import (
     ALL_FEATURE_NAMES,
-    CHECKPOINT_DIR,
-    get_active_checkpoint_dir,
-    GNN_DROPOUT,
-    GNN_EDGE_GATE,
-    GNN_GRL_ALPHA,
-    GNN_HIDDEN_CHANNELS,
-    GNN_IN_CHANNELS,
-    GNN_NUM_LAYERS,
-    GNN_NUM_HEADS,
-    GNN_POOLING,
-    GNN_USE_DEMOGRAPHICS,
-    GNN_USE_GRL,
-    GNN_USE_SITE_EMBEDDING,
     LOBE_NAMES,
     NUM_LOBES,
     RESULTS_DIR,
+    get_active_checkpoint_dir,
 )
-from src.core.hyperparams import GNN_SITE_EMBEDDING_DIM
 from src.features.graph_factory import ABIDECausalDataset
-from src.models.causal_gnn import CausalBrainGNN
-from src.models.factory import build_model, load_model
+from src.models.factory import load_model
 from src.models.training_utils import make_loader
 
 logging.basicConfig(
@@ -96,7 +81,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-REGION_LABELS: List[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
+REGION_LABELS: list[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -112,7 +97,6 @@ def _build_test_loader(batch_size: int = 16) -> DataLoader:
 
 def _best_fold(num_folds: int = 5) -> int:
     """Select the fold with the highest saved validation AUC from training JSONs."""
-    import re
     best_auc, best_fold_id = -1.0, 0
     training_dir = RESULTS_DIR / "experiments" / "training"
     for fold_id in range(num_folds):
@@ -133,7 +117,7 @@ def _best_fold(num_folds: int = 5) -> int:
 
 # ── phase runners ──────────────────────────────────────────────────────────────
 
-def run_phase_node(model, test_loader, device, output_dir: Path) -> Dict:
+def run_phase_node(model, test_loader, device, output_dir: Path) -> dict:
     """Phase 8.1 — Node Importance Analysis."""
     from src.analysis.node_importance import NodeImportanceAnalyzer
     logger.info("=" * 55)
@@ -168,7 +152,7 @@ def run_phase_edge(
     device,
     output_dir: Path,
     run_masking: bool = True,
-) -> Dict:
+) -> dict:
     """Phase 8.2 — Edge Importance Analysis."""
     from src.analysis.edge_importance import EdgeImportanceAnalyzer
     logger.info("=" * 55)
@@ -183,7 +167,7 @@ def run_phase_edge(
     return results
 
 
-def run_phase_features(model, test_loader, device, output_dir: Path) -> Optional[Dict]:
+def run_phase_features(model, test_loader, device, output_dir: Path) -> dict | None:
     """Phase 8.3 — Feature Attribution (saliency maps)."""
     logger.info("=" * 55)
     logger.info("PHASE 8.3  FEATURE ATTRIBUTION (SALIENCY MAPS)")
@@ -223,11 +207,11 @@ def run_phase_features(model, test_loader, device, output_dir: Path) -> Optional
 
 
 def run_phase_literature(
-    gradcam_scores: Optional[np.ndarray],
-    feature_region_scores: Optional[np.ndarray],
+    gradcam_scores: np.ndarray | None,
+    feature_region_scores: np.ndarray | None,
     output_dir: Path,
     top_n: int = 6,
-) -> Dict:
+) -> dict:
     """Phase 8.4 — Literature / Clinical Validation."""
     from src.analysis.literature_validation import run_literature_validation
     logger.info("=" * 55)
@@ -248,7 +232,7 @@ def run_phase_literature(
 def run_explainability_pipeline(
     fold_id: int,
     output_dir: Path,
-    phases: List[str],
+    phases: list[str],
     run_masking: bool,
     batch_size: int,
 ) -> None:
@@ -257,10 +241,11 @@ def run_explainability_pipeline(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("Device: %s", device)
 
-    model = load_model(checkpoint_path=get_active_checkpoint_dir() / f"best_model_fold{fold_id}.pt", device=device)
+    checkpoint_path = get_active_checkpoint_dir() / f"best_model_fold{fold_id}.pt"
+    model = load_model(checkpoint_path=checkpoint_path, device=device)
     test_loader = _build_test_loader(batch_size=batch_size)
 
-    summary: Dict = {
+    summary: dict = {
         "fold_used": fold_id,
         "checkpoint": str(checkpoint_path),
         "device": str(device),

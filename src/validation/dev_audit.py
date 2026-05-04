@@ -20,7 +20,6 @@ import logging
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -28,18 +27,14 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
-    ALL_FEATURE_NAMES,
-    CAUSALITY_METHOD,
     CAUSAL_GRAPHS_DIR,
-    DATA_FINAL,
+    CAUSALITY_METHOD,
     DEFAULT_TR,
     FEATURE_GROUPS,
     GNN_IN_CHANNELS,
-    GRANGER_MAX_LAG,
     GRANGER_SIGNIFICANCE_LEVEL,
     MASTER_MANIFEST,
     MIN_EDGES_PER_GRAPH,
-    NODE_ATTRIBUTES_HARMONIZED,
     NUM_LOBES,
     NUM_SPATIAL_FEATURES,
     NUM_TEMPORAL_FEATURES,
@@ -53,7 +48,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = PROJECT_ROOT / "src"
 
 # Feature-group index slices for the 28-dim node feature vector
-_GROUP_SLICES: Dict[str, slice] = {}
+_GROUP_SLICES: dict[str, slice] = {}
 _offset = 0
 for _grp, _feats in FEATURE_GROUPS.items():
     _GROUP_SLICES[_grp] = slice(_offset, _offset + len(_feats))
@@ -77,9 +72,9 @@ class CodeAuditor:
     """Static-analysis checks: hardcoded dimensions, missing config imports, legacy shapes."""
 
     def __init__(self) -> None:
-        self.errors: List[str] = []
-        self.warnings: List[str] = []
-        self.info: List[str] = []
+        self.errors: list[str] = []
+        self.warnings: list[str] = []
+        self.info: list[str] = []
         self.total_files: int = 0
 
     def check_file(self, filepath: Path) -> None:
@@ -289,13 +284,16 @@ def audit_feature_tensor_via_dataset(n_samples: int = 3) -> bool:
     try:
         from src.features.graph_factory import ABIDECausalDataset
     except ImportError as exc:
-        logger.error("Cannot import ABIDECausalDataset: %s", exc); return False
+        logger.error("Cannot import ABIDECausalDataset: %s", exc)
+    return False
     try:
         ds = ABIDECausalDataset(split="train")
     except Exception as exc:
-        logger.error("Dataset construction failed: %s", exc); return False
+        logger.error("Dataset construction failed: %s", exc)
+    return False
     if not ds:
-        logger.error("Train dataset is empty"); return False
+        logger.error("Train dataset is empty")
+    return False
 
     all_ok = True
     for i in range(min(n_samples, len(ds))):
@@ -319,13 +317,14 @@ def audit_feature_tensor_via_dataset(n_samples: int = 3) -> bool:
     return all_ok
 
 
-def validate_granger_edges(subject_id: Optional[str] = None, n_subjects: int = 5) -> None:
+def validate_granger_edges(subject_id: str | None = None, n_subjects: int = 5) -> None:
     """Print causal matrix stats for sample subjects to verify non-trivial edge weights."""
     logger.info("=" * 70)
     logger.info("CAUSAL EDGE VALIDATION (method=%s)", CAUSALITY_METHOD)
     logger.info("=" * 70)
     if not MASTER_MANIFEST.exists():
-        logger.error("Manifest not found: %s", MASTER_MANIFEST); return
+        logger.error("Manifest not found: %s", MASTER_MANIFEST)
+    return
 
     manifest = pd.read_csv(MASTER_MANIFEST)
     subjects = [subject_id] if subject_id else (
@@ -365,19 +364,20 @@ def validate_granger_edges(subject_id: Optional[str] = None, n_subjects: int = 5
                 logger.info("    signed-edge mix: positive=%d, negative=%d  ✓", pos, neg)
 
 
-def audit_edge_density(max_graphs: int = 0) -> Dict[str, object]:
+def audit_edge_density(max_graphs: int = 0) -> dict[str, object]:
     """Histogram of edge counts across all .pt graph files."""
     logger.info("=" * 70)
     logger.info("GRAPH EDGE DENSITY DISTRIBUTION")
     logger.info("=" * 70)
     graph_files = sorted(CAUSAL_GRAPHS_DIR.glob("*.pt"))
     if not graph_files:
-        logger.error("No graphs found in %s", CAUSAL_GRAPHS_DIR); return {}
+        logger.error("No graphs found in %s", CAUSAL_GRAPHS_DIR)
+    return {}
     if max_graphs > 0:
         graph_files = graph_files[:max_graphs]
 
     logger.info("Scanning %d graphs…", len(graph_files))
-    counts: List[int] = []
+    counts: list[int] = []
     zero_cnt = floor_cnt = 0
     for gf in graph_files:
         try:
@@ -395,7 +395,8 @@ def audit_edge_density(max_graphs: int = 0) -> Dict[str, object]:
             logger.warning("  Could not load %s: %s", gf.name, exc)
 
     if not counts:
-        logger.error("Could not read any graph files"); return {}
+        logger.error("Could not read any graph files")
+        return {}
 
     arr = np.array(counts)
     max_possible = NUM_LOBES * (NUM_LOBES - 1)
@@ -410,7 +411,7 @@ def audit_edge_density(max_graphs: int = 0) -> Dict[str, object]:
 
     bins = [0, 12, 24, 36, 48, 64, 80, 96, 112, 132]
     logger.info("  Distribution:")
-    for lo, hi in zip(bins[:-1], bins[1:]):
+    for lo, hi in zip(bins[:-1], bins[1:], strict=False):
         cnt = int(((arr >= lo) & (arr < hi)).sum())
         bar = "█" * (cnt * 40 // max(len(arr), 1))
         logger.info("    [%3d-%3d): %s %d", lo, hi, bar, cnt)
@@ -433,9 +434,9 @@ def audit_edge_density(max_graphs: int = 0) -> Dict[str, object]:
     else:
         logger.info("  ✓ Edge density looks healthy.")
 
-    return dict(n_graphs=len(arr), mean=float(arr.mean()), median=float(np.median(arr)),
-                std=float(arr.std()), min=int(arr.min()), max=int(arr.max()),
-                pct_at_floor=pct_floor, pct_zero=pct_zero)
+    return {"n_graphs": len(arr), "mean": float(arr.mean()), "median": float(np.median(arr)),
+                "std": float(arr.std()), "min": int(arr.min()), "max": int(arr.max()),
+                "pct_at_floor": pct_floor, "pct_zero": pct_zero}
 
 
 def audit_frequency_features() -> None:
@@ -459,8 +460,8 @@ def audit_frequency_features() -> None:
         logger.warning("Manifest not found — using DEFAULT_TR=%.2f", DEFAULT_TR)
         med_tr = DEFAULT_TR
 
-    bands = dict(delta=(0.01, 0.027), theta=(0.027, 0.073),
-                 alpha=(0.073, 0.15), beta=(0.15, 0.20), gamma=(0.20, 0.25))
+    bands = {"delta": (0.01, 0.027), "theta": (0.027, 0.073),
+                 "alpha": (0.073, 0.15), "beta": (0.15, 0.20), "gamma": (0.20, 0.25)}
     fs = 1.0 / med_tr
     nyquist = fs / 2.0
     logger.info("fs=%.4f Hz  Nyquist=%.4f Hz  (median TR=%.2f s)", fs, nyquist, med_tr)
@@ -498,7 +499,7 @@ def audit_frequency_features() -> None:
 def run_feature_diagnostics(
     n_samples: int = 3,
     quick: bool = False,
-    subject_id: Optional[str] = None,
+    subject_id: str | None = None,
     max_graphs: int = 0,
 ) -> None:
     """Run the full feature-pipeline diagnostic suite."""
