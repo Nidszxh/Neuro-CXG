@@ -7,13 +7,10 @@ from .feature_registry import *
 from .hyperparams import *
 from .paths import *  # includes CAUSAL_GRAPHS_MULTIVIEW_DIR (Task 2)
 from .validators import (
-    get_active_checkpoint_dir,
-    log_training_diagnostics,
     validate_environment,
     validate_gnn_training_inputs,
+    get_active_checkpoint_dir,
     validate_graph_construction_inputs,
-    validate_lobe_mapping,
-    validate_training_health,
 )
 
 # Keep legacy behavior for modules that rely on global logging defaults from config import.

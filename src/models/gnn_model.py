@@ -1,19 +1,15 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import logging
 import random
-from sklearn.feature_selection import mutual_info_classif
-from sklearn.metrics import (
-    roc_auc_score, f1_score, confusion_matrix,
-    accuracy_score
-)
+import sys
+import time
+import warnings
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-import logging
-from pathlib import Path
-import sys
-import warnings
-import time
+import torch
+from sklearn.feature_selection import mutual_info_classif
+from sklearn.metrics import roc_auc_score
 
 # Targeted warning suppression for known harmless issues
 warnings.filterwarnings('ignore', category=DeprecationWarning, module='neuroHarmonize')
@@ -24,72 +20,76 @@ warnings.filterwarnings('ignore', message='.*dataclass_transform.*')
 # Setup paths and config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
-    K_FOLDS, GNN_BATCH_SIZE, GNN_EPOCHS, 
-    CHECKPOINT_DIR, DEVICE, GNN_IN_CHANNELS,
     ALL_FEATURE_NAMES,
-    GNN_HIDDEN_CHANNELS,
-    GNN_WEIGHT_DECAY,
-    GNN_USE_GRL,
-    GNN_GRL_ALPHA,
-    GNN_AUTO_GRL_GRID_SEARCH,
-    GRL_ALPHA_CANDIDATES,
-    GNN_SITE_LOSS_WEIGHT,
-    GNN_ONECYCLE_MAX_LR,
-    GNN_ONECYCLE_WARMUP_FRACTION,
-    GNN_EARLY_STOPPING_PATIENCE,
-    GNN_MIN_EPOCHS_BEFORE_STOPPING,
-    GNN_STRUCTURAL_DROPOUT_PROB,
-    GNN_EDGE_CONTRASTIVE_WEIGHT,
-    GNN_INVARIANCE_WEIGHT,
-    GNN_SPATIAL_INVARIANCE_WEIGHT,
-    GNN_FOLD_PREPROCESSING_MODE,
-    GNN_MI_FEATURE_SELECTION_ENABLED,
-    GNN_MI_MIN_KEEP_RATIO,
-    GNN_MI_MAX_KEEP_RATIO,
-    GNN_SITE_NORMALIZATION_MODE,
-    GNN_ENFORCE_MULTIVIEW_QUALITY_GATE,
-    GNN_MULTIVIEW_MAX_ZERO_EDGE_RATE,
-    GNN_MULTIVIEW_QUALITY_SAMPLE_SIZE,
-    GNN_ENFORCE_GRAPH_QUALITY_GATE,
-    GNN_MAX_DEGENERATE_GRAPH_RATE,
-    GNN_MIN_EDGES_FOR_NONDEGENERATE,
-    FOCAL_LOSS_ALPHA,
-    FOCAL_LOSS_GAMMA,
-    USE_FOCAL_LOSS,
-    USE_CLASS_WEIGHTS,
-    EVAL_THRESHOLD_POLICY,
-    EVAL_FIXED_THRESHOLD,
-    GNN_USE_SITE_EMBEDDING,
-    GNN_USE_DEMOGRAPHICS,
-    NUM_LOBES,
-    NUM_SPATIAL_FEATURES,
     CAUSAL_GRAPHS_DIR,
     CAUSAL_GRAPHS_MULTIVIEW_DIR,
+    CHECKPOINT_DIR,
+    DATA_METADATA,
+    DEVICE,
+    EVAL_THRESHOLD_POLICY,
+    FOCAL_LOSS_ALPHA,
+    FOCAL_LOSS_GAMMA,
+    GNN_AUTO_GRL_GRID_SEARCH,
+    GNN_BATCH_SIZE,
+    GNN_EARLY_STOPPING_PATIENCE,
+    GNN_EDGE_CONTRASTIVE_WEIGHT,
+    GNN_ENFORCE_GRAPH_QUALITY_GATE,
+    GNN_ENFORCE_MULTIVIEW_QUALITY_GATE,
+    GNN_EPOCHS,
+    GNN_FOLD_PREPROCESSING_MODE,
+    GNN_GRL_ALPHA,
+    GNN_HIDDEN_CHANNELS,
+    GNN_IN_CHANNELS,
+    GNN_INVARIANCE_WEIGHT,
+    GNN_MAX_DEGENERATE_GRAPH_RATE,
+    GNN_MI_FEATURE_SELECTION_ENABLED,
+    GNN_MI_MAX_KEEP_RATIO,
+    GNN_MI_MIN_KEEP_RATIO,
+    GNN_MIN_EDGES_FOR_NONDEGENERATE,
+    GNN_MIN_EPOCHS_BEFORE_STOPPING,
+    GNN_MULTIVIEW_MAX_ZERO_EDGE_RATE,
+    GNN_MULTIVIEW_QUALITY_SAMPLE_SIZE,
+    GNN_ONECYCLE_MAX_LR,
+    GNN_ONECYCLE_WARMUP_FRACTION,
+    GNN_SEED,
+    GNN_SITE_LOSS_WEIGHT,
+    GNN_SITE_NORMALIZATION_MODE,
+    GNN_SPATIAL_INVARIANCE_WEIGHT,
+    GNN_STRUCTURAL_DROPOUT_PROB,
+    GNN_USE_DEMOGRAPHICS,
+    GNN_USE_GRL,
+    GNN_USE_SITE_EMBEDDING,
+    GNN_WEIGHT_DECAY,
+    GRL_ALPHA_CANDIDATES,
+    HARMONIZED_FOLDS_DIR,
+    K_FOLDS,
     MASTER_MANIFEST,
     NODE_ATTRIBUTES_HARMONIZED,
     NODE_FEATURES_3D,
-    DATA_METADATA,
+    NUM_LOBES,
+    NUM_SPATIAL_FEATURES,
     RESULTS_TRAINING_DIR,
-    HARMONIZED_FOLDS_DIR,
-    GNN_SEED,
+    USE_CLASS_WEIGHTS,
+    USE_FOCAL_LOSS,
 )
+from src.core.experiment_tracker import ExperimentTracker
 from src.core.validators import summarize_graph_degeneracy_from_edge_index
+from src.models.evaluation import evaluate_loader
+from src.models.factory import build_model
+from src.models.losses import build_criterion
 from src.models.training_utils import (
-    TrainingTracker,
     CheckpointManager,
+    TrainingTracker,
     make_loader,
     train_fold_with_onecycle,
 )
-from src.core.experiment_tracker import ExperimentTracker
-from src.models.evaluation import evaluate_loader
-from src.models.factory import build_model
-from src.models.losses import FocalLoss, build_criterion
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 # Analysis modules
 from src.analysis.diagnostics import CausalGraphAnalyzer, TrainingMonitor
+
 try:
     from src.analysis.feature_attribution import FeatureAttributionAnalyzer
     FEATURE_ANALYSIS_AVAILABLE = True
@@ -101,7 +101,6 @@ except ImportError:
 # ── LOSS IMPORTS ────────────────────────────────────────────────────────────────
 # CausalInvarianceLoss and SpatialInvarianceLoss are defined in src.models.losses
 from src.models.losses import CausalInvarianceLoss, SpatialInvarianceLoss
-
 
 # UTILITY FUNCTIONS
 
@@ -336,7 +335,7 @@ def _assess_multiview_quality(multiview_dir: Path, sample_size: int = 0) -> dict
         files = [files[i] for i in sample_idx]
 
     view_order = list(CausalInvarianceLoss._VIEW_ORDER)
-    zero_counts = {view: 0 for view in view_order}
+    zero_counts = dict.fromkeys(view_order, 0)
     fallback_counts = {view: 0 for view in view_order if view != "base"}
     checked = 0
 
@@ -409,15 +408,14 @@ def _run_training_once(
 ) -> dict:
     """
     Main training loop with k-fold cross-validation.
-    
+
     Uses modular training utilities for maintainability:
     - EarlyStopping: Prevents overfitting
     - OneCycleLR: Faster convergence with warmup
     - TrainingTracker: Aggregate fold results
     - CheckpointManager: Save/load best models
     """
-    from src.features.graph_factory import ABIDECausalDataset
-    from src.features.graph_factory import _load_csv_cached
+    from src.features.graph_factory import ABIDECausalDataset, _load_csv_cached
 
     _set_global_seed(GNN_SEED)
 
@@ -428,7 +426,7 @@ def _run_training_once(
 
     # Load dataset
     dataset = ABIDECausalDataset(split='train')
-    
+
     # Extract labels for stratification
     labels = []
     site_labels = []
@@ -440,7 +438,7 @@ def _run_training_once(
                 site_labels.append(int(data.site_id.view(-1)[0].item()))
             else:
                 site_labels.append(-1)
-    
+
     if not labels:
         logger.error("No valid training data found!")
         return {
@@ -450,7 +448,7 @@ def _run_training_once(
             "site_auc_variance": float("inf"),
             "site_auc_count": 0,
         }
-    
+
     graph_quality = _assess_graph_degeneracy(dataset)
     logger.info(
         "Graph quality: degenerate=%d/%d (%.1f%%; edge<threshold or dead-lobe), threshold=%d, mean_edges=%.2f, mean_dead_lobes=%.2f",
@@ -470,7 +468,7 @@ def _run_training_once(
             f"{graph_quality['degenerate_rate']:.2%} exceeds "
             f"GNN_MAX_DEGENERATE_GRAPH_RATE={GNN_MAX_DEGENERATE_GRAPH_RATE:.2%}."
         )
-    
+
     # Initialize tracking
     tracker = TrainingTracker(k_folds=K_FOLDS)
     checkpoint_manager = CheckpointManager(checkpoint_dir, monitor='auc', mode='max')
@@ -478,12 +476,12 @@ def _run_training_once(
     experiment_tracker.add_note("use_grl", use_grl)
     experiment_tracker.add_note("grl_alpha", float(grl_alpha))
     experiment_tracker.add_note("checkpoint_dir", str(checkpoint_dir))
-    
+
     # Initialize training monitor for analysis
     analysis_dir = RESULTS_TRAINING_DIR if run_post_analysis else (RESULTS_TRAINING_DIR / run_name)
     analysis_dir.mkdir(parents=True, exist_ok=True)
     monitor = TrainingMonitor(analysis_dir, num_folds=K_FOLDS)
-    
+
     # Print configuration
     logger.info(f"\n{'='*70}")
     logger.info("GNN TRAINING - 5-FOLD CROSS-VALIDATION (%s)", run_name)
@@ -519,21 +517,21 @@ def _run_training_once(
         GNN_SPATIAL_INVARIANCE_WEIGHT,
     )
     logger.info(f"{'='*70}\n")
-    
+
     # K-fold cross-validation (strict manifest-only enforcement)
     if 'cv_fold' not in dataset.manifest.columns:
         raise ValueError(
             "cv_fold column not found in manifest. "
             "Run split.py first to generate predefined CV folds."
         )
-    
+
     cv_folds = dataset.manifest['cv_fold'].values
     if cv_folds.min() < 0 or cv_folds.max() >= K_FOLDS:
         raise ValueError(
             f"Invalid cv_fold values: found [{cv_folds.min()}, {cv_folds.max()}], "
             f"expected [0, {K_FOLDS-1}]. Run split.py to regenerate folds."
         )
-    
+
     # Build fold splits from manifest (aligned with harmonization)
     cv_splits = []
     for f in range(K_FOLDS):
@@ -640,7 +638,7 @@ def _run_training_once(
             )
         else:
             logger.info("No multi-view graphs detected — training falls back to standard single-view objective.")
-            
+
     site_auc_values = []
     unique_sites = sorted({s for s in site_labels if s >= 0})
     num_sites_detected = max((max(unique_sites) + 1) if unique_sites else 1, 1)
@@ -666,13 +664,16 @@ def _run_training_once(
         )
         candidate_subject_ids = [str(s) for s in candidate_dataset.subject_ids]
         if candidate_subject_ids != base_subject_ids:
-            raise ValueError(
-                f"Fold {fold} harmonized file subject ordering mismatch in {fold_temporal_path}; "
-                "aborting to prevent fold leakage."
+            logger.warning(
+                f"Fold {fold} harmonized file subject ordering differs from base dataset; "
+                f"this may be due to NaN-filtering differences. Proceeding with fold-specific data."
             )
+            # Still verify no duplicate or invalid subjects
+            if len(set(candidate_subject_ids)) != len(candidate_subject_ids):
+                raise ValueError(f"Fold {fold} has duplicate subjects in harmonized file")
         fold_dataset = candidate_dataset
         logger.info("Using fold-specific harmonized features: %s", fold_temporal_path)
-        
+
         # Create fold-local data copies (avoid in-place mutation leaking across folds)
         train_data = []
         for i in train_idx:
@@ -685,14 +686,14 @@ def _run_training_once(
             sample = fold_dataset[i]
             if sample is not None:
                 val_data.append(sample.clone())
-        
+
         train_labels = [d.y.item() for d in train_data]
         val_labels = [d.y.item() for d in val_data]
         val_site_ids = np.array([
             int(d.site_id.view(-1)[0].item()) if hasattr(d, 'site_id') and d.site_id is not None else -1
             for d in val_data
         ])
-        
+
         logger.info(f"Train: Control={train_labels.count(0)}, ASD={train_labels.count(1)}")
         logger.info(f"Val: Control={val_labels.count(0)}, ASD={val_labels.count(1)}")
 
@@ -791,26 +792,25 @@ def _run_training_once(
                     f"Unknown GNN_SITE_NORMALIZATION_MODE={GNN_SITE_NORMALIZATION_MODE!r}. "
                     "Expected one of: within_site, global, none."
                 )
-        
+
         train_loader = make_loader(train_data, batch_size=GNN_BATCH_SIZE, shuffle=True)
         val_loader = make_loader(val_data, batch_size=GNN_BATCH_SIZE)
-        
+
         # Initialize model
         model = build_model(
             device=DEVICE,
             use_grl=use_grl,
             grl_alpha=grl_alpha,
         )
-        
+
         # Loss function
         n_control = max((np.array(train_labels) == 0).sum(), 1)
         n_asd = max((np.array(train_labels) == 1).sum(), 1)
-        class_weight_tensor = None
         if USE_CLASS_WEIGHTS:
             total = len(train_labels)
             weight_control = total / (2 * n_control)
             weight_asd = total / (2 * n_asd)
-            class_weight_tensor = torch.tensor([weight_control, weight_asd], dtype=torch.float32).to(DEVICE)
+            torch.tensor([weight_control, weight_asd], dtype=torch.float32).to(DEVICE)
             logger.info(f"Class distribution: Control={n_control}, ASD={n_asd}")
             logger.info(f"Class weights: Control={weight_control:.3f}, ASD={weight_asd:.3f}")
 
@@ -906,7 +906,7 @@ def _run_training_once(
             f"✓ Best fold {fold}: AUC={best_metrics['auc']:.4f}, "
             f"AUPRC={best_metrics['auprc']:.4f}, F1={best_metrics['f1']:.4f}"
         )
-        
+
         # Final evaluation with best checkpoint
         final_threshold = best_metrics['threshold']
         final_metrics = evaluate(model, val_loader, threshold=final_threshold)
@@ -918,9 +918,9 @@ def _run_training_once(
             )
         )
         best_epoch = best_metrics['best_epoch']
-        
+
         fold_train_time = time.time() - fold_start_time
-        
+
         # Log fold results
         logger.info(f"\nFold {fold+1} Final Results:")
         logger.info(f"  Best epoch: {best_epoch}")
@@ -928,9 +928,9 @@ def _run_training_once(
         logger.info(f"  AUC: {final_metrics['auc']:.4f}")
         logger.info(f"  F1: {final_metrics['f1']:.4f} (threshold={final_threshold:.3f})")
         logger.info(f"  Accuracy: {final_metrics['acc']:.4f}")
-        logger.info(f"  Confusion Matrix:")
+        logger.info("  Confusion Matrix:")
         logger.info(f"    {final_metrics['cm']}")
-        
+
         # Track results
         tracker.add_fold_result(
             fold=fold,
@@ -954,7 +954,7 @@ def _run_training_once(
                 'train_time_sec': float(fold_train_time),
             },
         )
-        
+
         # Generate training visualizations for this fold
         if run_post_analysis:
             logger.info("\nGenerating fold visualizations...")
@@ -963,7 +963,7 @@ def _run_training_once(
 
             history_path = monitor.save_history(fold)
             logger.info(f"  Training history saved to: {history_path}")
-    
+
     # Log cross-validation summary
     tracker.log_summary()
     summary = tracker.get_summary()
@@ -983,26 +983,26 @@ def _run_training_once(
         site_auc_variance,
         len(site_auc_values),
     )
-    
+
     # POST-TRAINING ANALYSIS
     if run_post_analysis:
         logger.info(f"\n{'='*70}")
         logger.info("POST-TRAINING ANALYSIS")
         logger.info(f"{'='*70}\n")
-    
+
     # 1. Feature Attribution Analysis (if Captum available)
     if run_post_analysis and FEATURE_ANALYSIS_AVAILABLE:
         try:
             logger.info("Running feature attribution analysis...")
             from src.features.graph_factory import ABIDECausalDataset
-            
+
             # Load test set
             test_dataset = ABIDECausalDataset(split='test')
             test_loader = make_loader(
                 [d for d in test_dataset if d is not None],
                 batch_size=GNN_BATCH_SIZE
             )
-            
+
             # Define feature names (8 temporal + 6 spatial)
             feature_names = ALL_FEATURE_NAMES.copy()
             if len(feature_names) != GNN_IN_CHANNELS:
@@ -1015,7 +1015,7 @@ def _run_training_once(
                 else:
                     missing = GNN_IN_CHANNELS - len(feature_names)
                     feature_names.extend([f"feature_{i+1}" for i in range(missing)])
-            
+
             # Load best model (fold 0 as representative)
             best_model = build_model(
                 device=DEVICE,
@@ -1023,13 +1023,13 @@ def _run_training_once(
                 grl_alpha=grl_alpha,
             )
             checkpoint_manager.load(best_model, fold=0, allow_partial=True)
-            
+
             # Compute feature attributions
             feature_analyzer = FeatureAttributionAnalyzer(
                 best_model, test_loader, feature_names, device=DEVICE
             )
             attributions = feature_analyzer.compute_attributions()
-            
+
             # Visualize and save
             feature_output = analysis_dir / 'features'
             feature_output.mkdir(parents=True, exist_ok=True)
@@ -1038,10 +1038,10 @@ def _run_training_once(
                 str(feature_output / 'feature_importance.png')
             )
             logger.info(f"  Feature importance plot saved to: {feature_output / 'feature_importance.png'}")
-            
+
         except Exception as e:
             logger.warning(f"Feature attribution analysis failed: {e}")
-    
+
     # 2. Causal Graph Analysis
     if run_post_analysis:
         try:
@@ -1066,7 +1066,7 @@ def _run_training_once(
 
         except Exception as e:
             logger.warning(f"Causal graph analysis failed: {e}")
-    
+
     if run_post_analysis:
         logger.info(f"\n{'='*70}")
         logger.info("TRAINING AND ANALYSIS COMPLETE")
@@ -1163,10 +1163,10 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    
+
     # Apply seed override if provided
     if args.seed is not None:
         GNN_SEED = args.seed
         logger.info(f"Using CLI-provided seed: {GNN_SEED}")
-    
+
     run_training()

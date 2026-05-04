@@ -18,7 +18,6 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -27,8 +26,8 @@ from neuroHarmonize import harmonizationApply, harmonizationLearn
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     FEATURE_GROUPS,
-    HARMONIZED_FOLDS_DIR,
     HARMONIZATION_UNSEEN_SITE_POLICY,
+    HARMONIZED_FOLDS_DIR,
     K_FOLDS,
     LOBE_MAPPING,
     LOBE_NAMES,
@@ -38,7 +37,6 @@ from src.core.config import (
     NODE_FEATURES_3D,
     NODE_FEATURES_3D_HARMONIZED,
     NUM_LOBES,
-    NUM_TEMPORAL_FEATURES,
 )
 
 logging.basicConfig(
@@ -68,12 +66,12 @@ class HarmonizationFold:
     val: pd.DataFrame
     train_idx: np.ndarray
     val_idx: np.ndarray
-    model: Optional[object]
+    model: object | None
 
 
 # ── feature-column helpers ────────────────────────────────────────────────────
 
-def _feat_cols(df: pd.DataFrame) -> List[str]:
+def _feat_cols(df: pd.DataFrame) -> list[str]:
     """Return all columns except subject_id."""
     return [c for c in df.columns if c != "subject_id"]
 
@@ -174,7 +172,7 @@ def aggregate_to_lobes(df: pd.DataFrame) -> pd.DataFrame:
     Output: subject_id + (NUM_LOBES × len(FEATURE_TYPES)) columns
     """
     logger.info("Aggregating 170 ROIs \u2192 %d regions\u2026", NUM_LOBES)
-    result: Dict[str, object] = {"subject_id": df["subject_id"]}
+    result: dict[str, object] = {"subject_id": df["subject_id"]}
     for lobe_id in range(NUM_LOBES):
         lobe_name = LOBE_NAMES[lobe_id]
         roi_ids = [i + 1 for i in LOBE_MAPPING[lobe_id]]
@@ -198,7 +196,7 @@ def aggregate_to_lobes(df: pd.DataFrame) -> pd.DataFrame:
 
 def _outlier_clip_fit(
     df: pd.DataFrame,
-) -> Tuple[pd.DataFrame, Dict[str, "pd.Series"]]:
+) -> tuple[pd.DataFrame, dict[str, "pd.Series"]]:
     """Compute outlier clip bounds from df (train fold only) and apply them.
 
     Returns the clipped DataFrame and a dict of {lower, upper} Series so the
@@ -216,7 +214,7 @@ def _outlier_clip_fit(
 
 def _outlier_clip_apply(
     df: pd.DataFrame,
-    clip_bounds: Dict[str, "pd.Series"],
+    clip_bounds: dict[str, "pd.Series"],
 ) -> pd.DataFrame:
     """Apply pre-computed train-fold clip bounds to val/test data."""
     cols = _feat_cols(df)
@@ -229,24 +227,24 @@ def _outlier_clip_apply(
 
 def _clip_outliers(df: pd.DataFrame, percentile_range: float = 0.05) -> pd.DataFrame:
     """Clip extreme values based on percentile range to prevent outlier explosion.
-    
+
     Uses 5-95 percentile bounds to clip outliers, allowing ±3std from bounds.
     Applied AFTER aggregation to handle extreme values that appear in aggregated features.
     """
     numeric_cols = df.columns[df.columns != "subject_id"]
     clipped = df.copy()
-    
+
     for col in numeric_cols:
         p_lower = df[col].quantile(percentile_range)
         p_upper = df[col].quantile(1 - percentile_range)
         col_range = p_upper - p_lower
-        
+
         # Allow ±3σ from the percentile bounds
         lower_bound = p_lower - 3 * col_range
         upper_bound = p_upper + 3 * col_range
-        
+
         clipped[col] = clipped[col].clip(lower_bound, upper_bound)
-    
+
     return clipped
 def _prepare_covariates(manifest: pd.DataFrame, features_df: pd.DataFrame) -> pd.DataFrame:
     """Build covariate DataFrame for neuroHarmonize (requires exact 'SITE' column).
@@ -269,7 +267,7 @@ def _prepare_covariates(manifest: pd.DataFrame, features_df: pd.DataFrame) -> pd
 
 def _remove_constant_features(
     features: pd.DataFrame,
-) -> Tuple[pd.DataFrame, List[str], List[str]]:
+) -> tuple[pd.DataFrame, list[str], list[str]]:
     """Drop (near-)constant columns that would destabilize ComBat."""
     variances = features.var()
     constant_cols = variances[variances <= COMBAT_MIN_VARIANCE].index.tolist()
@@ -287,8 +285,8 @@ def _remove_constant_features(
 def _restore_constant_features(
     harmonized: pd.DataFrame,
     original: pd.DataFrame,
-    kept_cols: List[str],
-    dropped_cols: List[str],
+    kept_cols: list[str],
+    dropped_cols: list[str],
 ) -> pd.DataFrame:
     """Re-attach zero-variance columns that were removed pre-harmonization."""
     df = pd.DataFrame(harmonized.values, columns=kept_cols, index=original.index)
@@ -305,7 +303,7 @@ def _safe_harmonization_apply(
     apply_covariates: pd.DataFrame,
     model: object,
     *,
-    seen_sites: Optional[set] = None,
+    seen_sites: set | None = None,
     context: str = "apply",
 ) -> np.ndarray:
     """Apply ComBat safely when SITE levels in apply data are unseen in train.
@@ -362,7 +360,8 @@ def _harmonize_fold(
     val_features: pd.DataFrame,
     train_covariates: pd.DataFrame,
     val_covariates: pd.DataFrame,
-) -> Tuple[Optional[object], pd.DataFrame, pd.DataFrame]:
+    fold_id: int | None = None,
+) -> tuple[object | None, pd.DataFrame, pd.DataFrame]:
     """Harmonize one CV fold via neuroHarmonize; falls back to raw data on error."""
     try:
         # Ensure column alignment between train and val BEFORE harmonization
@@ -375,27 +374,27 @@ def _harmonize_fold(
                 )
             # Ensure column order matches exactly
             val_features = val_features[train_features.columns].copy()
-            
+
         # Tiny epsilon noise prevents singular-matrix errors for near-constant columns
-        rng = np.random.default_rng(seed=0)
+        rng = np.random.default_rng(seed=fold_id if fold_id is not None else 0)
         tf = train_features.copy()
         vf = val_features.copy() if not val_features.empty else val_features
-        
+
         for col in train_features.columns:
             if train_features[col].std() < 1e-5:
                 tf.loc[:, col] += rng.normal(0, 1e-8, len(tf))
                 if not vf.empty:
                     vf.loc[:, col] += rng.normal(0, 1e-8, len(vf))
-                    
+
         model, train_harm = harmonizationLearn(
             tf.values,
             train_covariates,
         )
-        
+
         if vf.empty:
             val_harm = np.empty((0, len(train_features.columns)))
         else:
-            train_sites = set(train_covariates["SITE"].astype(str).tolist())
+            set(train_covariates["SITE"].astype(str).tolist())
             # Use simple harmonization without the complex seen_mask logic
             # which seems to cause shape issues in some edge cases
             try:
@@ -409,7 +408,7 @@ def _harmonize_fold(
                     "harmonizationApply failed (%s); using raw val features", apply_err
                 )
                 val_harm = vf.values
-                
+
         return (
             model,
             pd.DataFrame(train_harm, columns=train_features.columns, index=train_features.index),
@@ -427,7 +426,8 @@ def _harmonize_train_apply_pair(
     apply_data: pd.DataFrame,
     train_manifest: pd.DataFrame,
     apply_manifest: pd.DataFrame,
-) -> Tuple[Optional[object], pd.DataFrame, pd.DataFrame]:
+    fold_id: int | None = None,
+) -> tuple[object | None, pd.DataFrame, pd.DataFrame]:
     """Fit harmonization on train_data and apply to apply_data (strict no-leak)."""
     train_data = train_data.copy().reset_index(drop=True)
     apply_data = apply_data.copy().reset_index(drop=True)
@@ -461,19 +461,20 @@ def _harmonize_train_apply_pair(
 
     # Remove constant features from training data
     train_features, kept_cols, dropped_cols = _remove_constant_features(train_features)
-    
+
     # CRITICAL: Ensure apply features have EXACTLY the same columns as train
     # Use explicit column selection rather than reindex to avoid silent failures
     if not apply_features.empty:
         # Filter to only columns that exist in both
         valid_cols = [c for c in kept_cols if c in apply_features.columns]
         apply_features = apply_features[valid_cols].copy()
-        
-        # Add any missing columns with zeros
+
+        # Add any missing columns with train-fold mean (not zeros)
+        train_means = train_features[kept_cols].mean()
         for col in kept_cols:
             if col not in apply_features.columns:
-                apply_features[col] = 0.0
-        
+                apply_features[col] = train_means[col]
+
         # Ensure exact column order matches train
         apply_features = apply_features[kept_cols]
 
@@ -482,6 +483,7 @@ def _harmonize_train_apply_pair(
         apply_features,
         train_covariates,
         apply_covariates,
+        fold_id=fold_id,
     )
 
     train_restored = _restore_constant_features(train_harmonized, train_data, kept_cols, dropped_cols)
@@ -498,7 +500,7 @@ def _harmonize_train_apply_pair(
     return model, train_lobes, apply_lobes
 
 
-def _write_ordered_subject_csv(df: pd.DataFrame, subject_order: List[str], output_path: Path) -> None:
+def _write_ordered_subject_csv(df: pd.DataFrame, subject_order: list[str], output_path: Path) -> None:
     """Write CSV ordered by subject_id according to subject_order."""
     if df.empty:
         logger.warning("No rows to save for %s", output_path)
@@ -517,8 +519,8 @@ def _write_ordered_subject_csv(df: pd.DataFrame, subject_order: List[str], outpu
 
 def _check_harmonization_quality(
     original_df: pd.DataFrame,
-    harmonized_folds: List[HarmonizationFold],
-) -> Dict[str, object]:
+    harmonized_folds: list[HarmonizationFold],
+) -> dict[str, object]:
     """Check variance retention and NaN introduction across all harmonized folds."""
     logger.info("=" * 60)
     logger.info("HARMONIZATION QUALITY CHECK")
@@ -675,10 +677,10 @@ def _check_harmonization_quality(
 def harmonize_cv_safe_fold(
     features_df: pd.DataFrame,
     manifest_df: pd.DataFrame,
-    cv_splits: Optional[List[Tuple[np.ndarray, np.ndarray]]] = None,
-    output_dir: Optional[Path] = None,
-    full_output_path: Optional[Path] = None,
-) -> List[HarmonizationFold]:
+    cv_splits: list[tuple[np.ndarray, np.ndarray]] | None = None,
+    output_dir: Path | None = None,
+    full_output_path: Path | None = None,
+) -> list[HarmonizationFold]:
     logger.info("=" * 80)
     logger.info("HARMONIZATION (Strict Train-Only Fitting)")
     logger.info("=" * 80)
@@ -739,13 +741,13 @@ def harmonize_cv_safe_fold(
 
     # Audit unseen SITE coverage up-front so policy violations fail before any fold
     # harmonization runs.
-    fold_site_audit: List[Dict[str, object]] = []
+    fold_site_audit: list[dict[str, object]] = []
     for fold, (train_idx, val_idx) in enumerate(cv_splits):
         fold_train_manifest = train_manifest_all.iloc[train_idx].reset_index(drop=True)
         fold_val_manifest = train_manifest_all.iloc[val_idx].reset_index(drop=True)
         train_sites = set(fold_train_manifest["SITE_ID"].astype(str).tolist())
         val_sites = set(fold_val_manifest["SITE_ID"].astype(str).tolist())
-        unseen_val_sites = sorted(list(val_sites - train_sites))
+        unseen_val_sites = sorted(val_sites - train_sites)
         unseen_rows = int(fold_val_manifest["SITE_ID"].astype(str).isin(unseen_val_sites).sum())
         fold_site_audit.append(
             {
@@ -793,7 +795,9 @@ def harmonize_cv_safe_fold(
 
     audit_dir = Path(output_dir) if output_dir is not None else HARMONIZED_FOLDS_DIR
     audit_dir.mkdir(parents=True, exist_ok=True)
-    audit_path = audit_dir / "fold_unseen_site_audit.csv"
+    # Always write audit to HARMONIZED_FOLDS_DIR for cross-module consistency
+    audit_path = HARMONIZED_FOLDS_DIR / "fold_unseen_site_audit.csv"
+    HARMONIZED_FOLDS_DIR.mkdir(parents=True, exist_ok=True)
     audit_df = pd.DataFrame(
         [
             {
@@ -819,7 +823,7 @@ def harmonize_cv_safe_fold(
             "(do not pass --site-stratified-cv)."
         )
 
-    harmonized_folds: List[HarmonizationFold] = []
+    harmonized_folds: list[HarmonizationFold] = []
     train_subject_order = train_data_all["subject_id"].tolist()
 
     if output_dir is not None:
@@ -851,6 +855,7 @@ def harmonize_cv_safe_fold(
             fold_val_data,
             fold_train_manifest,
             fold_val_manifest,
+            fold_id=fold,
         )
 
         harmonized_folds.append(
@@ -876,6 +881,7 @@ def harmonize_cv_safe_fold(
             holdout_data,
             train_manifest_all,
             holdout_manifest,
+            fold_id=None,
         )
         combined_df = pd.concat([train_lobes_full, holdout_lobes], ignore_index=True)
         full_subject_order = features_safe["subject_id"].tolist()
@@ -1035,16 +1041,16 @@ def main():
     if not NODE_ATTRIBUTES_TEMPORAL.exists():
         logger.error("Temporal features not found: %s", NODE_ATTRIBUTES_TEMPORAL)
         sys.exit(1)
-    
+
     if not MASTER_MANIFEST.exists():
         logger.error("Master manifest not found: %s", MASTER_MANIFEST)
         sys.exit(1)
-    
+
     features = pd.read_csv(NODE_ATTRIBUTES_TEMPORAL)
     manifest = pd.read_csv(MASTER_MANIFEST)
-    
+
     output_dir = HARMONIZED_FOLDS_DIR
-    
+
     harmonized_folds = harmonize_cv_safe_fold(
         features_df=features,
         manifest_df=manifest,
@@ -1052,11 +1058,11 @@ def main():
         output_dir=output_dir,
         full_output_path=NODE_ATTRIBUTES_HARMONIZED,
     )
-    
+
     if not harmonized_folds:
         logger.error("Harmonization failed")
         sys.exit(1)
-    
+
     _check_harmonization_quality(features, harmonized_folds)
 
     # Stage 12b — spatial harmonization removed (conf_std/detection_count columns no longer exist)

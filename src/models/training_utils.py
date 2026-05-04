@@ -14,35 +14,36 @@ while keeping PyTorch raw (no pytorch-lightning dependency).
 """
 
 import hashlib
+import logging
 import os
 import time
+from collections import OrderedDict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-import logging
-from collections import OrderedDict
-from pathlib import Path
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
 from torch_geometric.loader import DataLoader
-from sklearn.metrics import roc_curve
+
 from src.core.config import (
-    GNN_ONECYCLE_PCT_START,
-    GNN_GRL_ALPHA_MAX,
-    EVAL_THRESHOLD_POLICY,
     EVAL_FIXED_THRESHOLD,
+    EVAL_THRESHOLD_POLICY,
+    GNN_GRL_ALPHA_MAX,
+    GNN_ONECYCLE_PCT_START,
 )
 from src.core.hyperparams import _MULTIVIEW_VIEW_ORDER
-from src.models.evaluation import evaluate_loader, optimal_threshold, resolve_threshold
+from src.models.evaluation import evaluate_loader, resolve_threshold
 
 logger = logging.getLogger(__name__)
 
 
 def attach_feature_scaler_from_checkpoint(
     model: torch.nn.Module,
-    checkpoint: Dict[str, Any],
-    expected_dim: Optional[int] = None,
+    checkpoint: dict[str, Any],
+    expected_dim: int | None = None,
 ) -> bool:
     """Attach fold-wise preprocessing metadata from checkpoint to a model.
 
@@ -73,8 +74,8 @@ def attach_feature_scaler_from_checkpoint(
                 raise ValueError("invalid scaler shape")
             if expected_dim is not None and mean_t.numel() != int(expected_dim):
                 raise ValueError("scaler dim mismatch")
-            setattr(model, "_feature_mean", mean_t)
-            setattr(model, "_feature_std", std_t.clamp_min(1e-6))
+            model._feature_mean = mean_t
+            model._feature_std = std_t.clamp_min(1e-06)
             attached = True
         except Exception:
             logger.warning("Ignoring malformed checkpoint feature scaler metadata")
@@ -88,7 +89,7 @@ def attach_feature_scaler_from_checkpoint(
             mask_t = torch.as_tensor(feature_mask, dtype=torch.float32).view(-1)
             if target_dim is not None and mask_t.numel() != target_dim:
                 raise ValueError("feature mask dim mismatch")
-            setattr(model, "_feature_mask", mask_t)
+            model._feature_mask = mask_t
             attached = True
         except Exception:
             logger.warning("Ignoring malformed checkpoint feature_mask metadata")
@@ -96,24 +97,24 @@ def attach_feature_scaler_from_checkpoint(
     selected_idx = checkpoint.get("selected_feature_idx")
     if isinstance(selected_idx, (list, tuple)):
         try:
-            setattr(model, "_selected_feature_idx", [int(i) for i in selected_idx])
+            model._selected_feature_idx = [int(i) for i in selected_idx]
         except Exception:
             pass
 
     preprocessing_mode = checkpoint.get("preprocessing_mode")
     if isinstance(preprocessing_mode, str) and preprocessing_mode.strip():
-        setattr(model, "_preprocessing_mode", preprocessing_mode.strip().lower())
+        model._preprocessing_mode = preprocessing_mode.strip().lower()
 
     site_norm_mode = checkpoint.get("site_normalization_mode")
     if isinstance(site_norm_mode, str) and site_norm_mode.strip():
-        setattr(model, "_site_normalization_mode", site_norm_mode.strip().lower())
+        model._site_normalization_mode = site_norm_mode.strip().lower()
 
     # Per-site stats for within-site normalization fallback at inference time.
     site_means_raw = checkpoint.get("site_feature_means")
     site_stds_raw = checkpoint.get("site_feature_stds")
     if isinstance(site_means_raw, dict) and isinstance(site_stds_raw, dict):
-        site_means: Dict[int, torch.Tensor] = {}
-        site_stds: Dict[int, torch.Tensor] = {}
+        site_means: dict[int, torch.Tensor] = {}
+        site_stds: dict[int, torch.Tensor] = {}
         bad_sites = 0
         for sid_key, mean_vals in site_means_raw.items():
             std_vals = site_stds_raw.get(sid_key)
@@ -134,8 +135,8 @@ def attach_feature_scaler_from_checkpoint(
                 bad_sites += 1
 
         if site_means and site_stds:
-            setattr(model, "_site_feature_means", site_means)
-            setattr(model, "_site_feature_stds", site_stds)
+            model._site_feature_means = site_means
+            model._site_feature_stds = site_stds
             attached = True
         if bad_sites > 0:
             logger.warning("Ignored malformed site-normalization metadata for %d site(s)", bad_sites)
@@ -148,15 +149,15 @@ class _MultiviewCache:
 
     def __init__(self, maxsize: int = 512):
         self._maxsize = max(1, int(maxsize))
-        self._cache: OrderedDict[str, Dict[str, torch.Tensor]] = OrderedDict()
+        self._cache: OrderedDict[str, dict[str, torch.Tensor]] = OrderedDict()
 
-    def get(self, key: str) -> Optional[Dict[str, torch.Tensor]]:
+    def get(self, key: str) -> dict[str, torch.Tensor] | None:
         value = self._cache.get(key)
         if value is not None:
             self._cache.move_to_end(key)
         return value
 
-    def set(self, key: str, value: Dict[str, torch.Tensor]) -> None:
+    def set(self, key: str, value: dict[str, torch.Tensor]) -> None:
         if key in self._cache:
             self._cache.move_to_end(key)
         self._cache[key] = value
@@ -168,7 +169,7 @@ class _MultiviewCache:
         self._cache.clear()
 
 
-_multiview_cache: Optional[_MultiviewCache] = None
+_multiview_cache: _MultiviewCache | None = None
 
 
 def get_multiview_cache(maxsize: int = 512) -> _MultiviewCache:
@@ -307,8 +308,8 @@ class FoldMetrics:
     threshold: float
     best_epoch: int
     train_time: float = 0.0
-    val_probs: Optional[np.ndarray] = None
-    val_labels: Optional[np.ndarray] = None
+    val_probs: np.ndarray | None = None
+    val_labels: np.ndarray | None = None
 
 
 class TrainingTracker:
@@ -326,12 +327,12 @@ class TrainingTracker:
     """
     def __init__(self, k_folds: int):
         self.k_folds = k_folds
-        self.fold_results: List[FoldMetrics] = []
+        self.fold_results: list[FoldMetrics] = []
 
     def add_fold_result(self, fold: int, auc: float, f1: float, acc: float,
                         threshold: float, best_epoch: int, train_time: float = 0.0,
-                        val_probs: Optional[np.ndarray] = None,
-                        val_labels: Optional[np.ndarray] = None):
+                        val_probs: np.ndarray | None = None,
+                        val_labels: np.ndarray | None = None):
         """Add results from a completed fold."""
         self.fold_results.append(FoldMetrics(
             fold=fold, auc=auc, f1=f1, acc=acc, threshold=threshold,
@@ -339,7 +340,7 @@ class TrainingTracker:
             val_probs=val_probs, val_labels=val_labels,
         ))
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """Compute summary statistics across all folds."""
         if not self.fold_results:
             return {}
@@ -384,7 +385,7 @@ class TrainingTracker:
         logger.info(f"Per-fold Best Epochs: {summary['per_fold_epochs']}")
         logger.info(f"{'='*70}\n")
 
-    def get_ensemble_predictions(self) -> Optional[tuple]:
+    def get_ensemble_predictions(self) -> tuple | None:
         """
         Get ensemble predictions by concatenating validation predictions from all folds.
 
@@ -423,8 +424,8 @@ class CheckpointManager:
         else:
             return score < self.best_score
 
-    def save(self, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer],
-             epoch: int, metrics: Dict[str, Any], fold: Optional[int] = None):
+    def save(self, model: torch.nn.Module, optimizer: torch.optim.Optimizer | None,
+             epoch: int, metrics: dict[str, Any], fold: int | None = None):
         """Save model checkpoint with metadata."""
         score = metrics.get(self.monitor)
         if score is None:
@@ -447,8 +448,8 @@ class CheckpointManager:
             torch.save(checkpoint, filepath)
             logger.info(f"✓ Saved checkpoint: {filename} (epoch {epoch}, {self.monitor}={score:.4f})")
 
-    def load(self, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None,
-             fold: Optional[int] = None, allow_partial: bool = False) -> Dict[str, Any]:
+    def load(self, model: torch.nn.Module, optimizer: torch.optim.Optimizer | None = None,
+             fold: int | None = None, allow_partial: bool = False) -> dict[str, Any]:
         """Load model checkpoint."""
         filename = f"best_model_fold{fold}.pt" if fold is not None else "best_model.pt"
         filepath = self.checkpoint_dir / filename
@@ -601,7 +602,7 @@ class EdgeStructureContrastiveLoss(nn.Module):
         return F.cross_entropy(sim, labels)
 
 
-def _expand_site_targets_to_nodes(batch) -> Optional[torch.Tensor]:
+def _expand_site_targets_to_nodes(batch) -> torch.Tensor | None:
     """Expand per-graph site labels to per-node labels using ``batch.batch``."""
     site_targets = getattr(batch, "site_id", None)
     if site_targets is None or not torch.is_tensor(site_targets):
@@ -618,7 +619,7 @@ def _expand_site_targets_to_nodes(batch) -> Optional[torch.Tensor]:
     return site_targets[batch.batch]
 
 
-def _extract_batch_subject_ids(batch, num_graphs: int) -> Optional[List[str]]:
+def _extract_batch_subject_ids(batch, num_graphs: int) -> list[str] | None:
     """Extract per-graph subject IDs from a PyG batch.
 
     Handles common collate representations:
@@ -657,7 +658,7 @@ def _extract_batch_subject_ids(batch, num_graphs: int) -> Optional[List[str]]:
     return None
 
 
-def _load_multiview_package(file_path: Path, cache: Optional[_MultiviewCache] = None) -> Optional[Dict[str, torch.Tensor]]:
+def _load_multiview_package(file_path: Path, cache: _MultiviewCache | None = None) -> dict[str, torch.Tensor] | None:
     """Load and normalize one subject's multiview adjacency package."""
     if cache is None:
         cache = get_multiview_cache()
@@ -679,7 +680,7 @@ def _load_multiview_package(file_path: Path, cache: Optional[_MultiviewCache] = 
     if not isinstance(views, dict):
         return None
 
-    normalized: Dict[str, torch.Tensor] = {}
+    normalized: dict[str, torch.Tensor] = {}
     for name, value in views.items():
         if torch.is_tensor(value):
             tensor = value.detach().cpu().float()
@@ -694,7 +695,7 @@ def _load_multiview_package(file_path: Path, cache: Optional[_MultiviewCache] = 
     return normalized
 
 
-def _build_multiview_batches(batch, multiview_dir: Path) -> Optional[List]:
+def _build_multiview_batches(batch, multiview_dir: Path) -> list | None:
     """Construct per-view batch clones with replaced edges from multiview files.
 
     Returns:
@@ -705,14 +706,14 @@ def _build_multiview_batches(batch, multiview_dir: Path) -> Optional[List]:
     if subject_ids is None:
         return None
 
-    graph_node_ids: List[torch.Tensor] = []
+    graph_node_ids: list[torch.Tensor] = []
     for g_idx in range(num_graphs):
         node_ids = (batch.batch == g_idx).nonzero(as_tuple=False).view(-1)
         if node_ids.numel() == 0:
             return None
         graph_node_ids.append(node_ids)
 
-    views_by_graph: List[Dict[str, torch.Tensor]] = []
+    views_by_graph: list[dict[str, torch.Tensor]] = []
     for sub_id in subject_ids:
         package_path = multiview_dir / str(sub_id) / "multiview_graphs.pt"
         if not package_path.exists():
@@ -727,8 +728,8 @@ def _build_multiview_batches(batch, multiview_dir: Path) -> Optional[List]:
     device = batch.x.device
 
     for view_name in _MULTIVIEW_VIEW_ORDER:
-        edge_index_parts: List[torch.Tensor] = []
-        edge_attr_parts: List[torch.Tensor] = []
+        edge_index_parts: list[torch.Tensor] = []
+        edge_attr_parts: list[torch.Tensor] = []
 
         for g_idx in range(num_graphs):
             n_nodes = int(graph_node_ids[g_idx].numel())
@@ -789,11 +790,11 @@ def train_one_epoch_with_accumulation(
     structural_dropout_prob: float = 0.0,
     edge_contrastive_weight: float = 0.0,
     # Task 2 additions (DD-010)
-    invariance_loss_fn: Optional[nn.Module] = None,
+    invariance_loss_fn: nn.Module | None = None,
     invariance_weight: float = 0.0,
-    multiview_dir: Optional[Path] = None,
+    multiview_dir: Path | None = None,
     # Task 4 additions (DD-012)
-    spatial_invariance_loss_fn: Optional[nn.Module] = None,
+    spatial_invariance_loss_fn: nn.Module | None = None,
     spatial_invariance_weight: float = 0.0,
 ) -> float:
     """
@@ -1056,7 +1057,7 @@ def train_one_epoch_with_accumulation(
 
 @torch.no_grad()
 def _evaluate_model(model: torch.nn.Module, loader: torch.utils.data.DataLoader,
-                    device: torch.device, threshold: float = 0.5) -> Dict[str, Any]:
+                    device: torch.device, threshold: float = 0.5) -> dict[str, Any]:
     return evaluate_loader(model, loader, device, threshold=threshold)
 
 
@@ -1081,14 +1082,14 @@ def train_fold_with_onecycle(
     structural_dropout_prob: float = 0.0,
     edge_contrastive_weight: float = 0.0,
     # Task 2 additions (DD-010)
-    invariance_loss_fn: Optional[nn.Module] = None,
+    invariance_loss_fn: nn.Module | None = None,
     invariance_weight: float = 0.0,
-    multiview_dir: Optional[Path] = None,
+    multiview_dir: Path | None = None,
     # Task 4 additions (DD-012)
-    spatial_invariance_loss_fn: Optional[nn.Module] = None,
+    spatial_invariance_loss_fn: nn.Module | None = None,
     spatial_invariance_weight: float = 0.0,
 ) -> tuple:
-    assert pct_start < (patience / max(epochs, 1)), (
+    assert pct_start * epochs < patience, (
         f"Warmup ({pct_start * epochs:.0f} epochs) >= patience ({patience}): "
         "adjust GNN_ONECYCLE_PCT_START / GNN_ONECYCLE_WARMUP_FRACTION"
     )

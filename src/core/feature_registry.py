@@ -78,6 +78,8 @@ FEATURE_GROUPS = {
 }
 
 NUM_FREQUENCY_FEATURES = len(FEATURE_GROUPS["frequency"])
+# Note: NUM_TEMPORAL_FEATURES includes BOTH temporal (8) + frequency (10) = 18 features per ROI
+# This is the total number of time/frequency features per ROI, NOT just temporal features
 NUM_TEMPORAL_FEATURES = len(FEATURE_GROUPS["temporal"]) + NUM_FREQUENCY_FEATURES
 NUM_SPATIAL_FEATURES = len(FEATURE_GROUPS["spatial"])
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,7 +19,7 @@ class FocalLoss(nn.Module):
         self,
         alpha: float = 0.75,
         gamma: float = 3.0,
-        pos_weight: Optional[float] = None,
+        pos_weight: float | None = None,
     ):
         super().__init__()
         self.alpha = alpha
@@ -81,7 +80,7 @@ def build_criterion(
     focal_gamma: float = 3.0,
 ) -> nn.Module:
     """Build loss criterion based on config and training label distribution.
-    
+
     Args:
         train_labels: List or array of labels (0=Control, 1=ASD)
         device: Torch device for class weights tensor
@@ -89,14 +88,14 @@ def build_criterion(
         use_class_weights: Whether to apply class reweighting
         focal_alpha: Focal loss alpha parameter
         focal_gamma: Focal loss gamma parameter
-    
+
     Returns:
         Initialized loss module
     """
     labels_arr = np.array(train_labels)
     n_control = max(int((labels_arr == 0).sum()), 1)
     n_asd = max(int((labels_arr == 1).sum()), 1)
-    
+
     class_weight_tensor = None
     if use_class_weights:
         total = max(len(labels_arr), 1)
@@ -105,7 +104,7 @@ def build_criterion(
             dtype=torch.float32,
             device=device,
         )
-    
+
     if use_focal_loss:
         pos_weight = float(n_control / n_asd) if use_class_weights else None
         return FocalLoss(alpha=focal_alpha, gamma=focal_gamma, pos_weight=pos_weight)
@@ -135,7 +134,7 @@ class CausalInvarianceLoss(nn.Module):
         super().__init__()
         self.temperature = temperature
 
-    def forward(self, embeddings_list: List[torch.Tensor]) -> torch.Tensor:
+    def forward(self, embeddings_list: list[torch.Tensor]) -> torch.Tensor:
         """Compute NT-Xent invariance loss across views.
 
         Args:
