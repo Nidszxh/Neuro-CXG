@@ -23,13 +23,12 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from sklearn.metrics import roc_auc_score, f1_score
+from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -43,26 +42,20 @@ from src.core.config import (
     FOCAL_LOSS_ALPHA,
     FOCAL_LOSS_GAMMA,
     GNN_BATCH_SIZE,
-    GNN_DROPOUT,
+    GNN_EARLY_STOPPING_PATIENCE,
+    GNN_EDGE_GATE,
     GNN_EPOCHS,
-    GNN_HIDDEN_CHANNELS,
+    GNN_GRL_ALPHA,
     GNN_IN_CHANNELS,
-    GNN_NUM_LAYERS,
-    GNN_NUM_HEADS,
-    GNN_USE_SITE_EMBEDDING,
+    GNN_MIN_EPOCHS_BEFORE_STOPPING,
+    GNN_ONECYCLE_MAX_LR,
     GNN_SITE_EMBEDDING_DIM,
     GNN_USE_DEMOGRAPHICS,
     GNN_USE_GRL,
-    GNN_GRL_ALPHA,
-    GNN_EDGE_GATE,
-    GNN_ONECYCLE_MAX_LR,
-    GNN_EARLY_STOPPING_PATIENCE,
-    GNN_MIN_EPOCHS_BEFORE_STOPPING,
-    GNN_POOLING,
+    GNN_USE_SITE_EMBEDDING,
     GNN_WEIGHT_DECAY,
     K_FOLDS,
     LOBE_MAPPING,
-    LOBE_NAMES,
     MASTER_MANIFEST,
     NODE_ATTRIBUTES_HARMONIZED,
     NODE_ATTRIBUTES_TEMPORAL,
@@ -71,20 +64,20 @@ from src.core.config import (
     NUM_SPATIAL_FEATURES,
     RESULTS_DATA_QUALITY_DIR,
     SITE_ROBUSTNESS_GATE_ENABLED,
-    SITE_ROBUSTNESS_MIN_SITE_AUC,
+    SITE_ROBUSTNESS_GATE_POLICY,
     SITE_ROBUSTNESS_MAX_WEAK_SITE_FRACTION,
     SITE_ROBUSTNESS_MIN_EVALUABLE_SITES,
-    SITE_ROBUSTNESS_GATE_POLICY,
-    USE_FOCAL_LOSS,
+    SITE_ROBUSTNESS_MIN_SITE_AUC,
     USE_CLASS_WEIGHTS,
+    USE_FOCAL_LOSS,
     get_active_checkpoint_dir,
 )
-from src.models.losses import FocalLoss
 from src.models.factory import build_model
+from src.models.losses import FocalLoss
 from src.models.training_utils import (
+    attach_feature_scaler_from_checkpoint,
     make_loader,
     train_fold_with_onecycle,
-    attach_feature_scaler_from_checkpoint,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
@@ -199,7 +192,7 @@ def experiment_cross_site_auc() -> pd.DataFrame:
     # site_id in dataset is an integer index — map back via manifest
     manifest = pd.read_csv(MASTER_MANIFEST)
     site_names = sorted(manifest["SITE_ID"].unique())
-    idx_to_site = {i: s for i, s in enumerate(site_names)}
+    idx_to_site = dict(enumerate(site_names))
 
     # Overall AUC
     overall_auc = roc_auc_score(labels, probs)
@@ -260,7 +253,7 @@ def experiment_cross_site_auc() -> pd.DataFrame:
     return df
 
 
-def _apply_site_robustness_gate(site_auc_df: pd.DataFrame) -> Dict[str, object]:
+def _apply_site_robustness_gate(site_auc_df: pd.DataFrame) -> dict[str, object]:
     """Apply configurable site-robustness gate to cross-site AUC output."""
     result = {
         "enabled": bool(SITE_ROBUSTNESS_GATE_ENABLED),
@@ -468,7 +461,7 @@ def experiment_subject_count_audit() -> pd.DataFrame:
 # EXPERIMENT 3: ATLAS-CENTROID SPATIAL BASELINE
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _compute_atlas_centroids() -> Optional[np.ndarray]:
+def _compute_atlas_centroids() -> np.ndarray | None:
     """
     Compute per-lobe atlas centroids from roi_centroids.json or AAL3 atlas.
     Returns (NUM_LOBES, 6) array matching the spatial feature layout:
@@ -478,9 +471,9 @@ def _compute_atlas_centroids() -> Optional[np.ndarray]:
     import json
     centroid_path = DATA_METADATA / "roi_centroids.json"
 
-    def _normalize_roi_centroids(payload) -> Dict[int, List[float]]:
+    def _normalize_roi_centroids(payload) -> dict[int, list[float]]:
         """Convert list/dict centroid payloads into roi_id -> [x, y, z]."""
-        normalized: Dict[int, List[float]] = {}
+        normalized: dict[int, list[float]] = {}
 
         if isinstance(payload, list):
             for entry in payload:
@@ -540,6 +533,7 @@ def _compute_atlas_centroids() -> Optional[np.ndarray]:
     # Attempt to compute from atlas NIfTI if nibabel is available
     try:
         import nibabel as nib
+
         from src.core.config import ATLAS_PATH
         if ATLAS_PATH.exists():
             logger.info(f"  Computing centroids from AAL3 atlas: {ATLAS_PATH}")
@@ -548,7 +542,7 @@ def _compute_atlas_centroids() -> Optional[np.ndarray]:
             affine = img.affine
 
             # Compute voxel centroid for each ROI, then map to world space
-            roi_mni: Dict[int, List[float]] = {}
+            roi_mni: dict[int, list[float]] = {}
             for roi_id_1based in range(1, 171):
                 mask = (data_arr == roi_id_1based)
                 if not mask.any():
@@ -591,7 +585,7 @@ class AtlasCentroidDataset:
         self.ds = base_dataset
         # atlas_centroids: (NUM_LOBES, NUM_SPATIAL_FEATURES), normalised
         self._centroids = torch.tensor(atlas_centroids, dtype=torch.float32)
-        logger.info(f"  AtlasCentroidDataset: spatial features replaced with atlas centroids")
+        logger.info("  AtlasCentroidDataset: spatial features replaced with atlas centroids")
         logger.info(f"  Centroid range: x=[{atlas_centroids[:,0].min():.1f}, {atlas_centroids[:,0].max():.1f}]  "
                     f"y=[{atlas_centroids[:,1].min():.1f}, {atlas_centroids[:,1].max():.1f}]  "
                     f"z=[{atlas_centroids[:,2].min():.1f}, {atlas_centroids[:,2].max():.1f}]")
@@ -612,7 +606,7 @@ class AtlasCentroidDataset:
         return self[idx]
 
 
-def experiment_atlas_centroid_baseline() -> Dict:
+def experiment_atlas_centroid_baseline() -> dict:
     """
     Runs 5-fold CV using atlas-centroid spatial features instead of YOLO detections.
     Returns result dict with mean_auc etc.
@@ -684,7 +678,7 @@ def experiment_atlas_centroid_baseline() -> Dict:
     else:
         criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
     skf = StratifiedKFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
-    fold_aucs: List[float] = []
+    fold_aucs: list[float] = []
 
     logger.info(f"  Total subjects: {len(labels)}")
     for fold, (tr_idx, val_idx) in enumerate(skf.split(np.zeros(len(labels)), labels)):
@@ -714,7 +708,7 @@ def experiment_atlas_centroid_baseline() -> Dict:
     mean_auc = float(np.mean(fold_aucs))
     std_auc  = float(np.std(fold_aucs))
     logger.info(f"\n  Atlas-centroid AUC: {mean_auc:.4f} ± {std_auc:.4f}")
-    logger.info(f"  Baseline (YOLO)   : 0.6300  (reference)")
+    logger.info("  Baseline (YOLO)   : 0.6300  (reference)")
     delta = mean_auc - 0.63
     if delta > 0.01:
         logger.warning(

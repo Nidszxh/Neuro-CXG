@@ -28,7 +28,6 @@ Usage
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -36,17 +35,17 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src.core.config import LOBE_NAMES, NUM_LOBES, GNN_IN_CHANNELS
-from src.core.atlas_config import LOBE_TO_NETWORK, NETWORK_TO_LOBES, NUM_NETWORKS, NETWORK_NAMES
-from src.core.plotting import ColorPalette, FigureSize, apply_publication_style
+from src.core.atlas_config import NETWORK_NAMES, NETWORK_TO_LOBES, NUM_NETWORKS
+from src.core.config import LOBE_NAMES, NUM_LOBES
+from src.core.plotting import ColorPalette
 
 palette = ColorPalette()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-REGION_LABELS: List[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
-NETWORK_LABELS: List[str] = [NETWORK_NAMES[i] for i in range(NUM_NETWORKS)]
+REGION_LABELS: list[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
+NETWORK_LABELS: list[str] = [NETWORK_NAMES[i] for i in range(NUM_NETWORKS)]
 
 
 def _aggregate_to_networks(lobe_scores: np.ndarray) -> np.ndarray:
@@ -95,8 +94,8 @@ class AttentionWeightExtractor:
 
     def __init__(self, model: torch.nn.Module):
         self.model = model
-        self._hooks: List = []
-        self._attention: Dict[int, torch.Tensor] = {}
+        self._hooks: list = []
+        self._attention: dict[int, torch.Tensor] = {}
         self._register_hooks()
 
     def _register_hooks(self) -> None:
@@ -118,7 +117,7 @@ class AttentionWeightExtractor:
                 layer_idx += 1
         logger.debug("AttentionWeightExtractor registered %d hooks", layer_idx)
 
-    def get_attention_weights(self) -> Dict[int, torch.Tensor]:
+    def get_attention_weights(self) -> dict[int, torch.Tensor]:
         """Return the latest captured attention weights keyed by layer index."""
         return dict(self._attention)
 
@@ -157,9 +156,9 @@ class GradCAMGraphExplainer:
     def __init__(self, model: torch.nn.Module, target_class: int = 1):
         self.model = model
         self.target_class = target_class
-        self._activations: Dict[str, torch.Tensor] = {}
-        self._gradients: Dict[str, torch.Tensor] = {}
-        self._hooks: List = []
+        self._activations: dict[str, torch.Tensor] = {}
+        self._gradients: dict[str, torch.Tensor] = {}
+        self._hooks: list = []
         self._register_hooks()
 
     def _register_hooks(self) -> None:
@@ -272,7 +271,7 @@ class NodeImportanceAnalyzer:
 
     # ── public API ─────────────────────────────────────────────────────────────
 
-    def run(self, output_dir: Path) -> Dict:
+    def run(self, output_dir: Path) -> dict:
         """
         Execute full node importance analysis and save figures.
 
@@ -349,13 +348,13 @@ class NodeImportanceAnalyzer:
 
     # ── GradCAM pass ───────────────────────────────────────────────────────────
 
-    def _run_gradcam(self) -> Dict[str, np.ndarray]:
+    def _run_gradcam(self) -> dict[str, np.ndarray]:
         """Collect GradCAM node scores across the test set."""
         explainer = GradCAMGraphExplainer(self.model, target_class=1)
         self.model.eval()
 
-        asd_scores:     List[np.ndarray] = []
-        control_scores: List[np.ndarray] = []
+        asd_scores:     list[np.ndarray] = []
+        control_scores: list[np.ndarray] = []
 
         for batch in self.test_loader:
             if batch is None:
@@ -397,7 +396,7 @@ class NodeImportanceAnalyzer:
 
         explainer.remove_hooks()
 
-        results: Dict[str, np.ndarray] = {}
+        results: dict[str, np.ndarray] = {}
         if asd_scores:
             results["asd_mean"] = np.mean(np.stack(asd_scores), axis=0)
             results["asd_std"]  = np.std(np.stack(asd_scores),  axis=0)
@@ -429,15 +428,15 @@ class NodeImportanceAnalyzer:
 
     # ── Attention extraction pass ──────────────────────────────────────────────
 
-    def _run_attention_extraction(self) -> Dict:
+    def _run_attention_extraction(self) -> dict:
         """Aggregate mean attention weight per brain region for each class."""
         extractor = AttentionWeightExtractor(self.model)
         self.model.eval()
 
         # We accumulate *edge* attention weights keyed by (layer, edge_idx)
         # Summarise per destination node (average attention flowing into each region)
-        asd_node_attn:     Dict[int, List[np.ndarray]] = {i: [] for i in range(NUM_LOBES)}
-        ctrl_node_attn:    Dict[int, List[np.ndarray]] = {i: [] for i in range(NUM_LOBES)}
+        asd_node_attn:     dict[int, list[np.ndarray]] = {i: [] for i in range(NUM_LOBES)}
+        ctrl_node_attn:    dict[int, list[np.ndarray]] = {i: [] for i in range(NUM_LOBES)}
 
         with torch.no_grad():
             for batch in self.test_loader:
@@ -478,7 +477,7 @@ class NodeImportanceAnalyzer:
 
                     node_attn = np.zeros(NUM_LOBES)
                     counts    = np.zeros(NUM_LOBES)
-                    for dst, a in zip(dst_nodes, e_alpha):
+                    for dst, a in zip(dst_nodes, e_alpha, strict=False):
                         node_attn[dst] += a
                         counts[dst]    += 1
                     with np.errstate(invalid="ignore", divide="ignore"):
@@ -492,7 +491,7 @@ class NodeImportanceAnalyzer:
 
         extractor.remove_hooks()
 
-        def _agg(storage: Dict[int, List]) -> np.ndarray:
+        def _agg(storage: dict[int, list]) -> np.ndarray:
             return np.array([np.mean(v) if v else 0.0 for v in storage.values()])
 
         return {
@@ -502,7 +501,7 @@ class NodeImportanceAnalyzer:
 
     # ── Plotting ───────────────────────────────────────────────────────────────
 
-    def _plot_gradcam(self, results: Dict, save_path: Path) -> None:
+    def _plot_gradcam(self, results: dict, save_path: Path) -> None:
         """Side-by-side bar plot of GradCAM scores for ASD vs Control."""
         asd     = results.get("asd_mean",     np.zeros(NUM_LOBES))
         ctrl    = results.get("control_mean", np.zeros(NUM_LOBES))
@@ -529,7 +528,7 @@ class NodeImportanceAnalyzer:
         plt.close()
         logger.info("GradCAM plot saved → %s", save_path)
 
-    def _plot_attention(self, results: Dict, save_path: Path) -> None:
+    def _plot_attention(self, results: dict, save_path: Path) -> None:
         """Heatmap of node-level attention weights for ASD vs Control."""
         asd  = results.get("asd_mean",     np.zeros(NUM_LOBES))
         ctrl = results.get("control_mean", np.zeros(NUM_LOBES))

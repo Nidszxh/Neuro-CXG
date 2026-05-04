@@ -21,14 +21,13 @@ from tqdm import tqdm
 # Setup paths and config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
-    MASTER_MANIFEST,
-    NODE_FEATURES_3D,
+    ATLAS_PATH,
+    DATA_METADATA,
     LOBE_MAPPING,
     LOBE_NAMES,
+    MASTER_MANIFEST,
+    NODE_FEATURES_3D,
     NUM_LOBES,
-    NUM_SPATIAL_FEATURES,
-    DATA_METADATA,
-    ATLAS_PATH,
 )
 
 # Setup logging
@@ -98,10 +97,10 @@ def load_centroids():
             CENTROIDS_PATH,
         )
         return _compute_and_save_centroids_from_atlas()
-    
+
     with open(CENTROIDS_PATH) as f:
         centroids_list = json.load(f)
-    
+
     # Convert to dict keyed by roi_id (1-indexed)
     centroids = {c["roi_id"]: c for c in centroids_list}
     logger.info(f"Loaded {len(centroids)} ROI centroids")
@@ -119,106 +118,106 @@ def compute_roi_sizes():
         if atlas_path.exists():
             atlas_img = nib.load(str(atlas_path))
             atlas_data = atlas_img.get_fdata()
-            
+
             roi_sizes = {}
             for roi_id in range(1, 171):
                 count = np.sum(atlas_data == roi_id)
                 roi_sizes[roi_id] = float(count)
-            
+
             # Normalize by max size
             max_size = max(roi_sizes.values())
             roi_sizes = {roi_id: size / max_size for roi_id, size in roi_sizes.items()}
             return roi_sizes
     except Exception as e:
         logger.warning(f"Failed to compute ROI sizes from atlas: {e}")
-    
+
     # Fallback: uniform sizes
-    return {roi_id: 1.0 for roi_id in range(1, 171)}
+    return dict.fromkeys(range(1, 171), 1.0)
 
 
 def extract_lobe_features(lobe_id, roi_indices, centroids, roi_sizes):
     """
     Aggregate spatial features for one lobe from its constituent ROIs.
-    
+
     Returns: [x, y, z_depth, size]
     """
     # Get centroids for ROIs in this lobe (1-indexed)
     lobe_centroids = []
     lobe_sizes = []
-    
+
     for roi_idx_0 in roi_indices:
         roi_id = roi_idx_0 + 1  # Convert 0-indexed to 1-indexed
         if roi_id in centroids:
             c = centroids[roi_id]
             lobe_centroids.append([c['x'], c['y'], c['z']])
             lobe_sizes.append(roi_sizes.get(roi_id, 1.0))
-    
+
     if not lobe_centroids:
         # Fallback for missing lobe (shouldn't happen with AAL)
         logger.warning(f"Lobe {lobe_id} ({LOBE_NAMES[lobe_id]}) has no centroids")
         return [0.0, 0.0, 0.0, 0.0]
-    
+
     lobe_centroids = np.array(lobe_centroids)
     lobe_sizes = np.array(lobe_sizes)
-    
+
     # Compute lobe-level statistics
     mean_x = float(np.mean(lobe_centroids[:, 0]))
     mean_y = float(np.mean(lobe_centroids[:, 1]))
     mean_z = float(np.mean(lobe_centroids[:, 2]))
     mean_size = float(np.mean(lobe_sizes))
-    
+
     return [mean_x, mean_y, mean_z, mean_size]
 
 
 def extract_spatial():
     """Main extraction: compute spatial features for all subjects."""
-    
+
     logger.info("Loading atlas centroids and ROI sizes...")
     centroids = load_centroids()
     roi_sizes = compute_roi_sizes()
-    
+
     # Load manifest to get subject list
     if not MASTER_MANIFEST.exists():
         logger.error("Master manifest missing. Run manifestor.py first.")
         return
-    
+
     manifest = pd.read_csv(MASTER_MANIFEST)
     logger.info(f"Extracting spatial features for {len(manifest)} subjects...")
-    
+
     # Extract features for each subject
     all_features = []
-    
+
     for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Subjects"):
         sub_id = str(row["subject_id"])
-        
+
         # Compute spatial features for each lobe
         subject_row = [sub_id]
-        
+
         for lobe_id in range(NUM_LOBES):
             roi_indices = LOBE_MAPPING[lobe_id]
             lobe_feats = extract_lobe_features(lobe_id, roi_indices, centroids, roi_sizes)
             subject_row.extend(lobe_feats)
-        
+
         all_features.append(subject_row)
-    
+
     if not all_features:
         logger.error("No features extracted!")
         return
-    
+
     # Create feature names matching graph_factory expectations:
     # subject_id + {LOBE_NAME}_{feature}
     columns = ["subject_id"]
     spatial_names = ["x", "y", "z_depth", "size"]
-    
+
     for lobe_id in range(NUM_LOBES):
         lobe_name = LOBE_NAMES[lobe_id]
         for feat_name in spatial_names:
             columns.append(f"{lobe_name}_{feat_name}")
-    
+
     # Save to CSV
     df = pd.DataFrame(all_features, columns=columns)
     df.to_csv(NODE_FEATURES_3D, index=False)
-    
+
     logger.info(f"Saved spatial features to {NODE_FEATURES_3D}")
     logger.info(f"Features shape: {df.shape} ({len(df)} subjects × {len(df.columns)-1} spatial features)")
 

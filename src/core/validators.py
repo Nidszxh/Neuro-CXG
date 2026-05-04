@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict
 
 import torch
 
 from src.core.atlas_config import LOBE_MAPPING, NUM_LOBES
+from src.core.feature_registry import GNN_IN_CHANNELS
 from src.core.hyperparams import (
     AUC_GOOD_THRESHOLD,
     AUC_RANDOM_THRESHOLD,
@@ -17,8 +17,8 @@ from src.core.hyperparams import (
     F1_BROKEN_THRESHOLD,
     F1_GOOD_THRESHOLD,
     F1_WEAK_THRESHOLD,
-    LOSS_RANDOM_THRESHOLD,
     K_FOLDS,
+    LOSS_RANDOM_THRESHOLD,
     YOLO_DEGREES,
     YOLO_FLIPLR,
 )
@@ -29,13 +29,11 @@ from src.core.paths import (
     DATA_FINAL,
     DATA_METADATA,
     DATA_ROOT,
-    MASTER_MANIFEST,
     HARMONIZED_FOLDS_DIR,
+    MASTER_MANIFEST,
     NODE_ATTRIBUTES_HARMONIZED,
     NODE_FEATURES_3D,
 )
-from src.core.feature_registry import GNN_IN_CHANNELS
-
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,7 +42,7 @@ logger = logging.getLogger(__name__)
 def summarize_graph_degeneracy_from_adj(
     adj: torch.Tensor,
     min_edges: int,
-) -> Dict[str, int | bool]:
+) -> dict[str, int | bool]:
     """Summarize edge/dead-lobe degeneracy from an adjacency matrix."""
     adj_t = torch.as_tensor(adj, dtype=torch.float32)
     if adj_t.ndim != 2 or adj_t.shape[0] != adj_t.shape[1]:
@@ -70,7 +68,7 @@ def summarize_graph_degeneracy_from_edge_index(
     edge_index: torch.Tensor,
     num_nodes: int,
     min_edges: int,
-) -> Dict[str, int | bool]:
+) -> dict[str, int | bool]:
     """Summarize edge/dead-lobe degeneracy from COO edge indices."""
     n = int(num_nodes)
     if edge_index is None or not torch.is_tensor(edge_index) or edge_index.numel() == 0:
@@ -193,12 +191,12 @@ def validate_lobe_mapping() -> bool:
     # For 12-lobe mode: require all 170 ROIs
     # For 11-lobe mode: require first 166 ROIs (exclude Brainstem 167-170)
     from src.core.atlas_config import USE_11_LOBES
-    
+
     if USE_11_LOBES:
         expected = set(range(166))  # Standard 166 AAL ROIs (excluding Brainstem)
     else:
         expected = set(range(170))  # All 170 AAL ROIs
-    
+
     covered = set(all_rois)
     missing = expected - covered
     if missing:

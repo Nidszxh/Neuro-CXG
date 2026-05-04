@@ -1,8 +1,9 @@
-import logging
 import gzip
+import logging
 import shutil
 import subprocess
 from pathlib import Path
+
 import nibabel as nib
 import numpy as np
 
@@ -22,37 +23,37 @@ def download_file(url: str, output_path: Path) -> bool:
         logger.info(f"Downloading with requests: {url}")
         response = requests.get(url, stream=True, timeout=300)
         response.raise_for_status()
-        
+
         with open(output_path, "wb") as f:
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     f.write(chunk)
-        
+
         if output_path.exists() and output_path.stat().st_size > 0:
             logger.info(f"✓ Download successful: {output_path.name}")
             return True
-            
+
     except ImportError:
         logger.warning("requests library not found, falling back to curl")
     except Exception as e:
         logger.warning(f"requests failed: {e}, trying curl")
-    
+
     # Method 2: curl (fallback - available on most systems)
     try:
         logger.info(f"Downloading with curl: {url}")
-        result = subprocess.run(
+        subprocess.run(
             ["curl", "-L", "--insecure", "-o", str(output_path), url, "--max-time", "300"],
             capture_output=True,
             check=True
         )
-        
+
         if output_path.exists() and output_path.stat().st_size > 0:
             logger.info(f"✓ Download successful: {output_path.name}")
             return True
-            
+
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         logger.error(f"curl failed: {e}")
-    
+
     logger.error("All download methods failed")
     return False
 
@@ -89,7 +90,7 @@ def validate_atlas(atlas_path: Path) -> bool:
         if num_rois not in {116, 117, 120, 164, 166, 170}:
             logger.warning(f"Unexpected ROI count: {num_rois}")
             # Don't fail - might be a valid variant
-        
+
         logger.info(f"✓ Valid atlas | Shape={data.shape} | ROIs={num_rois}")
         return True
 
@@ -136,7 +137,7 @@ def download_aal3_atlas(output_dir: Path) -> Path:
         raise RuntimeError("AAL3 not found after extraction")
 
     atlas = candidates[0]
-    
+
     # Decompress if needed
     if atlas.suffix == ".gz":
         final = atlas.with_suffix("")
@@ -148,7 +149,7 @@ def download_aal3_atlas(output_dir: Path) -> Path:
     # Rename to standard name
     final_path = output_dir / "AAL3v1.nii"
     shutil.move(atlas, final_path)
-    
+
     # Cleanup
     tar_path.unlink()
 
@@ -166,7 +167,7 @@ def download_aal2_fallback(output_dir: Path) -> Path:
     atlas_path = output_dir / "AAL2.nii"
     with gzip.open(gz_path, "rb") as f_in, open(atlas_path, "wb") as f_out:
         shutil.copyfileobj(f_in, f_out)
-    
+
     gz_path.unlink()
     return atlas_path
 
@@ -246,13 +247,13 @@ def generate_atlas_metadata(atlas_path: Path, output_path: Path):
 
 if __name__ == "__main__":
     import sys
-    
+
     # Add project root to path
     project_root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(project_root))
 
     try:
-        from src.core.config import ATLAS_PATH, ATLAS_METADATA
+        from src.core.config import ATLAS_METADATA, ATLAS_PATH
 
         if ensure_atlas(ATLAS_PATH, auto_download=True):
             generate_atlas_metadata(ATLAS_PATH, ATLAS_METADATA)
@@ -260,9 +261,8 @@ if __name__ == "__main__":
         else:
             print("❌ Atlas setup failed")
             sys.exit(1)
-            
+
     except ImportError as e:
         print(f"Import error: {e}")
         print("Run from project root or ensure config.py is available")
         sys.exit(1)
-        

@@ -21,11 +21,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     CAUSAL_GRAPHS_DIR,
     GNN_IN_CHANNELS,
+    LOBE_NAMES,
     MASTER_MANIFEST,
     NODE_ATTRIBUTES_HARMONIZED,
     NODE_ATTRIBUTES_TEMPORAL,
     NODE_FEATURES_3D,
-    LOBE_NAMES,
     NUM_LOBES,
     NUM_SPATIAL_FEATURES,
     NUM_TEMPORAL_FEATURES,
@@ -76,7 +76,7 @@ class AuditCheck:
         logger.info("="*70)
         logger.info("NEURO-CXG POST-FIX AUDIT VALIDATION")
         logger.info("="*70)
-        
+
         # Check 1: Exactly 1,000 subjects in spatial features
         logger.info("\n1. Checking subject counts...")
         self._check_subject_counts()
@@ -114,7 +114,7 @@ class AuditCheck:
         if not MASTER_MANIFEST.exists():
             self.check("Master manifest exists", False, "Manifest not found")
             return
-        
+
         manifest_df = pd.read_csv(MASTER_MANIFEST)
         expected_count = len(manifest_df)
 
@@ -259,10 +259,10 @@ class AuditCheck:
             return
 
         df = pd.read_csv(NODE_ATTRIBUTES_HARMONIZED)
-        
+
         # Exclude subject_id column
         numeric_cols = df.select_dtypes(include=[np.number]).columns
-        
+
         # Check for NaN
         nan_count = df[numeric_cols].isna().sum().sum()
         self.check(
@@ -313,12 +313,12 @@ class AuditCheck:
         if not MASTER_MANIFEST.exists():
             self.check("Master manifest exists for graph count check", False, "Manifest not found")
             return
-        
+
         manifest_df = pd.read_csv(MASTER_MANIFEST)
         expected_count = len(manifest_df)
-        
+
         graph_files = list(CAUSAL_GRAPHS_DIR.glob("*_graph.pt"))
-        
+
         self.check(
             f"Causal graph files: {len(graph_files)}",
             len(graph_files) <= expected_count,
@@ -338,15 +338,15 @@ class AuditCheck:
 
         # Sample 5 random graphs
         sample_files = random.sample(graph_files, min(5, len(graph_files)))
-        
+
         for graph_file in sample_files:
             try:
                 graph_dict = torch.load(graph_file, map_location='cpu')
-                
+
                 # Validate structure
                 required_keys = {'adj', 'internal_features', 'subject_id', 'lobe_order'}
                 has_keys = required_keys.issubset(graph_dict.keys())
-                
+
                 if not has_keys:
                     self.check(
                         f"Graph {graph_file.name} has required keys",
@@ -358,16 +358,16 @@ class AuditCheck:
                 # Check dimensions
                 adj = graph_dict['adj']
                 internal_features = graph_dict['internal_features']
-                
+
                 adj_shape_ok = adj.shape == (NUM_LOBES, NUM_LOBES)
                 internal_shape_ok = internal_features.shape == (NUM_LOBES, 2)
-                
+
                 self.check(
                     f"Graph {graph_file.name}: adj.shape == ({NUM_LOBES}, {NUM_LOBES})",
                     adj_shape_ok,
                     f"Got {adj.shape}"
                 )
-                
+
                 self.check(
                     f"Graph {graph_file.name}: internal_features.shape == ({NUM_LOBES}, 2)",
                     internal_shape_ok,
@@ -385,13 +385,13 @@ class AuditCheck:
         """Validate ABIDECausalDataset loader."""
         try:
             dataset = ABIDECausalDataset('train')
-            
+
             self.check(
                 "ABIDECausalDataset loads successfully",
                 True,
                 ""
             )
-            
+
             # Check dataset size
             self.check(
                 f"Train dataset has subjects: {len(dataset)}",
@@ -456,7 +456,7 @@ class AuditCheck:
         logger.info("="*70)
         logger.info(f"✓ Checks Passed: {self.checks_passed}")
         logger.info(f"✗ Checks Failed: {self.checks_failed}")
-        
+
         if self.checks_failed > 0:
             logger.error("\nFailed Checks:")
             for error in self.errors:

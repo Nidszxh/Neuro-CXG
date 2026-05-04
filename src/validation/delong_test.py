@@ -6,7 +6,6 @@ Reference: Sun & Xu (2014) "Fast Implementation of DeLong's Algorithm for Compar
            the Areas Under Correlated ROC Curves", IEEE Signal Processing Letters
 """
 import logging
-from typing import Optional, Tuple
 
 import numpy as np
 from scipy import stats
@@ -15,7 +14,7 @@ from sklearn.metrics import roc_auc_score
 logger = logging.getLogger(__name__)
 
 
-def _compute_ground_truth_statistics(y_true: np.ndarray) -> Tuple[np.ndarray, int]:
+def _compute_ground_truth_statistics(y_true: np.ndarray) -> tuple[np.ndarray, int]:
     """Compute ground truth order statistics for DeLong test."""
     n_pos = int(np.sum(y_true == 1))
     order = np.argsort(y_true, kind="quicksort")
@@ -69,7 +68,7 @@ def _bootstrap_auc_comparison(y_true, y_pred1, y_pred2, n_bootstrap=1000, seed=4
 
 def _fast_delong(
     predictions_sorted_transposed: np.ndarray, n_pos: int
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Fast DeLong covariance computation."""
     n_models = predictions_sorted_transposed.shape[0]
     n_neg = predictions_sorted_transposed.shape[1] - n_pos
@@ -96,7 +95,7 @@ def delong_roc_test(
     y_true: np.ndarray,
     y_pred1: np.ndarray,
     y_pred2: np.ndarray,
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """Perform DeLong test comparing two ROC AUCs using bootstrap method.
 
     Args:
@@ -160,7 +159,7 @@ def compute_auc_confidence_interval(
     confidence: float = 0.95,
     n_bootstrap: int = 1000,
     seed: int = 42,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """Compute AUC confidence interval using bootstrap method.
 
     Args:
@@ -174,7 +173,7 @@ def compute_auc_confidence_interval(
         (auc, lower_bound, upper_bound)
     """
     rng = np.random.default_rng(seed)
-    n = len(y_true)
+    len(y_true)
     auc = roc_auc_score(y_true, y_pred)
 
     # Stratified bootstrap
@@ -206,7 +205,7 @@ def compute_auc_confidence_interval(
     return auc, lb, ub
 
 
-def wilson_score_interval(n_success: int, n_total: int, confidence: float = 0.95) -> Tuple[float, float, float]:
+def wilson_score_interval(n_success: int, n_total: int, confidence: float = 0.95) -> tuple[float, float, float]:
     """
     Wilson score confidence interval for a proportion (accuracy).
 

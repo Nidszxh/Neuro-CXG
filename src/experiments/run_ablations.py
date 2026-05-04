@@ -30,46 +30,36 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from sklearn.metrics import roc_auc_score, f1_score
-from torch_geometric.nn import global_mean_pool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
-    ALL_FEATURE_NAMES,
     CAUSAL_GRAPHS_DIR,
-    CHECKPOINT_DIR,
     DATA_PROCESSED,
     DEVICE,
     FEATURE_GROUPS,
     FOCAL_LOSS_ALPHA,
     FOCAL_LOSS_GAMMA,
-    USE_FOCAL_LOSS,
-    USE_CLASS_WEIGHTS,
     GNN_BATCH_SIZE,
     GNN_DROPOUT,
+    GNN_EARLY_STOPPING_PATIENCE,
     GNN_EPOCHS,
     GNN_GRL_ALPHA,
     GNN_GRL_ALPHA_MAX,
-    GNN_HIDDEN_CHANNELS,
     GNN_IN_CHANNELS,
-    GNN_NUM_LAYERS,
-    GNN_NUM_HEADS,
-    GNN_ONECYCLE_MAX_LR,
-    GNN_EARLY_STOPPING_PATIENCE,
     GNN_MIN_EPOCHS_BEFORE_STOPPING,
-    GNN_POOLING,
+    GNN_ONECYCLE_MAX_LR,
     GNN_SITE_LOSS_WEIGHT,
     GNN_WEIGHT_DECAY,
+    HARMONIZED_FOLDS_DIR,
     K_FOLDS,
     NUM_LOBES,
     RESULTS_ABLATIONS_DIR,
-    HARMONIZED_FOLDS_DIR,
+    USE_CLASS_WEIGHTS,
+    USE_FOCAL_LOSS,
 )
 from src.models.losses import FocalLoss
 
@@ -97,8 +87,8 @@ def _build_criterion(labels) -> nn.Module:
     else:
         return nn.CrossEntropyLoss(weight=class_weight_tensor)
 from src.models.factory import build_model
-from src.models.training_utils import make_loader, train_fold_with_onecycle
 from src.models.gnn_model import _set_global_seed
+from src.models.training_utils import make_loader, train_fold_with_onecycle
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -107,7 +97,7 @@ RESULTS_DIR = RESULTS_ABLATIONS_DIR
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Feature group index ranges ────────────────────────────────────────────────
-_GROUP_SLICES: Dict[str, slice] = {}
+_GROUP_SLICES: dict[str, slice] = {}
 _offset = 0
 for _grp, _feats in FEATURE_GROUPS.items():
     _GROUP_SLICES[_grp] = slice(_offset, _offset + len(_feats))
@@ -129,7 +119,7 @@ class MaskedDataset:
     Zero-masking preserves graph topology while ablating feature contributions.
     """
 
-    def __init__(self, base_dataset, keep_groups: List[str]):
+    def __init__(self, base_dataset, keep_groups: list[str]):
         self.ds = base_dataset
         # Build a boolean mask: True = keep, False = zero
         self.mask = torch.zeros(GNN_IN_CHANNELS, dtype=torch.bool)
@@ -231,12 +221,13 @@ def build_pearson_graphs(output_dir: Path) -> bool:
     # No global mutation or restoration needed.
     import src.features.construct_causal as cc_mod
 
-    logger.info(f"  Method: lagged_pearson (passed as argument)")
+    logger.info("  Method: lagged_pearson (passed as argument)")
     logger.info(f"  Output dir      : {output_dir}")
 
     import pandas as pd
-    from src.core.config import MASTER_MANIFEST
     from tqdm import tqdm
+
+    from src.core.config import MASTER_MANIFEST
 
     manifest = pd.read_csv(MASTER_MANIFEST)
     success, failed = 0, 0
@@ -270,12 +261,13 @@ def build_ridge_granger_graphs(output_dir: Path) -> bool:
     # Method is passed as an argument to construct_graph(), bypassing the module-level constant.
     import src.features.construct_causal as cc_mod
 
-    logger.info(f"  Method: ridge_granger (passed as argument)")
+    logger.info("  Method: ridge_granger (passed as argument)")
     logger.info(f"  Output dir      : {output_dir}")
 
     import pandas as pd
-    from src.core.config import MASTER_MANIFEST
     from tqdm import tqdm
+
+    from src.core.config import MASTER_MANIFEST
 
     manifest = pd.read_csv(MASTER_MANIFEST)
     success, failed = 0, 0
@@ -302,7 +294,7 @@ def run_kfold(
     use_grl: bool = False,
     grl_alpha_max: float = 1.0,
     use_fold_specific_harmonization: bool = False,
-) -> Dict:
+) -> dict:
     """
     5-fold stratified CV for any dataset/model combination.
     Returns summary dict with per-fold and mean AUC.
@@ -315,7 +307,7 @@ def run_kfold(
     logger.info(f"\n{'━'*70}")
     logger.info(f"ABLATION {ablation_name}: 5-Fold CV")
     if use_fold_specific_harmonization:
-        logger.info(f"  Using fold-specific harmonized features (rigorous, no leakage)")
+        logger.info("  Using fold-specific harmonized features (rigorous, no leakage)")
     logger.info(f"{'━'*70}")
 
     # Collect labels for stratification
@@ -358,10 +350,9 @@ def run_kfold(
         val_idx = np.where(cv_folds == fold_id)[0]
         cv_splits.append((train_idx, val_idx))
 
-    fold_aucs: List[float] = []
-    fold_f1s: List[float] = []
+    fold_aucs: list[float] = []
+    fold_f1s: list[float] = []
 
-    class_weight_tensor = None
     criterion = _build_criterion(labels)
 
     for fold, (train_idx, val_idx) in enumerate(cv_splits):
@@ -452,7 +443,7 @@ def _gnn_factory_default(**override_kwargs):
     return factory
 
 
-def run_ablation_a(base_ds) -> Dict:
+def run_ablation_a(base_ds) -> dict:
     """A — FlatMLP: no graph structure, flattened node features only."""
 
     def mlp_factory():
@@ -466,7 +457,7 @@ def run_ablation_a(base_ds) -> Dict:
     return run_kfold(base_ds, mlp_factory, ablation_name="A (FlatMLP, no graph)")
 
 
-def run_ablation_b(base_ds) -> Dict:
+def run_ablation_b(base_ds) -> dict:
     """B — Spatial only: zero temporal + frequency + internal features (4 spatial features)."""
     masked_ds = MaskedDataset(base_ds, keep_groups=["spatial"])
     factory = _gnn_factory_default(
@@ -478,7 +469,7 @@ def run_ablation_b(base_ds) -> Dict:
     return run_kfold(masked_ds, factory, ablation_name="B (Spatial only, 4 features)")
 
 
-def run_ablation_c(base_ds) -> Dict:
+def run_ablation_c(base_ds) -> dict:
     """C — Temporal+Spatial (12 features, no frequency): zero frequency+internal, keep temporal+spatial."""
     masked_ds = MaskedDataset(base_ds, keep_groups=["temporal", "spatial"])
     factory = _gnn_factory_default(
@@ -490,7 +481,7 @@ def run_ablation_c(base_ds) -> Dict:
     return run_kfold(masked_ds, factory, ablation_name="C (Temporal+Spatial, no frequency)")
 
 
-def run_ablation_d() -> Dict:
+def run_ablation_d() -> dict:
     """D — Lagged Pearson edges: rebuild graphs with 'lagged_pearson' method."""
     pearson_dir = DATA_PROCESSED / "causal_graphs_pearson"
 
@@ -536,7 +527,7 @@ def run_ablation_d() -> Dict:
     )
 
 
-def run_ablation_e(base_ds) -> Dict:
+def run_ablation_e(base_ds) -> dict:
     """E — No site embeddings, no demographics conditioning."""
     factory = _gnn_factory_default(
         use_site_embedding=False,
@@ -547,15 +538,15 @@ def run_ablation_e(base_ds) -> Dict:
     return run_kfold(base_ds, factory, ablation_name="E (No site/demographics)")
 
 
-def run_ablation_f() -> Dict:
+def run_ablation_f() -> dict:
     """F — Random topology: Same node features, random edge connections (same edge count).
 
     Tests whether graph topology matters or just having any graph structure.
     If AUC ~ FlatMLP (0.7245) → topology doesn't matter, just node features.
     If AUC > FlatMLP but < Main (0.8651) → topology helps but specific edges matter.
     """
+
     from src.features.graph_factory import ABIDECausalDataset
-    import random
 
     class RandomTopologyDataset(ABIDECausalDataset):
         def __init__(self, split: str = "train", seed: int = 42):
@@ -600,7 +591,7 @@ def run_ablation_f() -> Dict:
     )
 
 
-def run_ablation_g() -> Dict:
+def run_ablation_g() -> dict:
     """G — Identity edges: fully connected graph with uniform weights.
 
     Tests whether message-passing benefit comes from specific causal edges
@@ -650,7 +641,7 @@ def run_ablation_g() -> Dict:
     )
 
 
-def run_ablation_d2() -> Dict:
+def run_ablation_d2() -> dict:
     """D2 — Ridge Granger edges: rebuild graphs with 'ridge_granger' method and stronger GRL."""
     ridge_granger_dir = DATA_PROCESSED / "causal_graphs_ridge_granger"
 
@@ -700,7 +691,7 @@ def run_ablation_d2() -> Dict:
 # RESULTS SUMMARY
 # ─────────────────────────────────────────────────────────────────────────────
 
-def print_summary(results: Dict[str, Dict], baseline_auc: float = 0.63) -> None:
+def print_summary(results: dict[str, dict], baseline_auc: float = 0.63) -> None:
     logger.info("\n" + "=" * 70)
     logger.info("ABLATION SUMMARY")
     logger.info("=" * 70)
@@ -780,7 +771,7 @@ def main():
     base_ds = ABIDECausalDataset(split="train")
     logger.info(f"  Loaded {len(base_ds)} training subjects")
 
-    results: Dict[str, Dict] = {}
+    results: dict[str, dict] = {}
 
     if "A" in args.ablations:
         results["A"] = run_ablation_a(base_ds)

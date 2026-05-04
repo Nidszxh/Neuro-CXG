@@ -36,7 +36,6 @@ Usage
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -45,14 +44,14 @@ import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import LOBE_NAMES, NUM_LOBES
-from src.core.plotting import ColorPalette, apply_publication_style
+from src.core.plotting import ColorPalette
 
 palette = ColorPalette()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-REGION_LABELS: List[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
+REGION_LABELS: list[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 
 
 # ── GradientEdgeAttributor ─────────────────────────────────────────────────────
@@ -198,7 +197,7 @@ def _edge_scores_to_matrix(
     mat    = np.zeros((num_nodes, num_nodes))
     counts = np.zeros((num_nodes, num_nodes))
     src, dst = edge_index
-    for s, d, sc in zip(src, dst, edge_scores):
+    for s, d, sc in zip(src, dst, edge_scores, strict=False):
         si, di = int(s) % num_nodes, int(d) % num_nodes
         mat[si, di]    += sc
         counts[si, di] += 1
@@ -236,7 +235,7 @@ class EdgeImportanceAnalyzer:
 
     # ── public API ─────────────────────────────────────────────────────────────
 
-    def run(self, output_dir: Path) -> Dict:
+    def run(self, output_dir: Path) -> dict:
         """
         Execute both edge analysis methods, save figures.
 
@@ -273,10 +272,10 @@ class EdgeImportanceAnalyzer:
 
     # ── gradient attribution ───────────────────────────────────────────────────
 
-    def _run_gradient_attribution(self) -> Dict[str, np.ndarray]:
+    def _run_gradient_attribution(self) -> dict[str, np.ndarray]:
         attributor = GradientEdgeAttributor(self.model, target_class=1)
-        asd_mats:  List[np.ndarray] = []
-        ctrl_mats: List[np.ndarray] = []
+        asd_mats:  list[np.ndarray] = []
+        ctrl_mats: list[np.ndarray] = []
 
         for batch in self.test_loader:
             if batch is None:
@@ -323,14 +322,14 @@ class EdgeImportanceAnalyzer:
 
     # ── edge masking ───────────────────────────────────────────────────────────
 
-    def _run_edge_masking(self) -> Dict[str, np.ndarray]:
+    def _run_edge_masking(self) -> dict[str, np.ndarray]:
         masker = EdgeMaskingAnalyzer(
             self.model,
             target_class=1,
             max_graphs=self.masking_max_graphs,
         )
-        asd_mats:  List[np.ndarray] = []
-        ctrl_mats: List[np.ndarray] = []
+        asd_mats:  list[np.ndarray] = []
+        ctrl_mats: list[np.ndarray] = []
         processed = 0
 
         for batch in self.test_loader:
@@ -393,7 +392,7 @@ class EdgeImportanceAnalyzer:
         import seaborn as sns
 
         fig, axes = plt.subplots(1, 2, figsize=(18, 7))
-        for ax, mat, group in zip(axes, [ctrl_mat, asd_mat], ["Control", "ASD"]):
+        for ax, mat, group in zip(axes, [ctrl_mat, asd_mat], ["Control", "ASD"], strict=False):
             sns.heatmap(
                 mat,
                 xticklabels=REGION_LABELS,
@@ -417,7 +416,7 @@ class EdgeImportanceAnalyzer:
         logger.info("Edge matrix plot saved → %s", save_path)
 
     def _plot_differential_connectivity(
-        self, gradient_results: Dict, save_path: Path
+        self, gradient_results: dict, save_path: Path
     ) -> None:
         """Plot ASD - Control difference matrix (signed) for gradient attribution."""
         import seaborn as sns

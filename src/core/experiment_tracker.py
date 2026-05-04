@@ -6,7 +6,7 @@ import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from src.core import config
 from src.core.config import RESULTS_DIR
@@ -18,15 +18,15 @@ class ExperimentTracker:
     def __init__(
         self,
         experiment_name: str,
-        output_root: Optional[Path] = None,
-        run_id: Optional[str] = None,
+        output_root: Path | None = None,
+        run_id: str | None = None,
     ) -> None:
         self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
         self.output_root = output_root or (RESULTS_DIR / "experiments" / "runs")
         self.output_dir = self.output_root / self.run_id
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.record: Dict[str, Any] = {
+        self.record: dict[str, Any] = {
             "run_id": self.run_id,
             "experiment": experiment_name,
             "config_hash": self._hash_config(),
@@ -39,7 +39,7 @@ class ExperimentTracker:
 
     def _hash_config(self) -> str:
         """Create a compact hash over relevant training configuration values."""
-        relevant: Dict[str, Any] = {
+        relevant: dict[str, Any] = {
             key: value
             for key, value in vars(config).items()
             if key.startswith(("GNN_", "K_FOLDS", "FOCAL_", "CAUSALITY_"))
@@ -50,7 +50,7 @@ class ExperimentTracker:
         )
         return hashlib.md5(serialized.encode("utf-8")).hexdigest()[:8]
 
-    def _capture_hyperparams(self) -> Dict[str, Any]:
+    def _capture_hyperparams(self) -> dict[str, Any]:
         """Capture key model/training hyperparameters for run comparisons."""
         return {
             "hidden_channels": config.GNN_HIDDEN_CHANNELS,
@@ -69,12 +69,12 @@ class ExperimentTracker:
         self.record["notes"][key] = value
         self._flush()
 
-    def log_fold(self, fold: int, metrics: Dict[str, Any]) -> None:
+    def log_fold(self, fold: int, metrics: dict[str, Any]) -> None:
         """Append fold metrics and flush to disk immediately."""
         self.record["fold_metrics"].append({"fold": int(fold), **metrics})
         self._flush()
 
-    def finalize(self, summary: Dict[str, Any]) -> None:
+    def finalize(self, summary: dict[str, Any]) -> None:
         """Store final summary and completion timestamp."""
         self.record["summary"] = summary
         self.record["completed_at"] = datetime.now().isoformat(timespec="seconds")
@@ -86,7 +86,7 @@ class ExperimentTracker:
             json.dump(self.record, handle, indent=2, default=str)
 
     @classmethod
-    def compare_runs(cls, output_root: Optional[Path] = None):
+    def compare_runs(cls, output_root: Path | None = None):
         """Load run records from disk and return them sorted by mean AUC.
 
         Args:

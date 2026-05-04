@@ -17,20 +17,17 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")  # Non-interactive backend
 import matplotlib.pyplot as plt
-import matplotlib.rcsetup as rcsetup
-from matplotlib import cm
-import seaborn as sns
 
 # Add project to path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.core.config import RESULTS_DIR, NUM_LOBES, LOBE_NAMES, PROJECT_ROOT
-from src.models.evaluation import evaluate_loader, compute_metrics
-import torch
+
+from src.core.config import LOBE_NAMES, NUM_LOBES, PROJECT_ROOT, RESULTS_DIR
 
 # Load publication-quality matplotlib style from configs/
 matplotlib_rc_path = PROJECT_ROOT / "configs" / "matplotlib.rc"
@@ -46,6 +43,7 @@ from src.core.plotting import ColorPalette, FigureSize, apply_publication_style
 # Set color cycle consistently
 palette = ColorPalette()
 from cycler import cycler
+
 plt.rcParams['axes.prop_cycle'] = cycler(color=palette.cycle())
 
 # Override DPI for publication
@@ -149,8 +147,8 @@ def generate_ablation_figure(output_dir: Path):
     ax.axvline(x=0.5, color=palette.NEUTRAL, linestyle="--", alpha=0.5, lw=1.5)
 
     # Add value labels
-    for bar, auc in zip(bars, aucs):
-        ax.text(bar.get_width() + 0.01, bar.get_y() + bar.get_height() / 2, f"{auc:.3f}", 
+    for bar, auc in zip(bars, aucs, strict=False):
+        ax.text(bar.get_width() + 0.01, bar.get_y() + bar.get_height() / 2, f"{auc:.3f}",
                 va="center", fontsize=10)
 
     ax.set_xlim(0.4, 1.0)
@@ -189,9 +187,9 @@ def generate_training_curves(output_dir: Path):
         val_auc = data.get("val_auc", [])
 
         color = palette.cycle()[i]
-        ax_loss.plot(epochs, train_loss, label=f"Fold {i+1} Train", 
+        ax_loss.plot(epochs, train_loss, label=f"Fold {i+1} Train",
                     color=color, lw=2.5, alpha=0.8)
-        ax_auc.plot(epochs, val_auc, label=f"Fold {i+1} Val", 
+        ax_auc.plot(epochs, val_auc, label=f"Fold {i+1} Val",
                     color=color, lw=2.5, alpha=0.8)
 
     ax_loss.set(xlabel="Epoch", ylabel="Loss", title="Training Loss by Fold")
@@ -242,7 +240,7 @@ def generate_attention_heatmap(output_dir: Path):
     ax.set_yticklabels(LOBE_NAMES)
     ax.set_xticks([])
     ax.set_title("Brain Region Importance (Attention)", fontsize=14, fontweight="bold", pad=20)
-    
+
     cbar = plt.colorbar(im, ax=ax)
     cbar.set_label("Importance Score", fontsize=12)
     cbar.ax.tick_params(labelsize=10)
@@ -260,40 +258,41 @@ def generate_causal_graphs(output_dir: Path):
     # Suppress matplotlib colorbar warning globally for this function
     import warnings
     warnings.filterwarnings("ignore", ".*Colorbar layout.*")
-    
+
     try:
+        import pandas as pd
+
         from src.analysis.visualize_causal_graph import plot_comparison
         from src.core.config import MASTER_MANIFEST
-        import pandas as pd
 
         # Load manifest to get example subjects
         df = pd.read_csv(MASTER_MANIFEST)
-        
+
         # Filter to valid subjects (not in excluded list)
         from src.core.hyperparams import EXCLUDED_SUBJECTS
         df = df[~df['subject_id'].isin(EXCLUDED_SUBJECTS)]
-        
+
         asd_subjects = df[df['DX_GROUP'] == 1]['subject_id'].tolist()
         control_subjects = df[df['DX_GROUP'] == 2]['subject_id'].tolist()
-        
+
         if not asd_subjects:
             asd_subjects = df[df['DX_GROUP'] == 1]['subject_id'].tolist()
         if not control_subjects:
             # DX_GROUP might be 1=ASD, 2=Control in some formats
             control_subjects = df[df['DX_GROUP'] == 0]['subject_id'].tolist()
-        
+
         if not asd_subjects or not control_subjects:
             # Debug: show column values
             print(f"  Debug: DX_GROUP unique values: {df['DX_GROUP'].unique()}")
             print("  Skipping causal graph: no ASD/Control subjects found")
             return
-            
+
         asd_subject = asd_subjects[0]
         control_subject = control_subjects[0]
 
         output_path = output_dir / "causal_graphs" / "causal_graph_comparison.png"
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         result = plot_comparison(
             asd_subject,
             control_subject,
@@ -376,7 +375,7 @@ def generate_architecture_diagram(output_dir: Path):
     ]
 
     y_positions = np.linspace(0.9, 0.1, len(pipeline_steps))
-    for i, (step, y) in enumerate(zip(pipeline_steps, y_positions)):
+    for i, (step, y) in enumerate(zip(pipeline_steps, y_positions, strict=False)):
         color = palette.cycle()[i % 8]
         ax1.text(
             0.5,
@@ -384,8 +383,8 @@ def generate_architecture_diagram(output_dir: Path):
             step,
             ha="center",
             va="center",
-            bbox=dict(boxstyle="round,pad=0.5", facecolor=color, edgecolor="black", 
-                    linewidth=1.5, alpha=0.85),
+            bbox={"boxstyle": "round,pad=0.5", "facecolor": color, "edgecolor": "black",
+                    "linewidth": 1.5, "alpha": 0.85},
             fontsize=11,
             fontweight="bold",
         )
@@ -394,7 +393,7 @@ def generate_architecture_diagram(output_dir: Path):
                 "",
                 xy=(0.5, y_positions[i + 1] + 0.05),
                 xytext=(0.5, y - 0.05),
-                arrowprops=dict(arrowstyle="->", lw=2.5, color=palette.NEUTRAL),
+                arrowprops={"arrowstyle": "->", "lw": 2.5, "color": palette.NEUTRAL},
             )
 
     # Panel B: GNN Architecture
@@ -410,7 +409,7 @@ def generate_architecture_diagram(output_dir: Path):
     ]
 
     y_positions = np.linspace(0.9, 0.1, len(gnn_layers))
-    for i, (layer, y) in enumerate(zip(gnn_layers, y_positions)):
+    for i, (layer, y) in enumerate(zip(gnn_layers, y_positions, strict=False)):
         color = palette.cycle()[i % 8]
         ax2.text(
             0.5,
@@ -418,8 +417,8 @@ def generate_architecture_diagram(output_dir: Path):
             layer,
             ha="center",
             va="center",
-            bbox=dict(boxstyle="round,pad=0.5", facecolor=color, edgecolor="black",
-                    linewidth=1.5, alpha=0.85),
+            bbox={"boxstyle": "round,pad=0.5", "facecolor": color, "edgecolor": "black",
+                    "linewidth": 1.5, "alpha": 0.85},
             fontsize=11,
             fontweight="bold",
         )
@@ -428,7 +427,7 @@ def generate_architecture_diagram(output_dir: Path):
                 "",
                 xy=(0.5, y_positions[i + 1] + 0.05),
                 xytext=(0.5, y - 0.05),
-                arrowprops=dict(arrowstyle="->", lw=2.5, color=palette.POSITIVE),
+                arrowprops={"arrowstyle": "->", "lw": 2.5, "color": palette.POSITIVE},
             )
 
     fig.savefig(output_dir / "architecture_diagram.png", bbox_inches="tight")
@@ -466,7 +465,7 @@ def generate_per_site_chart(output_dir: Path):
 
     fig, ax = plt.subplots(1, 1, figsize=FigureSize.BAR_CHART)
     colors = [palette.ASD if site_data[k].get("n_asd", 0) > 0 else palette.NEUTRAL for k in names]
-    bars = ax.bar(range(len(names)), aucs, color=colors, edgecolor="black", linewidth=0.5)
+    ax.bar(range(len(names)), aucs, color=colors, edgecolor="black", linewidth=0.5)
 
     ax.set_xticks(range(len(names)))
     ax.set_xticklabels([f"{n}\n(n={ns[i]})" for i, n in enumerate(names)], rotation=45, ha="right", fontsize=10)
@@ -510,15 +509,15 @@ def generate_bootstrap_ci_figure(output_dir: Path):
     labels = ["AUC", "F1", "Accuracy", "Sensitivity", "Specificity"]
 
     fig, ax = plt.subplots(1, 1, figsize=FigureSize.SINGLE)
-    
+
     y_pos = np.arange(len(metric_names))
     values = [metrics.get(m, 0.5) for m in metric_names]
     errors = [[metrics.get(m, 0.5) - ci.get(m, [0.5, 0.5])[0] for m in metric_names],
              [ci.get(m, [0.5, 0.5])[1] - metrics.get(m, 0.5) for m in metric_names]]
-    
-    bars = ax.barh(y_pos, values, xerr=errors, capsize=5, 
+
+    ax.barh(y_pos, values, xerr=errors, capsize=5,
                       color=palette.CONTROL, edgecolor="black", linewidth=0.5)
-    
+
     ax.set_yticks(y_pos)
     ax.set_yticklabels(labels, fontsize=10)
     ax.set_xlabel("Value (with 95% CI)", fontsize=12)

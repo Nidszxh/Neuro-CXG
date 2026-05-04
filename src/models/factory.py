@@ -28,7 +28,7 @@ from src.core.config import (
 from src.models.causal_gnn import CausalBrainGNN
 
 if TYPE_CHECKING:
-    from src.models.training_utils import attach_feature_scaler_from_checkpoint
+    pass
 
 logger = logging.getLogger(__name__)
 

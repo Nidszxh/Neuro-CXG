@@ -70,37 +70,37 @@ For detailed documentation, see:
 import argparse
 import logging
 import os
+import shutil
 import subprocess
 import sys
-import shutil
 from pathlib import Path
-from typing import List, Set
 
 # Setup Pathing
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from src.core.config import (
-    validate_environment,
-    validate_gnn_training_inputs,
-    PROJECT_ROOT,
-    DATA_ROOT,
-    DATA_PROCESSED,
-    DATA_TIME_SERIES,
-    DATA_METADATA,
-    MODEL_ROOT,
-    FINAL_TRAIN,
-    FINAL_VAL,
-    FINAL_TEST,
     CAUSAL_GRAPHS_DIR,
     CAUSAL_GRAPHS_MULTIVIEW_DIR,
-    NODE_FEATURES_3D,
-    NODE_ATTRIBUTES_TEMPORAL,
-    NODE_ATTRIBUTES_HARMONIZED,
     CHECKPOINT_DIR,
+    DATA_METADATA,
+    DATA_PROCESSED,
+    DATA_ROOT,
+    DATA_TIME_SERIES,
+    FINAL_TEST,
+    FINAL_TRAIN,
+    FINAL_VAL,
+    MODEL_ROOT,
+    NODE_ATTRIBUTES_HARMONIZED,
+    NODE_ATTRIBUTES_TEMPORAL,
+    NODE_FEATURES_3D,
+    PROJECT_ROOT,
     RESULTS_DIR,
-    YOLO_WEIGHTS_PATH
+    YOLO_WEIGHTS_PATH,
+    validate_environment,
+    validate_gnn_training_inputs,
 )
-from src.pipeline.registry import STAGES as STAGE_REGISTRY, completion_snapshot, stage_map
+from src.pipeline.registry import STAGES as STAGE_REGISTRY
+from src.pipeline.registry import completion_snapshot, stage_map
 
 # Standard logging
 logging.basicConfig(
@@ -118,7 +118,7 @@ BASELINE_CHECKPOINT_DIR = MODEL_ROOT / "checkpoints_baseline"
 
 # Runnable modules that intentionally remain standalone debug/self-test tools and
 # are not part of the default orchestration chain.
-EXEMPT_ENTRYPOINT_MODULES: Set[str] = {
+EXEMPT_ENTRYPOINT_MODULES: set[str] = {
     "src.run_pipeline",
     "src.core.config",
     "src.features.graph_factory",
@@ -185,9 +185,9 @@ def _file_has_rows(path: Path, pattern: str) -> bool:
     return path.exists() and any(path.glob(pattern))
 
 
-def _discover_runnable_src_modules() -> List[str]:
+def _discover_runnable_src_modules() -> list[str]:
     """Return src modules that expose a __main__ entrypoint."""
-    modules: List[str] = []
+    modules: list[str] = []
     src_root = PROJECT_ROOT / "src"
     for py_file in sorted(src_root.rglob("*.py")):
         if "__pycache__" in str(py_file):
@@ -203,7 +203,7 @@ def _discover_runnable_src_modules() -> List[str]:
     return modules
 
 
-def _check_stage_coverage(staged_modules: Set[str], strict: bool = False) -> None:
+def _check_stage_coverage(staged_modules: set[str], strict: bool = False) -> None:
     """Log uncovered runnable modules; fail in strict mode."""
     discovered = _discover_runnable_src_modules()
     uncovered = sorted(
@@ -223,7 +223,7 @@ def _check_stage_coverage(staged_modules: Set[str], strict: bool = False) -> Non
         sys.exit(1)
 
 
-def _log_stage_registry_status(runtime_stage_keys: Set[str]) -> None:
+def _log_stage_registry_status(runtime_stage_keys: set[str]) -> None:
     """Compare runtime stage keys against the declarative stage registry."""
     registry_keys = {stage.key for stage in STAGE_REGISTRY}
 
@@ -258,7 +258,7 @@ def prompt_user(message, default=True):
     suffix = "[Y/n]" if default else "[y/N]"
     while True:
         response = input(f"\n{message} {suffix}: ").strip().lower()
-        
+
         if response == "":
             return default
         elif response in ["y", "yes"]:
@@ -274,7 +274,7 @@ def clear_old_state():
     This ensures the new 12-region architecture has a clean environment.
     """
     logger.info("Cleaning legacy pipeline state for 12-region alignment...")
-    
+
     # Files to remove to force regeneration
     to_delete = [
         NODE_FEATURES_3D,
@@ -302,7 +302,7 @@ def run_module(module_path, args_list=None, description="", function_name=None):
 
     # Use the same Python executable that's running this script
     python_exe = sys.executable
-    
+
     if function_name:
         # Call specific function within module; propagate False return as exit code 1
         cmd = [python_exe, "-c",
@@ -313,17 +313,17 @@ def run_module(module_path, args_list=None, description="", function_name=None):
         cmd = [python_exe, "-m", module_path]
         if args_list:
             cmd.extend(args_list)
-    
+
     log_msg = description if description else f"Module: {module_path}"
     logger.info(f"Running: {log_msg}")
     logger.debug(f"Command: {' '.join(cmd)}")
-    
+
     try:
         subprocess.run(cmd, cwd=PROJECT_ROOT, check=True)
     except subprocess.CalledProcessError as exc:
         logger.error(f"Module {module_path} failed with exit code {exc.returncode}")
         sys.exit(1)
-    
+
     logger.info(f"Completed: {log_msg}")
 
 def check_download_status():
@@ -378,7 +378,7 @@ def check_split_status():
         FINAL_VAL.exists(),
         FINAL_TEST.exists()
     ])
-    
+
     if not splits_exist:
         logger.warning("Train/val/test splits not found.")
         return False
@@ -423,7 +423,7 @@ def check_split_status():
             source_ts_dir if source_ts_dir else "none",
         )
         return False
-    
+
     return True
 
 def show_execution_plan(stages):
@@ -473,7 +473,7 @@ Examples:
   python run_pipeline.py --regenerate-features
         """
     )
-    
+
     # Execution modes
     parser.add_argument("--interactive", action="store_true", default=True,
                         help="Prompt user before each stage (default)")
@@ -481,7 +481,7 @@ Examples:
                         help="Run all missing stages without prompts")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show execution plan without running")
-    
+
     # Stage control - Skip flags
     parser.add_argument("--skip-download", action="store_true",
                         help="Skip ABIDE download (use existing data)")
@@ -511,7 +511,7 @@ Examples:
                         help="Skip validation checks")
     parser.add_argument("--11-lobes", "--11-lobe", dest="lobes_11", action="store_true",
                         help="Use 11 lobes (exclude Brainstem) - see FINAL_ARCHITECTURE_ANALYSIS.md for performance comparison")
-    
+
     # Post-training analysis flags
     parser.add_argument("--skip-visualizations", action="store_true",
                         help="Skip generating visualizations after training")
@@ -545,7 +545,7 @@ Examples:
                         help="Only run visualizations (skip all other stages)")
     parser.add_argument("--analysis-only", action="store_true",
                         help="Only run post-training analysis stages (vis, eval, explain, results)")
-    
+
     parser.add_argument("--config-hash", type=str, default=None,
                         help="Expected 8-character config hash to enforce reproducibility")
     parser.add_argument("--seed", type=int, default=42,
@@ -554,17 +554,17 @@ Examples:
                         help="Skip comprehensive health check")
     parser.add_argument("--skip-comprehensive-validation", action="store_true",
                         help="Skip comprehensive validation & tuning suite (YOLO quality, sparsity, stratification)")
-    
+
     # Feature regeneration
     parser.add_argument("--regenerate-features", action="store_true",
                         help="Regenerate spatial/temporal features, harmonization, and graphs (keeps other data)")
-    
+
     # Force/Diagnostics
     parser.add_argument("--force-reset", action="store_true",
                         help="Wipe all intermediate CSVs and Graphs")
-    
+
     args = parser.parse_args()
-    
+
     # 11-lobe mode: set env var BEFORE any config imports
     if args.lobes_11:
         os.environ["NEURO_CXG_11_LOBES"] = "1"
@@ -588,7 +588,7 @@ Examples:
         args.skip_data_quality = False
         args.skip_ablations = False
         args.skip_paper_figures = False
-    
+
     # 11-lobe mode is handled via env var set BEFORE argparse above
     # Just log the confirmation here
     if args.lobes_11:
@@ -596,7 +596,7 @@ Examples:
         logger.info("11-LOBE MODE ENABLED (via --11-lobes flag)")
         logger.info("  Brainstem will be excluded from all computations")
         logger.info("=" * 50)
-    
+
     # Override interactive mode if --auto is set
     interactive = args.interactive and not args.auto
 
@@ -604,12 +604,12 @@ Examples:
     # interactive prompts and apply safe defaults automatically.
     if args.auto:
         os.environ["NEURO_CXG_NONINTERACTIVE"] = "1"
-    
+
     print("\n" + "="*70)
     print("NEURO-CXG PIPELINE RUNNER")
     print("12-Region Causal GNN for fMRI Analysis")
     print("="*70)
-    
+
     # STAGE 0: PRE-FLIGHT VALIDATION
     logger.info("\nStage 0: Pre-Flight Validation")
 
@@ -632,9 +632,9 @@ Examples:
     # Ensure the training checkpoint directory exists so gnn_model.py can save there.
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     logger.debug(f"Checkpoint directory ready: {CHECKPOINT_DIR}")
-    
+
     # DETERMINE STAGE EXECUTION BASED ON FLAGS
-    
+
     registry_by_key = stage_map()
     execution_order = [stage.key for stage in STAGE_REGISTRY]
 
@@ -678,7 +678,7 @@ Examples:
     graphs_ready_or_planned = existing_graphs or graphs_will_run
     harmonized_ready_or_planned = existing_harmonized or harmonization_will_run
     checkpoints_ready_or_planned = existing_checkpoints or gnn_training_will_run
-    
+
     stage_should_run = {
         "download": download_will_run,
         "split": split_will_run,
@@ -799,7 +799,7 @@ Examples:
         }
 
     _log_stage_registry_status(set(stages.keys()))
-    
+
     # Special handling for analysis-only mode
     if args.analysis_only:
         logger.info("📊 Analysis-only mode: Running post-training analysis stages only")
@@ -825,42 +825,42 @@ Examples:
     staged_modules = {stage_info["module"] for stage_info in stages.values()}
     staged_modules.update({"src.features.extract_spatial", "src.features.extract_spatial_atlas"})
     _check_stage_coverage(staged_modules, strict=args.full_src)
-    
+
     # Special handling for visualizations-only mode
     if args.visualizations_only:
         logger.info("🎨 Visualizations-only mode: Skipping all training stages")
         for key in stages.keys():
             if key != "visualizations":
                 stages[key]["should_run"] = False
-    
+
     # Show execution plan
-    stage_list = [(stage_info["name"], stage_info["should_run"], stage_info["reason"]) 
+    stage_list = [(stage_info["name"], stage_info["should_run"], stage_info["reason"])
                   for stage_info in stages.values()]
     show_execution_plan(stage_list)
-    
+
     if args.dry_run:
         logger.info("🔍 Dry-run mode: Exiting without execution")
         return
-    
+
     # Reset state if requested
     if args.force_reset:
         if interactive and not prompt_user("⚠️  This will delete intermediate files. Continue?", default=False):
             logger.info("Aborted by user")
             sys.exit(0)
         clear_old_state()
-    
+
     # STAGE EXECUTION
     # Execute stages in declarative registry order.
     for stage_key in execution_order:
         if stage_key not in stages:
             continue
-        
+
         stage = stages[stage_key]
-        
+
         if not stage["should_run"]:
             logger.info(f"⏭️  Skipping: {stage['name']}")
             continue
-        
+
         # Special handling for long-running stages
         if stage_key == "yolo":
             msg = f"Run {stage['name']}? (This may take 1-2 hours)"
@@ -894,7 +894,7 @@ Examples:
             msg = f"🩺 Run {stage['name']}? (Quick single-subject dead-lobe sanity check)"
         else:
             msg = f"Run {stage['name']}?"
-        
+
         if interactive and not args.visualizations_only and not args.analysis_only:  # No prompt in special modes
             if not prompt_user(msg, default=True):
                 logger.info(f"⏭️  User skipped: {stage['name']}")
@@ -908,12 +908,12 @@ Examples:
                     "Pre-training validation failed for gnn_training stage. "
                     f"{exc}"
                 ) from exc
-        
+
         # Execute with function name if specified
         function_name = stage.get("function", None)
         args_list = stage.get("args", None)
         run_module(stage["module"], args_list=args_list, description=stage["name"], function_name=function_name)
-    
+
     # COMPLETION
 
     logger.info("\n" + "="*70)
@@ -938,7 +938,7 @@ Examples:
         logger.info(f"📁 Ablation studies: {RESULTS_DIR / 'experiments' / 'ablations'}")
     if (RESULTS_DIR / "experiments" / "data_quality").exists():
         logger.info(f"📁 Data quality experiments: {RESULTS_DIR / 'experiments' / 'data_quality'}")
-    
+
     logger.info("="*70)
     logger.info("\n✨ Post-Training Analysis Commands:")
     logger.info("   python src/run_pipeline.py --visualizations-only")

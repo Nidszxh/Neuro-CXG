@@ -16,7 +16,6 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -48,9 +47,9 @@ LOBE_NAME_LIST = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 DEFAULT_OUTPUT_DIR = RESULTS_DIR / "subject_analysis"
 
 
-def _build_ts_index() -> Dict[str, Path]:
+def _build_ts_index() -> dict[str, Path]:
     """Map subject_id to its time-series file path across train/val/test splits."""
-    ts_index: Dict[str, Path] = {}
+    ts_index: dict[str, Path] = {}
     for split in ("train", "val", "test"):
         ts_dir = DATA_FINAL / split / "time_series"
         if not ts_dir.exists():
@@ -61,9 +60,9 @@ def _build_ts_index() -> Dict[str, Path]:
     return ts_index
 
 
-def _analyze_time_series(ts_path: Path) -> Dict[str, object]:
+def _analyze_time_series(ts_path: Path) -> dict[str, object]:
     """Compute per-subject time-series quality metrics."""
-    out: Dict[str, object] = {}
+    out: dict[str, object] = {}
     arr = np.load(ts_path)
 
     if arr.ndim != 2:
@@ -90,9 +89,9 @@ def _analyze_time_series(ts_path: Path) -> Dict[str, object]:
     return out
 
 
-def _analyze_graph(graph_path: Path) -> Dict[str, object]:
+def _analyze_graph(graph_path: Path) -> dict[str, object]:
     """Compute per-subject graph quality metrics from graph file."""
-    out: Dict[str, object] = {}
+    out: dict[str, object] = {}
     data = torch.load(graph_path, map_location="cpu", weights_only=False)
 
     if "adj" not in data:
@@ -146,9 +145,9 @@ def _analyze_graph(graph_path: Path) -> Dict[str, object]:
     return out
 
 
-def _analyze_harmonized_row(row: pd.Series) -> Dict[str, object]:
+def _analyze_harmonized_row(row: pd.Series) -> dict[str, object]:
     """Compute harmonized feature quality metrics for one subject row."""
-    out: Dict[str, object] = {}
+    out: dict[str, object] = {}
     out["harm_nan_features"] = int(row.isna().sum())
 
     zero_lobes = 0
@@ -172,7 +171,7 @@ def _safe_manifest_value(manifest_row: pd.Series, col: str, default=None):
     return value
 
 
-def run_analysis(limit: Optional[int] = None) -> pd.DataFrame:
+def run_analysis(limit: int | None = None) -> pd.DataFrame:
     """Run full subject-level analysis across manifest, ts, graph, and harmonized files."""
     logger.info("Loading manifest from %s", MASTER_MANIFEST)
     manifest_df = pd.read_csv(MASTER_MANIFEST)
@@ -206,14 +205,14 @@ def run_analysis(limit: Optional[int] = None) -> pd.DataFrame:
 
     logger.info("Running diagnostics for %d subjects", len(subject_ids))
 
-    rows: List[Dict[str, object]] = []
+    rows: list[dict[str, object]] = []
     log_step = max(1, len(subject_ids) // 10)
 
     for idx, subject_id in enumerate(subject_ids):
         if idx % log_step == 0:
             logger.info("Progress: %d/%d", idx + 1, len(subject_ids))
 
-        row: Dict[str, object] = {"subject_id": subject_id}
+        row: dict[str, object] = {"subject_id": subject_id}
 
         if subject_id in manifest_df.index:
             row["in_manifest"] = True
@@ -302,7 +301,7 @@ def run_analysis(limit: Optional[int] = None) -> pd.DataFrame:
 
 def build_report(df: pd.DataFrame) -> str:
     """Build text summary report from per-subject diagnostics DataFrame."""
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append("=" * 78)
     lines.append("NEURO-CXG SUBJECT ANALYSIS REPORT")
     lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -311,7 +310,7 @@ def build_report(df: pd.DataFrame) -> str:
     total = len(df)
     lines.append(f"Total subjects scanned: {total}")
 
-    in_manifest = int((df["in_manifest"] == True).sum())
+    in_manifest = int((df["in_manifest"]).sum())
     lines.append(f"In manifest: {in_manifest} ({100 * in_manifest / max(total, 1):.1f}%)")
 
     if "split" in df.columns:
@@ -328,9 +327,9 @@ def build_report(df: pd.DataFrame) -> str:
             for dx_name, count in dx_counts.items():
                 lines.append(f"  {dx_name}: {int(count)}")
 
-    ts_exists = int((df["ts_exists"] == True).sum())
-    graph_exists = int((df["graph_exists"] == True).sum())
-    harm_exists = int((df["harm_exists"] == True).sum())
+    ts_exists = int((df["ts_exists"]).sum())
+    graph_exists = int((df["graph_exists"]).sum())
+    harm_exists = int((df["harm_exists"]).sum())
     lines.append("")
     lines.append("Artifact availability:")
     lines.append(f"  Time-series present: {ts_exists} ({100 * ts_exists / max(total, 1):.1f}%)")
@@ -338,7 +337,7 @@ def build_report(df: pd.DataFrame) -> str:
     lines.append(f"  Harmonized present:  {harm_exists} ({100 * harm_exists / max(total, 1):.1f}%)")
 
     if "graph_is_degenerate" in df.columns:
-        degenerate = int((df["graph_is_degenerate"] == True).sum())
+        degenerate = int((df["graph_is_degenerate"]).sum())
     lines.append(
         "  Degenerate graphs:   "
         f"{degenerate} ({100 * degenerate / max(graph_exists, 1):.1f}% of existing) "
@@ -362,8 +361,8 @@ def build_report(df: pd.DataFrame) -> str:
     lines.append("")
     lines.append("Top flagged subjects:")
     flagged = df[
-        (df["graph_is_degenerate"] == True)
-        | (df["graph_nan_in_adj"] == True)
+        (df["graph_is_degenerate"])
+        | (df["graph_nan_in_adj"])
         | (df["ts_nan_rois"].fillna(0) > 20)
     ]
     if flagged.empty:

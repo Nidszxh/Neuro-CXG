@@ -54,6 +54,7 @@ YOLO_TRAIN_CONFIG = {
 # GNN training seed for reproducibility
 # Can be overridden via NEURO_CXG_SEED environment variable (propagated from run_pipeline.py --seed)
 import os
+
 GNN_SEED = int(os.environ.get("NEURO_CXG_SEED", "42"))
 
 # --- CAUSAL GRAPH PARAMETERS ---

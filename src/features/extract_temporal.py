@@ -1,18 +1,15 @@
 import argparse
 import logging
 import sys
-import os
 from pathlib import Path
-from typing import Dict, Tuple, Optional, List
 
 import numpy as np
 import pandas as pd
-from scipy.stats import skew, kurtosis, entropy
-from scipy.signal import welch, hilbert
-from tqdm import tqdm
-from joblib import Parallel, delayed
-
 import torch
+from joblib import Parallel, delayed
+from scipy.signal import hilbert, welch
+from scipy.stats import entropy, kurtosis, skew
+from tqdm import tqdm
 
 torch.set_num_threads(min(4, torch.get_num_threads()))
 
@@ -21,10 +18,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     ACTIVE_FREQ_BANDS,
     DATA_FINAL,
+    DEFAULT_TR,
     FEATURE_GROUPS,
     MASTER_MANIFEST,
     NODE_ATTRIBUTES_TEMPORAL,
-    DEFAULT_TR,
     NYQUIST_EPS,
     UNRELIABLE_FREQ_BANDS_AT_NYQUIST,
 )
@@ -45,7 +42,7 @@ _NYQUIST_NOTE_EMITTED = False
 # ============================================================================
 
 
-def _get_zero_features(bands: Dict[str, Tuple[float, float]]) -> Dict[str, float]:
+def _get_zero_features(bands: dict[str, tuple[float, float]]) -> dict[str, float]:
     """Return zeroed feature dict for edge cases."""
     features = {}
     for band_name in bands.keys():
@@ -67,8 +64,8 @@ def _get_unreliable_bands(fs: float) -> set[str]:
 
 
 def extract_band_power(
-    ts: np.ndarray, fs: float = 0.5, bands: Dict[str, Tuple[float, float]] = None
-) -> Dict[str, float]:
+    ts: np.ndarray, fs: float = 0.5, bands: dict[str, tuple[float, float]] = None
+) -> dict[str, float]:
     """
     Extract power spectral density features from time series.
 
@@ -302,12 +299,12 @@ def extract_single_roi_features(ts: np.ndarray, tr: float, include_frequency: bo
     # from skew/kurtosis on near-constant or pathological distributions
     mean_val = float(np.mean(ts))
     std_val = float(np.std(ts))
-    
+
     # Clip skewness and kurtosis to [-1e3, 1e3] to prevent extreme outliers
     # fMRI signals are typically moderate in shape parameters
     skew_val = np.clip(float(skew(ts, bias=False)), -1e3, 1e3)
     kurt_val = np.clip(float(kurtosis(ts, bias=False)), -1e3, 1e3)
-    
+
     base_features = [
         mean_val,
         std_val,
@@ -509,7 +506,7 @@ def _compute_spectral_entropy_vectorized(
 
 def _compute_phase_std_vectorized(ts: np.ndarray, bad_rois: np.ndarray) -> np.ndarray:
     """Vectorized instantaneous phase std via Hilbert transform.
-    
+
     Args:
         ts: Time series array (n_timepoints, n_rois), with bad ROIs already zeroed.
         bad_rois: Boolean mask of bad ROI indices.
@@ -534,7 +531,7 @@ def _process_single_subject(
     add_frequency: bool,
     use_gpu: bool = False,
     max_rois: int = MAX_ROIS,
-) -> Optional[List]:
+) -> list | None:
     """
     Process a single subject's time series to extract temporal features.
     Uses vectorized extraction when possible, falls back to per-ROI loop on error.

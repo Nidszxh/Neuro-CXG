@@ -4,21 +4,21 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from ultralytics import YOLO
 from tqdm import tqdm
+from ultralytics import YOLO
 
 # Setup paths and config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     DATA_FINAL,
-    MASTER_MANIFEST,
     LOBE_MAPPING,
     LOBE_NAMES,
-    YOLO_WEIGHTS_PATH,
+    MASTER_MANIFEST,
     NODE_FEATURES_3D,
     NUM_LOBES,
     NUM_SPATIAL_FEATURES,
     SPATIAL_MIN_REQUIRED_REGIONS,
+    YOLO_WEIGHTS_PATH,
 )
 
 # Setup logging
@@ -38,7 +38,7 @@ OUTPUT_PATH = NODE_FEATURES_3D
 def _load_atlas_lobe_fallbacks() -> dict:
     """Load atlas-derived lobe centroids/sizes (native atlas coordinate space)."""
     try:
-        from src.features.extract_spatial_atlas import load_centroids, compute_roi_sizes
+        from src.features.extract_spatial_atlas import compute_roi_sizes, load_centroids
         centroids = load_centroids()
         roi_sizes = compute_roi_sizes()
     except Exception as exc:
@@ -46,7 +46,7 @@ def _load_atlas_lobe_fallbacks() -> dict:
             "Atlas fallback unavailable for missing YOLO regions (%s); using zeros.",
             exc,
         )
-        return {i: (0.0, 0.0, 0.0, 0.0) for i in range(NUM_LOBES)}
+        return dict.fromkeys(range(NUM_LOBES), (0.0, 0.0, 0.0, 0.0))
 
     fallback = {}
     missing_roi_ids = set()
@@ -187,7 +187,7 @@ def extract_spatial():
             raise
 
     raw_df = pd.DataFrame(all_detections)
-    
+
     if raw_df.empty:
         logger.error("No detections found! Check if YOLO model is working correctly.")
         return
@@ -201,7 +201,7 @@ def extract_spatial():
     # Allow partial detections (min 9/12 regions) to maximize dataset size
     # Subjects with fewer regions are filtered here
     MIN_REQUIRED_REGIONS = SPATIAL_MIN_REQUIRED_REGIONS
-    
+
     filtered_count = 0
     partial_count = 0
     subject_ids = raw_df["subject_id"].unique()
@@ -271,7 +271,7 @@ def extract_spatial():
                 subject_row[f"{lobe_name}_z_depth"] = lobe_data["z"].mean()
                 subject_row[f"{lobe_name}_size"] = lobe_data["w"].mean() * lobe_data["h"].mean()
                 subject_row[spatial_missing_key] = 0
-        
+
         # Append if region aggregation succeeded (processing didn't encounter corruption)
         if subject_row is not None:
             processed_subjects.append(subject_row)
@@ -283,9 +283,9 @@ def extract_spatial():
     logger.info(f"Subjects kept (>= {MIN_REQUIRED_REGIONS} regions): {len(processed_subjects)}")
     logger.info("Missing YOLO regions are imputed with scale-matched lobe priors (not zeros).")
     logger.warning(f"RELAXED FILTER: Subjects with >= {MIN_REQUIRED_REGIONS} regions kept. Final filtering to complete {NUM_LOBES}-region subjects happens in variance ranking stage.")
-    
+
     final_df = pd.DataFrame(processed_subjects)
-    
+
     # Handle case where no subjects passed the filter
     if final_df.empty:
         logger.error(
@@ -295,11 +295,11 @@ def extract_spatial():
         # Create empty output with proper schema
         manifest = pd.read_csv(MANIFEST_PATH)
         manifest["subject_id"] = manifest["subject_id"].astype(str)
-        
+
         # Create minimal schema for empty output (includes spatial_complete + spatial missing mask columns)
         empty_cols = ["subject_id", "spatial_complete"] + [
-            f"{lobe}_{feat}" 
-            for lobe in LOBE_NAMES.values() 
+            f"{lobe}_{feat}"
+            for lobe in LOBE_NAMES.values()
             for feat in ["x", "y", "z_depth", "size"]
         ] + [
             f"{lobe}_spatial_missing"

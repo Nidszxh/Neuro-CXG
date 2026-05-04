@@ -17,7 +17,6 @@ Usage:
 
 import numpy as np
 
-
 # ── Colorblind-safe Okabe-Ito palette ──────────────────────────────────
 # Source: https://jfly.uni-koeln.de/color/
 # Used by Nature, Science, and many top-tier journals
@@ -228,7 +227,7 @@ def compute_wilson_ci(successes, n_trials, z=1.96):
     z_squared = z * z
     denom = 1 + z_squared / n_trials
     center = (p + z_squared / (2 * n_trials)) / denom
-    margin = z * np.sqrt((p * (1 - p) / n_trials + z_squared / (4 * n_trials * n_trials))) / denom
+    margin = z * np.sqrt(p * (1 - p) / n_trials + z_squared / (4 * n_trials * n_trials)) / denom
     lower = max(0, round(center - margin, 3))
     upper = min(1, round(center + margin, 3))
     return lower, upper

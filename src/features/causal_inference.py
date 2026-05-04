@@ -11,7 +11,6 @@ References:
 import logging
 
 import numpy as np
-from typing import Dict, Tuple
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -61,7 +60,7 @@ def compute_granger_causality(
     # Initialize causality matrix
     gc_matrix = np.zeros((n_regions, n_regions))
 
-    def _test_pair(i: int, j: int) -> Tuple[int, int, float]:
+    def _test_pair(i: int, j: int) -> tuple[int, int, float]:
         if i == j:
             return i, j, 0.0
 
@@ -103,7 +102,7 @@ def compute_granger_causality(
     return gc_matrix
 
 
-def validate_causality_matrix(causal_matrix: np.ndarray) -> Dict[str, float]:
+def validate_causality_matrix(causal_matrix: np.ndarray) -> dict[str, float]:
     """
     Validate and analyze causality matrix.
 

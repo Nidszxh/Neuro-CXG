@@ -4,16 +4,16 @@ Configuration Snapshot Utility
 Captures active hyperparameter values for run artifacts.
 Enables reproducibility by logging which config values were active during a specific run.
 """
-import json
 import hashlib
+import json
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def get_config_snapshot(module: Any = None) -> Dict[str, str]:
+def get_config_snapshot(module: Any = None) -> dict[str, str]:
     """Capture all uppercase config values from a module.
 
     Args:
@@ -34,7 +34,7 @@ def get_config_snapshot(module: Any = None) -> Dict[str, str]:
             try:
                 val = getattr(module, k)
                 if isinstance(val, (set, frozenset)):
-                    snapshot[k] = str(sorted(list(val)))
+                    snapshot[k] = str(sorted(val))
                 else:
                     snapshot[k] = str(val)
             except Exception:
@@ -84,13 +84,13 @@ def save_config_snapshot(
     return save_path
 
 
-def load_config_snapshot(snapshot_path: Path) -> Dict[str, str]:
+def load_config_snapshot(snapshot_path: Path) -> dict[str, str]:
     """Load config snapshot from file."""
     with open(snapshot_path) as f:
         return json.load(f)
 
 
-def compare_snapshots(snapshot_a: Dict[str, str], snapshot_b: Dict[str, str]) -> Dict[str, tuple]:
+def compare_snapshots(snapshot_a: dict[str, str], snapshot_b: dict[str, str]) -> dict[str, tuple]:
     """Compare two config snapshots and return differences.
 
     Args:
@@ -127,7 +127,7 @@ def _compute_delta(val_a: str, val_b: str) -> str:
         return f"→ {val_b}"
 
 
-def print_snapshot_diff(differences: Dict[str, tuple], file=None) -> None:
+def print_snapshot_diff(differences: dict[str, tuple], file=None) -> None:
     """Pretty-print snapshot differences.
 
     Args:

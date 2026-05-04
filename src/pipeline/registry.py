@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
 
 from src.core.config import (
     ATLAS_METADATA,
@@ -32,10 +32,10 @@ class Stage:
     key: str
     name: str
     module: str
-    output_sentinel: Optional[Path]
-    dependencies: List[str] = field(default_factory=list)
-    function: Optional[str] = None
-    args: List[str] = field(default_factory=list)
+    output_sentinel: Path | None
+    dependencies: list[str] = field(default_factory=list)
+    function: str | None = None
+    args: list[str] = field(default_factory=list)
     description: str = ""
 
     def is_complete(self) -> bool:
@@ -53,7 +53,7 @@ class Stage:
         return sentinel.exists()
 
 
-STAGES: List[Stage] = [
+STAGES: list[Stage] = [
     Stage("download", "ABIDE Download", "src.data.abide_download", DATA_METADATA / "download_log.csv"),
     Stage("split", "Train/Val/Test Split", "src.data.split", MASTER_MANIFEST, dependencies=["download"]),
     Stage("manifest", "Generate Master Manifest", "src.data.manifestor", MASTER_MANIFEST, dependencies=["split"]),
@@ -156,17 +156,17 @@ STAGES: List[Stage] = [
 ]
 
 
-def stage_map(stages: Iterable[Stage] = STAGES) -> Dict[str, Stage]:
+def stage_map(stages: Iterable[Stage] = STAGES) -> dict[str, Stage]:
     """Return stage metadata indexed by stage key."""
     return {stage.key: stage for stage in stages}
 
 
-def completion_snapshot(stages: Iterable[Stage] = STAGES) -> Dict[str, bool]:
+def completion_snapshot(stages: Iterable[Stage] = STAGES) -> dict[str, bool]:
     """Return stage completion status keyed by stage key."""
     return {stage.key: stage.is_complete() for stage in stages}
 
 
-def get_stage_dependencies(key: str, stages: Iterable[Stage] = STAGES) -> List[str]:
+def get_stage_dependencies(key: str, stages: Iterable[Stage] = STAGES) -> list[str]:
     """Return list of dependency keys for a given stage."""
     stage_dict = stage_map(stages)
     if key in stage_dict:
@@ -174,6 +174,6 @@ def get_stage_dependencies(key: str, stages: Iterable[Stage] = STAGES) -> List[s
     return []
 
 
-def get_stages_by_phase(phase: str, stages: Iterable[Stage] = STAGES) -> List[Stage]:
+def get_stages_by_phase(phase: str, stages: Iterable[Stage] = STAGES) -> list[Stage]:
     """Return stages matching a given phase prefix (e.g., 'data', 'features', 'models')."""
     return [s for s in stages if s.key.startswith(phase)]

@@ -4,17 +4,20 @@ import random
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
 
-import numpy as np
 import pandas as pd
-from sklearn.model_selection import StratifiedKFold, GroupKFold, train_test_split
+from sklearn.model_selection import GroupKFold, StratifiedKFold, train_test_split
 
 # Setup paths from config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
-    DATA_ROOT, DATA_PROCESSED, DATA_TIME_SERIES, DATA_FINAL,
-    MASTER_MANIFEST, PHENO_PATH, EXCLUDED_SUBJECTS,
+    DATA_FINAL,
+    DATA_PROCESSED,
+    DATA_ROOT,
+    DATA_TIME_SERIES,
+    EXCLUDED_SUBJECTS,
+    MASTER_MANIFEST,
+    PHENO_PATH,
 )
 
 # Setup logging
@@ -34,7 +37,7 @@ SOURCE_LBL = DATA_ROOT / "labels"
 # Scanner manufacturer groupings for site clustering.
 # Sites grouped by manufacturer determine the primary cluster axis;
 # TR range (seconds) is the secondary axis for finer stratification.
-SCANNER_MANUFACTURER: Dict[str, str] = {
+SCANNER_MANUFACTURER: dict[str, str] = {
     "CALTECH":   "Siemens",
     "CMU":       "Siemens",
     "KKI":       "GE",
@@ -67,7 +70,7 @@ def _tr_bin(tr: float) -> str:
         return "slow"
 
 # Site TR lookup (seconds) from feature_registry — use for binning
-_SITE_TR: Dict[str, float] = {
+_SITE_TR: dict[str, float] = {
     "CALTECH": 2.0, "CMU": 2.0, "KKI": 2.5, "LEUVEN_1": 1.656,
     "LEUVEN_2": 1.656, "MAX_MUN": 3.0, "NYU": 2.0, "OHSU": 2.5,
     "OLIN": 1.5, "PITT": 1.5, "SBL": 2.5, "SDSU": 2.0,
@@ -78,7 +81,7 @@ _SITE_TR: Dict[str, float] = {
 _N_SITE_CLUSTERS = 5
 
 
-def _assign_site_clusters(sites: List[str]) -> Dict[str, int]:
+def _assign_site_clusters(sites: list[str]) -> dict[str, int]:
     """
     Cluster sites into _N_SITE_CLUSTERS balanced groups based on
     scanner manufacturer × TR bin.
@@ -102,12 +105,12 @@ def _assign_site_clusters(sites: List[str]) -> Dict[str, int]:
     }
 
     # Group sites by key
-    key_to_sites: Dict[tuple, List[str]] = {}
+    key_to_sites: dict[tuple, list[str]] = {}
     for s, k in site_key.items():
         key_to_sites.setdefault(k, []).append(s)
 
     # Flatten groups, merge singletons into the same-manufacturer group
-    merged: Dict[str, str] = {}  # site → group_label
+    merged: dict[str, str] = {}  # site → group_label
     for key, slist in sorted(key_to_sites.items(), key=lambda x: -len(x[1])):
         label = f"{key[0]}_{key[1]}"
         if len(slist) == 1:
@@ -124,12 +127,12 @@ def _assign_site_clusters(sites: List[str]) -> Dict[str, int]:
     # Sort group labels for determinism
     labels_ordered = sorted(set(merged.values()))
     # Pre-sort sites within each label alphabetically for determinism
-    label_sites: Dict[str, List[str]] = {}
+    label_sites: dict[str, list[str]] = {}
     for s, lbl in sorted(merged.items()):
         label_sites.setdefault(lbl, []).append(s)
 
     # Assign cluster IDs round-robin across labels to balance sizes
-    cluster_map: Dict[str, int] = {}
+    cluster_map: dict[str, int] = {}
     cluster_idx = 0
     for lbl in labels_ordered:
         for s in label_sites[lbl]:
@@ -245,7 +248,7 @@ def _move_with_dedup(src: Path, dst: Path):
 
 def consolidate_split_back_to_source():
     """Bring previously split files back to source pools so re-splitting uses full dataset."""
-    moved = dict(images=0, labels=0, ts=0, roi_labels=0)
+    moved = {'images': 0, 'labels': 0, 'ts': 0, 'roi_labels': 0}
     for split_name in ("train", "val", "test"):
         split_root = DATA_FINAL / split_name
         if not split_root.exists():
@@ -274,7 +277,7 @@ def run_stratified_split():
     df = pd.read_csv(PHENO_PATH)
     df['FILE_ID'] = df['FILE_ID'].astype(str).str.strip()
     all_images = [f for f in os.listdir(SOURCE_IMG) if f.endswith('.png')]
-    valid_ids = set([f.rsplit('_z', 1)[0] for f in all_images])
+    valid_ids = {f.rsplit('_z', 1)[0] for f in all_images}
     df = df[df['FILE_ID'].isin(valid_ids)]
 
     # Enforce curated subject exclusion policy (1035 -> 1015 cohort).
@@ -327,7 +330,7 @@ def run_stratified_split():
 
     # 2. Perform stratification or use pre-assigned splits
     if manifest_has_splits:
-        logger.info(f"Using pre-assigned splits from manifest.")
+        logger.info("Using pre-assigned splits from manifest.")
         splits = {
             'train': df[df['split'] == 'train'].copy(),
             'val':   df[df['split'] == 'val'].copy(),

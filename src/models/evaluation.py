@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 import torch
@@ -65,7 +65,7 @@ def compute_metrics(
     probs: np.ndarray,
     labels: np.ndarray,
     threshold: float = 0.5,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Compute binary-classification metrics from probabilities and labels."""
     if probs.size == 0 or labels.size == 0:
         cm = np.zeros((2, 2), dtype=int)
@@ -126,7 +126,7 @@ def evaluate_loader(
     loader,
     device: torch.device,
     threshold: float = 0.5,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run batched inference and compute metrics for a data loader."""
     model.eval()
     all_probs = []
@@ -177,9 +177,9 @@ def fit_per_site_calibrators(
     labels: np.ndarray,
     site_ids: np.ndarray,
     min_samples: int = 10,
-) -> Dict[int, LogisticRegression]:
+) -> dict[int, LogisticRegression]:
     """Fit one-dimensional Platt calibrators per site using held-out val data."""
-    calibrators: Dict[int, LogisticRegression] = {}
+    calibrators: dict[int, LogisticRegression] = {}
     for site in np.unique(site_ids):
         if site < 0:
             continue
@@ -198,7 +198,7 @@ def fit_per_site_calibrators(
 def apply_per_site_calibration(
     probs: np.ndarray,
     site_ids: np.ndarray,
-    calibrators: Dict[int, LogisticRegression],
+    calibrators: dict[int, LogisticRegression],
 ) -> np.ndarray:
     """Apply per-site logistic calibration when a calibrator exists for that site."""
     calibrated = probs.copy()

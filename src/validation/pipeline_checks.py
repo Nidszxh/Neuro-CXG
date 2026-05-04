@@ -6,7 +6,6 @@ import sys
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -26,6 +25,7 @@ from src.core.config import (
     DATA_ROOT,
     EXCLUDED_SUBJECTS,
     GNN_IN_CHANNELS,
+    HARMONIZED_FOLDS_DIR,
     K_FOLDS,
     LOBE_MAPPING,
     MASTER_MANIFEST,
@@ -36,12 +36,15 @@ from src.core.config import (
     NUM_LOBES,
     NUM_SPATIAL_FEATURES,
     NUM_TEMPORAL_FEATURES,
-    PHENO_PATH,
     SITE_TR_MAP,
     SPARSITY_QUANTILE,
-    HARMONIZED_FOLDS_DIR,
 )
-from src.core.hyperparams import GNN_MAX_DEGENERATE_GRAPH_RATE, AUDIT_SAMPLE_PNG, AUDIT_SAMPLE_TS, AUDIT_MAX_EMPTY_ROI_FRACTION
+from src.core.hyperparams import (
+    AUDIT_MAX_EMPTY_ROI_FRACTION,
+    AUDIT_SAMPLE_PNG,
+    AUDIT_SAMPLE_TS,
+    GNN_MAX_DEGENERATE_GRAPH_RATE,
+)
 from src.core.validators import summarize_graph_degeneracy_from_adj
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
@@ -55,7 +58,7 @@ PNG_DIR = DATA_ROOT / "images"
 TS_DIR = DATA_PROCESSED
 
 
-def _collect_split_files(subdir: str, pattern: str = "*.png") -> List[Path]:
+def _collect_split_files(subdir: str, pattern: str = "*.png") -> list[Path]:
     """Collect files from train/val/test splits into a single list."""
     return [
         p for split in ("train", "val", "test")
@@ -73,8 +76,10 @@ def _redownload_npy(corrupted_npy_paths: list, incomplete_subs: list) -> None:
     TR values are loaded from the phenotype CSV (with site-based fallback).
     """
     from concurrent.futures import ProcessPoolExecutor, as_completed
+
     from tqdm import tqdm
-    from src.data.abide_download import process_subject, init_worker, PHENO_PATH
+
+    from src.data.abide_download import PHENO_PATH, init_worker, process_subject
 
     # Collect subject IDs that need re-download
     subjects_to_fix: set = set()
@@ -115,7 +120,7 @@ def _redownload_npy(corrupted_npy_paths: list, incomplete_subs: list) -> None:
             pheno_df['TR'] = pheno_df['SITE_ID'].map(SITE_TR_MAP).fillna(2.0)
         else:
             pheno_df['TR'] = pd.to_numeric(pheno_df['TR'], errors='coerce').fillna(2.0)
-        tr_lookup = dict(zip(pheno_df['FILE_ID'], pheno_df['TR']))
+        tr_lookup = dict(zip(pheno_df['FILE_ID'], pheno_df['TR'], strict=False))
 
     tasks = [
         (sub_id, tr_lookup.get(sub_id, 2.0))
@@ -539,7 +544,7 @@ def analyze_class_distribution() -> None:
 
 
 def generate_health_report(
-    pheno_path: Optional[Path] = None,
+    pheno_path: Path | None = None,
     sample_png: int = AUDIT_SAMPLE_PNG,
     sample_ts: int = AUDIT_SAMPLE_TS,
     run_deep_checks: bool = False,
@@ -580,7 +585,7 @@ def generate_health_report(
             return False
         downloaded_files = [f for f in os.listdir(png_dir) if f.endswith(".png")]
 
-    completed_subs = set([f.rsplit("_z", 1)[0] for f in downloaded_files])
+    completed_subs = {f.rsplit("_z", 1)[0] for f in downloaded_files}
     logger.info(f"Found {len(downloaded_files)} PNG slices from {len(completed_subs)} subjects")
 
     # Match metadata to images
@@ -685,17 +690,16 @@ def generate_health_report(
     logger.info("-" * 40)
     logger.info("TIME SERIES FILES")
     split_ts_dirs = [DATA_FINAL / split / "time_series" for split in ("train", "val", "test")]
-    all_ts_files: List[Path] = []
+    all_ts_files: list[Path] = []
     for _td in split_ts_dirs:
         if _td.exists():
             all_ts_files.extend(_td.glob("*_ts.npy"))
     # Fallback to legacy DATA_PROCESSED root
     if not all_ts_files:
         all_ts_files = list(DATA_PROCESSED.glob("*_ts.npy"))
-    ts_dir = DATA_FINAL  # for deep-check reference below
 
     logger.info(f"  Time series files:  {len(all_ts_files)}")
-    ts_subjects = set([f.stem.replace("_ts", "") for f in all_ts_files])
+    ts_subjects = {f.stem.replace("_ts", "") for f in all_ts_files}
     missing_ts = completed_subs - ts_subjects
 
     if missing_ts:
@@ -744,6 +748,11 @@ def generate_health_report(
 
         # PNG validation — build a name→Path lookup across all split dirs
         _png_lookup: dict = {}
+        split_image_dirs = [
+            DATA_FINAL / split / "images"
+            for split in ("train", "val", "test")
+            if (DATA_FINAL / split / "images").exists()
+        ]
         for _d in (split_image_dirs if split_images_exist else [DATA_ROOT / "images"]):
             if _d.exists():
                 for _p in _d.glob("*.png"):
@@ -804,7 +813,7 @@ def generate_health_report(
     return True
 
 
-def _sample_graphs(graph_files: List[Path], sample_size: int = 200) -> Dict:
+def _sample_graphs(graph_files: list[Path], sample_size: int = 200) -> dict:
     """
     Sample up to *sample_size* graph .pt files and return validity statistics.
 
@@ -817,7 +826,7 @@ def _sample_graphs(graph_files: List[Path], sample_size: int = 200) -> Dict:
         mean_edges (present when edge_counts is non-empty),
         median_edges (present when edge_counts is non-empty).
     """
-    stats: Dict = {
+    stats: dict = {
         "total": len(graph_files),
         "valid": 0,
         "corrupted": 0,
@@ -898,8 +907,8 @@ class ValidationResult:
     passed: bool
     message: str
     severity: str  # 'critical', 'warning', 'info'
-    fix_suggestion: Optional[str] = None
-    metrics: Optional[Dict] = None
+    fix_suggestion: str | None = None
+    metrics: dict | None = None
 
 
 class PipelineValidator:
@@ -911,8 +920,8 @@ class PipelineValidator:
     """
 
     def __init__(self, visualize: bool = False):
-        self.results: List[ValidationResult] = []
-        self.metrics: Dict = {}
+        self.results: list[ValidationResult] = []
+        self.metrics: dict = {}
         self.visualize = visualize
         self.output_dir = Path("./results/validation_outputs")
         if visualize:
@@ -939,26 +948,14 @@ class PipelineValidator:
 
         all_passed = True
 
-        if sys.version_info < (3, 8):
-            self.add_result(
-                ValidationResult(
-                    stage="Environment",
-                    passed=False,
-                    message=f"Python {sys.version_info.major}.{sys.version_info.minor} detected",
-                    severity="critical",
-                    fix_suggestion="Upgrade to Python 3.8+",
-                )
+        self.add_result(
+            ValidationResult(
+                stage="Environment",
+                passed=True,
+                message=f"Python {sys.version_info.major}.{sys.version_info.minor}",
+                severity="info",
             )
-            all_passed = False
-        else:
-            self.add_result(
-                ValidationResult(
-                    stage="Environment",
-                    passed=True,
-                    message=f"Python {sys.version_info.major}.{sys.version_info.minor}",
-                    severity="info",
-                )
-            )
+        )
 
         critical_dirs = {
             "DATA_ROOT": DATA_ROOT,
@@ -1064,14 +1061,14 @@ class PipelineValidator:
             )
             return False
 
-        subjects = set(f.stem.rsplit("_z", 1)[0] for f in png_files)
+        subjects = {f.stem.rsplit("_z", 1)[0] for f in png_files}
 
         # Time series may live in split dirs or legacy DATA_PROCESSED root
         split_ts_dirs = [DATA_FINAL / s / "time_series" for s in ("train", "val", "test")]
         ts_files = [p for d in split_ts_dirs if d.exists() for p in d.glob("*_ts.npy")]
         if not ts_files:
             ts_files = list(DATA_PROCESSED.glob("*_ts.npy"))
-        ts_subjects = set(f.stem.replace("_ts", "") for f in ts_files)
+        ts_subjects = {f.stem.replace("_ts", "") for f in ts_files}
 
         missing_ts = subjects - ts_subjects
         missing_img = ts_subjects - subjects
@@ -1129,7 +1126,7 @@ class PipelineValidator:
                     nan_inf_count = np.isnan(data).sum() + np.isinf(data).sum()
                     nan_ratio = nan_inf_count / data.size
                     total_nan_ratio += nan_ratio
-                    
+
                     # Only flag if > 10% of data is NaN/Inf (severe corruption)
                     if nan_ratio > 0.10:
                         corrupted += 1
@@ -1138,7 +1135,7 @@ class PipelineValidator:
 
         # Calculate average NaN ratio across sample
         avg_nan_ratio = total_nan_ratio / sample_size if sample_size > 0 else 0
-        
+
         if corrupted > 0 or wrong_shape > 0:
             # Treat as warning if only sparse NaN (< 10% corruption rate)
             severity = "warning" if corrupted < sample_size * 0.5 else "critical"
@@ -1607,7 +1604,7 @@ class PipelineValidator:
             ))
             return False
 
-    def check_manifest(self) -> Tuple[bool, Optional[pd.DataFrame]]:
+    def check_manifest(self) -> tuple[bool, pd.DataFrame | None]:
         """Check manifest exists and contains all required columns."""
         logger.info("Checking manifest...")
         if not MASTER_MANIFEST.exists():
@@ -1651,7 +1648,7 @@ class PipelineValidator:
             ))
             return False, None
 
-    def check_stratification(self, manifest: Optional[pd.DataFrame] = None) -> None:
+    def check_stratification(self, manifest: pd.DataFrame | None = None) -> None:
         """Assert no subject appears in more than one split (data leakage)."""
         logger.info("Checking stratification...")
         if manifest is None:
@@ -1673,7 +1670,7 @@ class PipelineValidator:
                 severity="info",
             ))
 
-    def check_cv_fold_balance(self, manifest: Optional[pd.DataFrame] = None) -> None:
+    def check_cv_fold_balance(self, manifest: pd.DataFrame | None = None) -> None:
         """Validate CV fold-size balance on training split and flag severe skew."""
         logger.info("Checking CV fold balance...")
         if manifest is None:
@@ -1816,7 +1813,7 @@ class PipelineValidator:
         except ImportError:
             logger.warning("matplotlib not available — skipping visualizations")
 
-    def _plot_graph_sparsity(self, edge_counts: List[int]) -> None:
+    def _plot_graph_sparsity(self, edge_counts: list[int]) -> None:
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots(figsize=(10, 6))
         ax.hist(edge_counts, bins=range(0, max(edge_counts) + 2), edgecolor="black", alpha=0.7)
@@ -1856,7 +1853,7 @@ class PipelineValidator:
 
     # REPORTING
 
-    def generate_report(self) -> Tuple[bool, Dict]:
+    def generate_report(self) -> tuple[bool, dict]:
         logger.info("\n" + "=" * 70)
         logger.info("VALIDATION REPORT")
         logger.info("=" * 70)

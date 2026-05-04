@@ -1,21 +1,21 @@
+import logging
+import sys
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import logging
-from typing import Optional, Dict, List, Any
+from torch.nn import GELU, Dropout, LayerNorm, Linear, Sequential
 from torch_geometric.nn import (
     GATv2Conv,
+    global_add_pool,
     global_max_pool,
     global_mean_pool,
-    global_add_pool,
 )
 from torch_geometric.nn.aggr import AttentionalAggregation
-from torch.nn import Linear, Sequential, GELU, Dropout, LayerNorm
 
-import sys
-from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src.core.config import LOBE_TO_NETWORK, NETWORK_TO_LOBES, NUM_NETWORKS, NUM_LOBES
+from src.core.config import LOBE_TO_NETWORK, NETWORK_TO_LOBES, NUM_LOBES, NUM_NETWORKS
 from src.core.hyperparams import GRL_ANNEAL_STEEPNESS
 
 logger = logging.getLogger(__name__)
@@ -66,8 +66,8 @@ class AnatomicalHierarchyPool(nn.Module):
         self,
         hidden_dim: int,
         num_networks: int = NUM_NETWORKS,
-        lobe_to_network: Optional[Dict[int, int]] = None,
-        network_to_lobes: Optional[Dict[int, List[int]]] = None,
+        lobe_to_network: dict[int, int] | None = None,
+        network_to_lobes: dict[int, list[int]] | None = None,
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -92,7 +92,7 @@ class AnatomicalHierarchyPool(nn.Module):
         # Precompute and pad per-network lobe indices to avoid rebuilding tensors
         # in every forward pass.
         max_lobes_per_network = max(len(v) for v in self.network_to_lobes.values())
-        
+
         lobe_idx_padded = torch.full(
             (self.num_networks, max_lobes_per_network),
             fill_value=-1,
@@ -211,7 +211,7 @@ class CausalBrainGNN(torch.nn.Module):
         num_nodes=12,
         node_emb_dim=16,
     ):
-        super(CausalBrainGNN, self).__init__()
+        super().__init__()
         torch.manual_seed(42)
 
         self.use_site_embedding = use_site_embedding

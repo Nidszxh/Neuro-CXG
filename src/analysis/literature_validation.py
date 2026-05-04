@@ -52,7 +52,6 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -63,12 +62,12 @@ from src.core.config import LOBE_NAMES, NUM_LOBES
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-REGION_LABELS: List[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
+REGION_LABELS: list[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 
 # ── Network Definitions ────────────────────────────────────────────────────────
 
 # Each entry: { "name": str, "regions": List[int], "finding": str, "refs": List[str] }
-KNOWN_NETWORKS: List[Dict] = [
+KNOWN_NETWORKS: list[dict] = [
     {
         "name": "Default Mode Network (DMN)",
         "short": "DMN",
@@ -167,7 +166,7 @@ KNOWN_NETWORKS: List[Dict] = [
 ]
 
 # Build a region → networks lookup
-REGION_TO_NETWORKS: Dict[int, List[str]] = {i: [] for i in range(NUM_LOBES)}
+REGION_TO_NETWORKS: dict[int, list[str]] = {i: [] for i in range(NUM_LOBES)}
 for net in KNOWN_NETWORKS:
     for r in net["regions"]:
         REGION_TO_NETWORKS[r].append(net["short"])
@@ -176,9 +175,9 @@ for net in KNOWN_NETWORKS:
 # ── Core validation logic ──────────────────────────────────────────────────────
 
 def validate_important_regions(
-    top_region_indices: List[int],
+    top_region_indices: list[int],
     top_n: int = 5,
-) -> Dict:
+) -> dict:
     """
     Cross-reference the top-N most important regions against known ASD networks.
 
@@ -215,9 +214,9 @@ def validate_important_regions(
         )
 
     # Network coverage
-    top_set = set(int(i) for i in top_regions)
-    coverage: Dict[str, Dict] = {}
-    overlap_scores: Dict[str, float] = {}
+    top_set = {int(i) for i in top_regions}
+    coverage: dict[str, dict] = {}
+    overlap_scores: dict[str, float] = {}
     for net in KNOWN_NETWORKS:
         s = net["short"]
         net_set = set(net["regions"])
@@ -251,7 +250,7 @@ def validate_important_regions(
     }
 
 
-def generate_report(results: Dict, output_dir: Path) -> Path:
+def generate_report(results: dict, output_dir: Path) -> Path:
     """
     Write a JSON + human-readable text report to *output_dir*.
 
@@ -319,7 +318,7 @@ def generate_report(results: Dict, output_dir: Path) -> Path:
     return text_path
 
 
-def generate_validation_figure(results: Dict, output_path: Path) -> Path:
+def generate_validation_figure(results: dict, output_path: Path) -> Path:
     """
     Heatmap: top-N regions (rows) × known networks (cols), colour = network membership.
     A second colour overlay shows importance rank.
@@ -385,11 +384,11 @@ def generate_validation_figure(results: Dict, output_path: Path) -> Path:
 # ── Convenience wrapper ────────────────────────────────────────────────────────
 
 def run_literature_validation(
-    gradcam_asd_scores:     Optional[np.ndarray] = None,
-    attention_asd_scores:   Optional[np.ndarray] = None,
+    gradcam_asd_scores:     np.ndarray | None = None,
+    attention_asd_scores:   np.ndarray | None = None,
     output_dir: Path = Path("results/explainability/literature"),
     top_n: int = 6,
-) -> Dict:
+) -> dict:
     """
     Convenience function called by ``run_explainability.py``.
 
@@ -423,7 +422,7 @@ def run_literature_validation(
             return (a - a.min()) / (rng + 1e-9)
         combined = np.mean([_norm(s) for s in score_arrays], axis=0)
 
-    ranked_indices: List[int] = np.argsort(combined)[::-1].tolist()
+    ranked_indices: list[int] = np.argsort(combined)[::-1].tolist()
 
     results = validate_important_regions(ranked_indices, top_n=top_n)
     report_path = generate_report(results, output_dir)

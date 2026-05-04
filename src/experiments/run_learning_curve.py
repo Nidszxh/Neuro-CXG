@@ -15,43 +15,33 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
-from torch_geometric.loader import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
-    CHECKPOINT_DIR,
     DEVICE,
+    FOCAL_LOSS_ALPHA,
+    FOCAL_LOSS_GAMMA,
     GNN_BATCH_SIZE,
-    GNN_DROPOUT,
+    GNN_EARLY_STOPPING_PATIENCE,
     GNN_EPOCHS,
     GNN_GRL_ALPHA,
     GNN_GRL_ALPHA_MAX,
-    GNN_HIDDEN_CHANNELS,
-    GNN_IN_CHANNELS,
-    GNN_NUM_LAYERS,
-    GNN_NUM_HEADS,
-    GNN_ONECYCLE_MAX_LR,
-    GNN_EARLY_STOPPING_PATIENCE,
     GNN_MIN_EPOCHS_BEFORE_STOPPING,
-    GNN_POOLING,
+    GNN_ONECYCLE_MAX_LR,
     GNN_SITE_LOSS_WEIGHT,
     GNN_WEIGHT_DECAY,
     K_FOLDS,
-    NUM_LOBES,
     RESULTS_ABLATIONS_DIR,
-    USE_FOCAL_LOSS,
     USE_CLASS_WEIGHTS,
-    FOCAL_LOSS_ALPHA,
-    FOCAL_LOSS_GAMMA,
+    USE_FOCAL_LOSS,
 )
 from src.features.graph_factory import ABIDECausalDataset
-from src.models.losses import FocalLoss
 from src.models.factory import build_model
+from src.models.losses import FocalLoss
 from src.models.training_utils import make_loader, train_fold_with_onecycle
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
@@ -62,7 +52,7 @@ def run_kfold_subsample(
     dataset: ABIDECausalDataset,
     sample_fraction: float,
     folds: int = K_FOLDS,
-) -> Dict:
+) -> dict:
     """
     Run 5-fold CV on a subsample of the dataset.
     sample_fraction: 0.0 to 1.0 (percentage of training data to use)
@@ -97,12 +87,12 @@ def run_kfold_subsample(
         if d is not None:
             labels.append(int(d.y.item()))
 
-    n_ctrl = labels.count(0)
+    labels.count(0)
     n_asd = labels.count(1)
     logger.info(f"  Original: {n_total} subjects | Subsample: ~{int(n_total * sample_fraction * 0.71)} train")
 
-    fold_aucs: List[float] = []
-    fold_f1s: List[float] = []
+    fold_aucs: list[float] = []
+    fold_f1s: list[float] = []
 
     class_weight_tensor = None
     if USE_CLASS_WEIGHTS:
@@ -140,14 +130,15 @@ def run_kfold_subsample(
         train_loader = make_loader(train_data, batch_size=GNN_BATCH_SIZE, shuffle=True)
         val_loader = make_loader(val_data, batch_size=GNN_BATCH_SIZE)
 
-        model_factory = lambda: build_model(
-            device=DEVICE,
-            use_site_embedding=True,
-            use_demographics=True,
-            use_grl=True,
-            grl_alpha=GNN_GRL_ALPHA,
-            edge_gate=True,
-        )
+        def model_factory():
+            return build_model(
+                    device=DEVICE,
+                    use_site_embedding=True,
+                    use_demographics=True,
+                    use_grl=True,
+                    grl_alpha=GNN_GRL_ALPHA,
+                    edge_gate=True,
+                )
         model = model_factory().to(DEVICE)
 
         best_state, best_metrics, _ = train_fold_with_onecycle(
@@ -219,7 +210,7 @@ def main():
     dataset = ABIDECausalDataset(split="train")
     logger.info(f"  Loaded {len(dataset)} training subjects")
 
-    results: Dict[str, Dict] = {}
+    results: dict[str, dict] = {}
     for sample_frac in args.subsamples:
         result = run_kfold_subsample(dataset, sample_frac)
         if result:
@@ -238,8 +229,9 @@ def main():
     logger.info(f"  {'100% (full)':<10} {results.get('100pct', {}).get('mean_auc', 'N/A'):.4f}")
     logger.info("=" * 70)
 
-    import pandas as pd
     import json
+
+    import pandas as pd
     out_csv = RESULTS_ABLATIONS_DIR / "learning_curve.csv"
     pd.DataFrame([
         {

@@ -12,8 +12,12 @@ from tqdm import tqdm
 # Setup paths from config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
-    DATA_FINAL, ATLAS_PATH, LOBE_MAPPING, NUM_LOBES,
-    ALFF_SLICE_PERCENTILES, YOLO_IMGSZ
+    ALFF_SLICE_PERCENTILES,
+    ATLAS_PATH,
+    DATA_FINAL,
+    LOBE_MAPPING,
+    NUM_LOBES,
+    YOLO_IMGSZ,
 )
 
 # Setup logging
@@ -48,26 +52,26 @@ def generate_atlas_labels_for_percentiles():
     if not ATLAS_PATH.exists():
         logger.error(f"Atlas not found at {ATLAS_PATH}")
         return {}
-    
+
     atlas_img = nib.as_closest_canonical(nib.load(str(ATLAS_PATH)))
     data = atlas_img.get_fdata()
     atlas_z_dim = data.shape[2]
-    
+
     # Use percentiles from config (single source of truth with abide_download.py)
     atlas_labels = {}
 
     logger.info(f"Pre-calculating atlas bounding boxes for {len(ALFF_SLICE_PERCENTILES)} percentile slices (atlas z_dim={atlas_z_dim})...")
-    
+
     for idx, p in enumerate(ALFF_SLICE_PERCENTILES):
         z = int(atlas_z_dim * p)  # Atlas z-index for this percentile
-        
+
         if z >= atlas_z_dim:
             logger.warning(f"Percentile {p} maps to z={z} which exceeds atlas z_dim={atlas_z_dim}")
             continue
-            
+
         bboxes = []
         slice_data = data[:, :, z]
-        
+
         for class_id in range(NUM_LOBES):
             aal_ids = [roi_id + 1 for roi_id in LOBE_MAPPING[class_id]]
             mask = np.isin(slice_data, aal_ids)
@@ -78,12 +82,12 @@ def generate_atlas_labels_for_percentiles():
             bbox = calculate_yolo_bbox(np.array(mask_img), IMG_SIZE)
             if bbox:
                 bboxes.append(f"{class_id} {bbox}")
-        
+
         if bboxes:
             # Key by percentile index (0-6) so it works for all subject z-dimensions
             atlas_labels[idx] = bboxes
             logger.debug(f"Percentile {p} (idx={idx}, z={z}): {len(bboxes)} boxes")
-    
+
     return atlas_labels
 
 
@@ -94,13 +98,13 @@ def main():
 
     # Generate atlas annotations indexed by percentile (0-6)
     atlas_anno = generate_atlas_labels_for_percentiles()
-    
+
     if not atlas_anno:
         logger.error("Failed to generate atlas annotations. Check atlas file exists.")
         return
-    
+
     logger.info(f"Generated annotations for {len(atlas_anno)} percentile slices")
-    
+
     splits = ["train", "val", "test"]
     total_images = 0
     total_labels = 0
@@ -117,11 +121,11 @@ def main():
         img_files = sorted([f for f in os.listdir(img_dir) if f.endswith(".png")])
 
         logger.info(f"Annotating {split} split ({len(img_files)} images)...")
-        
+
         # Group images by subject to map z-indices to percentiles
 
         subject_slices = defaultdict(list)
-        
+
         for img_name in img_files:
             try:
                 # Extract subject_id and z-index from filename like "Caltech_0051456_z12.png"
@@ -134,16 +138,16 @@ def main():
             except Exception as e:
                 logger.warning(f"Failed to parse {img_name}: {e}")
                 continue
-        
+
         # Generate labels for each subject
         for subject_id, slice_list in tqdm(subject_slices.items(), desc=f"Subjects in {split}"):
             # Sort by z-index to map to percentiles
             slice_list_sorted = sorted(slice_list, key=lambda x: x[0])
-            
+
             if len(slice_list_sorted) != len(ALFF_SLICE_PERCENTILES):
                 logger.warning(f"{subject_id}: Expected {len(ALFF_SLICE_PERCENTILES)} slices, got {len(slice_list_sorted)}")
                 continue
-            
+
             # Map each slice to its corresponding percentile index (0-6)
             for percentile_idx, (z_idx, img_name) in enumerate(slice_list_sorted):
                 if percentile_idx in atlas_anno:
@@ -153,7 +157,7 @@ def main():
                     total_labels += 1
                 else:
                     logger.warning(f"No annotations for percentile index {percentile_idx}")
-            
+
             total_images += len(slice_list_sorted)
 
     logger.info(f"Annotation complete. Created {total_labels} labels for {total_images} images across all splits.")

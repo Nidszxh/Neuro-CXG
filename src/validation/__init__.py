@@ -10,8 +10,9 @@ __all__ = ["PipelineValidator", "ensure_atlas"]
 def __getattr__(name: str):
     """Lazy-load PipelineValidator on first attribute access."""
     if name == "PipelineValidator":
-        from .pipeline_checks import PipelineValidator as _PV  # noqa: PLC0415
         import sys as _sys
+
+        from .pipeline_checks import PipelineValidator as _PV  # noqa: PLC0415
         _mod = _sys.modules[__name__]
         _mod.PipelineValidator = _PV  # type: ignore[union-attr]
         return _mod.__dict__[name]

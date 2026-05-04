@@ -13,8 +13,8 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -26,7 +26,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.core.config import CAUSAL_GRAPHS_DIR, LOBE_NAMES, MASTER_MANIFEST, NUM_LOBES, RESULTS_DIR
+from src.core.config import (
+    CAUSAL_GRAPHS_DIR,
+    LOBE_NAMES,
+    MASTER_MANIFEST,
+    NUM_LOBES,
+    RESULTS_DIR,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,14 +72,14 @@ LOBE_COLORS = {
 }
 
 
-def _resolve_lobe_order(raw_order: Sequence[str]) -> List[str]:
+def _resolve_lobe_order(raw_order: Sequence[str]) -> list[str]:
     """Resolve lobe order with fallback to config names when missing."""
     if raw_order and len(raw_order) == NUM_LOBES:
         return list(raw_order)
     return [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 
 
-def _compute_stats_from_adj(adj: np.ndarray) -> Dict[str, float]:
+def _compute_stats_from_adj(adj: np.ndarray) -> dict[str, float]:
     """Compute graph stats robustly from adjacency matrix."""
     mask = ~np.eye(adj.shape[0], dtype=bool)
     off_diag = adj[mask]
@@ -96,7 +102,7 @@ def _compute_stats_from_adj(adj: np.ndarray) -> Dict[str, float]:
     }
 
 
-def load_graph(subject_id: str) -> Tuple[np.ndarray, List[str], Dict[str, float]]:
+def load_graph(subject_id: str) -> tuple[np.ndarray, list[str], dict[str, float]]:
     """Load graph file and return adjacency, lobe order, and stats."""
     graph_path = CAUSAL_GRAPHS_DIR / f"{subject_id}_graph.pt"
     if not graph_path.exists():
@@ -131,7 +137,7 @@ def build_graph(adj: np.ndarray, lobe_order: Sequence[str], threshold: float) ->
     return graph
 
 
-def _position_map(lobe_order: Sequence[str]) -> Dict[str, Tuple[float, float]]:
+def _position_map(lobe_order: Sequence[str]) -> dict[str, tuple[float, float]]:
     """Create stable anatomical circular layout for provided lobe order."""
     display_index = {name: i for i, name in enumerate(DISPLAY_ORDER)}
     used = []
@@ -139,8 +145,8 @@ def _position_map(lobe_order: Sequence[str]) -> Dict[str, Tuple[float, float]]:
         used.append(display_index.get(name, len(DISPLAY_ORDER) + i))
 
     denom = max(len(used), 1)
-    pos: Dict[str, Tuple[float, float]] = {}
-    for name, idx in zip(lobe_order, used):
+    pos: dict[str, tuple[float, float]] = {}
+    for name, idx in zip(lobe_order, used, strict=False):
         angle = 2 * np.pi * idx / denom - np.pi / 2
         pos[name] = (float(np.cos(angle)), float(np.sin(angle)))
     return pos
@@ -151,7 +157,7 @@ def draw_graph(
     adj: np.ndarray,
     lobe_order: Sequence[str],
     title: str,
-    stats: Dict[str, float],
+    stats: dict[str, float],
     threshold: float,
 ) -> None:
     """Draw one causal graph panel."""
@@ -180,11 +186,11 @@ def draw_graph(
         norm = (abs_weights - w_min) / scale
         edge_widths = 1.5 + 4.5 * norm
         edge_colors = plt.cm.RdYlBu_r(norm)
-        
+
         # Draw edges with z-order: stronger edges on top
-        abs_weights_sorted = sorted(zip(edge_widths, edge_colors, graph.edges()), 
+        abs_weights_sorted = sorted(zip(edge_widths, edge_colors, graph.edges(), strict=False),
                                        key=lambda x: x[0])
-        
+
         for width, color, (u, v) in abs_weights_sorted:
             nx.draw_networkx_edges(
                 graph,
@@ -240,7 +246,7 @@ def resolve_dx_label(subject_id: str, manifest: pd.DataFrame) -> str:
     return f"DX_{dx}"
 
 
-def pick_asd_control_pair(manifest: pd.DataFrame, site_id: Optional[str]) -> Tuple[str, str]:
+def pick_asd_control_pair(manifest: pd.DataFrame, site_id: str | None) -> tuple[str, str]:
     """Pick one ASD and one Control subject, optionally constrained to site."""
     base = manifest
     if site_id:
