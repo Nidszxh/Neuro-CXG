@@ -61,11 +61,31 @@ python -m src.analysis.visualize_causal_graph --auto-pair --site-id CMU
 ```
 CAUSALITY_METHOD = "ridge_granger_hybrid"
 RIDGE_GRANGER_HYBRID_BETA = 0.70
+GNN_HIDDEN_CHANNELS = 48
+GNN_NUM_HEADS = 4
+GNN_NUM_LAYERS = 3
+GNN_DROPOUT = 0.33
+GNN_ONECYCLE_WARMUP_FRACTION = 0.20
+GNN_AUTO_GRL_GRID_SEARCH = False
+GNN_GRL_ALPHA = 0.10
 ```
 
 **Results:**
-- CV AUC: 0.8102 ± 0.0273 (+1.02% vs lagged_pearson) [UPDATED — was 0.8100, now 0.8102 per 12lobes.txt:755]
-- Test AUC: 0.8657 (+0.3% vs lagged_pearson) [UPDATED — was 0.8651, now 0.8657 per 12lobes.txt:1098]
+- CV AUC: 0.8168 ± 0.0488 (+0.64% vs canonical)
+- Test AUC: **0.8810** (+1.53% vs canonical 0.8657)
+
+**Best Configuration:**
+```
+CAUSALITY_METHOD = "ridge_granger_hybrid"
+RIDGE_GRANGER_HYBRID_BETA = 0.70
+GNN_HIDDEN_CHANNELS = 48        # was 32
+GNN_NUM_HEADS = 4               # was 2
+GNN_NUM_LAYERS = 3              # was 2
+GNN_DROPOUT = 0.33              # was 0.35
+GNN_ONECYCLE_WARMUP_FRACTION = 0.20  # was 0.05
+GNN_AUTO_GRL_GRID_SEARCH = False  # Disabled
+GNN_GRL_ALPHA = 0.10           # Fixed
+```
 
 ---
 

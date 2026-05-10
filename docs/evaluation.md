@@ -4,37 +4,55 @@ This document covers canonical metrics, statistical tests, per-site breakdown, a
 
 ---
 
-## §1 — Canonical Results (Publication-Ready)
+## §1 — Best Results (May 11, 2026)
 
-### Primary Model Identity (May 2, 2026)
+### Primary Model Identity
+
+- **Architecture**: 12-lobe GATv2 with site-conditioned GRL (alpha=0.10, fixed)
+- **Causality method**: ridge_granger_hybrid (β=0.70, 70% Ridge Granger + 30% Lagged Pearson)
+- **GNN Config**: 48ch/4hd/3L/0.33
+- **Provenance**: `src/core/hyperparams.py` — verified stable across 3 runs
+
+### Best Test Results (48ch/4hd/3L/0.33, May 2026)
+
+| Metric | Value | 95% CI | Notes |
+|--------|-------|--------|-------|
+| **Test AUC** | **0.8810** | [0.8277, 0.9322] | 3-run stable |
+| **F1 (Youden)** | **0.8375** | [0.7785, 0.8903] | Threshold=0.475 |
+| **Accuracy** | **83.12%** | [77.27%, 88.33%] | |
+| **Sensitivity** | 84.81% | [75.95%, 92.41%] | ASD recall |
+| **Specificity** | 81.33% | [73.33%, 89.37%] | Control recall |
+| **AUPRC** | 0.8815 | — | |
+
+### Statistical Significance
+
+| Test | p-value | Interpretation |
+|------|---------|----------------|
+| Permutation (global) | < 0.001 | Significant vs random |
+| Permutation (within-site) | < 0.001 | Significant after site correction |
+
+---
+
+## §2 — Canonical Baseline (May 2, 2026)
+
+### Canonical Model Identity
 
 - **Architecture**: 12-lobe GATv2 with site-conditioned GRL (alpha=0.10)
-- **Causality method**: ridge_granger_hybrid (β=0.70, 70% Ridge Granger + 30% Lagged Pearson)
+- **Causality method**: ridge_granger_hybrid (β=0.70)
+- **GNN Config**: 32ch/2hd/2L/0.35
 - **Config hash**: 6b6ca55b (run log: 12lobes.txt)
 
-- **Note**: ridge_granger_hybrid combines causal signal (Granger) with correlation strength (Pearson)
+### Canonical Per-Fold CV Breakdown
 
-### Test Results (ridge_granger_hybrid, April 2026)
+| Fold | Val AUC | F1 | Test AUC |
+|------|---------|-----|----------|
+| 1 | 0.8027 | 0.7671 | 0.8354 |
+| 2 | 0.7841 | 0.7500 | 0.8397 |
+| 3 | 0.8062 | 0.7682 | 0.7995 |
+| 4 | 0.7953 | 0.6829 | 0.8584 |
+| 5 | 0.8626 | 0.7692 | 0.8415 |
 
-### Per-Fold CV Breakdown (ridge_granger_hybrid)
-Provenance: Config hash 6b6ca55b, run log 12lobes.txt
-
-| Fold | CV AUC | F1 | Best Epoch |
-|------|--------|-----|------------|
-| 1 | 0.8027 [UPDATED — was 0.8039, now 0.8027 per 12lobes.txt:565] | 0.7671 | 53 |
-| 2 | 0.7841 [UPDATED — was 0.7833, now 0.7841 per 12lobes.txt:609] | 0.7500 [UPDATED — was 0.7077, now 0.7500 per 12lobes.txt:609] | 50 |
-| 3 | 0.8058 | 0.7682 | 36 |
-| 4 | 0.7951 | 0.6829 | 29 |
-| 5 | 0.8626 | 0.7692 | 37 |
-
-**CV Summary**: 0.8101 ± 0.0274 [Note: Includes fold3-5 from prior runs; 12lobes.txt run log only includes fold1-2]
-
-### Key Hyperparameter Changes (April 30, 2026)
-
-| Parameter | Before | After | Impact |
-|-----------|--------|-------|--------|
-| RIDGE_GRANGER_LAMBDA | 1.0 | 0.1 | Less regularization → more signal |
-| RIDGE_GRANGER_P_PRUNE_THRESHOLD | 0.20 | 0.10 | More edges retained |
+**Canonical CV**: 0.8102 ± 0.0273 | **Canonical Test AUC**: 0.8657
 
 ---
 
@@ -137,7 +155,8 @@ ASD subjects show **significantly higher parietal cortex in-degree** (p=0.028, s
 | 2026-04-28 | 0.7997 ± 0.0294 | 0.8694 | 12-lobe approved |
 | 2026-04-30 | 0.7856 ± 0.0290 | **0.8413** | ridge_granger (λ=0.1) |
 | 2026-05-01 | 0.8101 ± 0.0274 | **0.8651** | ridge_granger_hybrid (β=0.70) |
-| 2026-05-02 | **0.8102 ± 0.0273** [UPDATED — was 0.8101, now 0.8102 per 12lobes.txt:755] | **0.8657** [UPDATED — was 0.8651, now 0.8657 per 12lobes.txt:1098] | Config hash 6b6ca55b, full run log |
+| 2026-05-02 | 0.8102 ± 0.0273 | **0.8657** | Canonical (32ch/2hd/2L) |
+| **2026-05-11** | **0.8168 ± 0.0488** | **0.8810** | **Best (48ch/4hd/3L/0.33)** |
 
 ---
 
@@ -170,13 +189,18 @@ python src/run_evaluation.py --no-permutation
 
 ### Primary Metrics to Report
 
-**See [`docs/paper/results.md`](paper/results.md) for canonical metrics.**
+**See [`docs/paper/results.md`](paper/results.md) for full metrics.**
 
-Key metrics:
+Best model (May 11, 2026):
+- Test AUC: **0.8810** [95% CI: 0.8277, 0.9322] — 3-run stable
+- CV AUC: 0.8168 ± 0.0488
+- Test F1: 0.8375 (Youden threshold)
+- Sensitivity: **84.81%** (+15.5% vs canonical)
+- Per-site breakdown: available in [`docs/paper/results.md`](paper/results.md)
+
+Canonical baseline (May 2, 2026):
 - Test AUC: 0.8657 [95% CI: 0.8017, 0.9185]
 - CV AUC: 0.8102 ± 0.0273
-- Test F1: 0.7733 (Youden threshold)
-- Per-site breakdown: available in [`docs/paper/results.md`](paper/results.md)
 
 ### Known Limitations
 

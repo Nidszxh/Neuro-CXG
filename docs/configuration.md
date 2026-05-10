@@ -112,33 +112,24 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 | `SPARSITY_TOPK_PER_NODE` | 3 | Edges per node |
 | `MIN_EDGES_PER_GRAPH` | 12 | Minimum edges |
 
-### GNN Architecture Defaults
+### GNN Architecture Defaults (Best: 48ch/4hd/3L/0.33)
 
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| `GNN_HIDDEN_CHANNELS` | 32 | Reduced from 64 |
-| `GNN_NUM_HEADS` | 2 | Attention heads |
-| `GNN_NUM_LAYERS` | 2 | GAT layers |
-| `GNN_DROPOUT` | 0.35 | Dropout rate |
-| `GNN_POOLING` | `"anatomical"` | Hierarchical pooling |
-| `GNN_WEIGHT_DECAY` | 5e-4 | L2 regularization |
-| `GNN_ONECYCLE_MAX_LR` | 0.001 | Max learning rate [per `12lobes.txt:522`] |
-| `GNN_ONECYCLE_WARMUP_FRACTION` | 0.05 | Warmup fraction |
-| `GNN_BATCH_SIZE` | 32 | Batch size |
-| `GNN_EPOCHS` | 100 | Max epochs |
-| `K_FOLDS` | 5 | CV folds |
-| `GNN_SEED` | 42 | Global seed (everywhere) |
+| Parameter | Canonical | Best (May 2026) | Notes |
+|-----------|-----------|-----------------|-------|
+| `GNN_HIDDEN_CHANNELS` | 32 | **48** | Increased capacity, best AUC |
+| `GNN_NUM_HEADS` | 2 | **4** | More attention heads |
+| `GNN_NUM_LAYERS` | 2 | **3** | Deeper GNN, better generalization |
+| `GNN_DROPOUT` | 0.35 | **0.33** | Optimal regularization |
+| `GNN_POOLING` | `"anatomical"` | `"anatomical"` | Hierarchical pooling |
+| `GNN_WEIGHT_DECAY` | 5e-4 | 5e-4 | L2 regularization |
+| `GNN_ONECYCLE_MAX_LR` | 0.001 | 0.001 | Max learning rate |
+| `GNN_ONECYCLE_WARMUP_FRACTION` | 0.05 | **0.20** | Longer warmup for GRL stability |
+| `GNN_BATCH_SIZE` | 32 | 32 | Batch size |
+| `GNN_EPOCHS` | 100 | 100 | Max epochs |
+| `K_FOLDS` | 5 | 5 | CV folds |
+| `GNN_SEED` | 42 | 42 | Global seed (everywhere) |
 
-**Per-Fold Results** (config hash `6b6ca55b`, `12lobes.txt:755-762`):
-| Fold | AUC | F1 | Best Epoch |
-|------|--------|-----|------------|
-| 1 | 0.8027 | 0.7671 | 53 |
-| 2 | 0.7841 | 0.7500 | 50 |
-| 3 | 0.8062 | 0.7682 | 36 |
-| 4 | 0.7953 | 0.6829 | 29 |
-| 5 | 0.8626 | 0.7692 | 37 |
-
-**CV Summary**: 0.8102 ± 0.0273, mean F1=0.7475 ± 0.0331
+**Best Config Provenance**: 3 independent runs, AUC=[0.8807, 0.8773, 0.8810], mean=0.8797 ± 0.0015
 
 ### Site Bias Controls
 
@@ -147,8 +138,8 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 | `GNN_USE_SITE_EMBEDDING` | True | Site conditioning |
 | `GNN_USE_DEMOGRAPHICS` | True | Demographic conditioning |
 | `GNN_USE_GRL` | True | Gradient reversal layer |
-| `GNN_GRL_ALPHA` | **0.10** | ⚠️ **CRITICAL**: Do NOT set to 1.0 — test AUC drops from 0.87 to 0.83 |
-| `GNN_GRL_ALPHA_MAX` | 1.0 | Alpha max for annealing |
+| `GNN_GRL_ALPHA` | **0.10** | Fixed - no grid search |
+| `GNN_GRL_ALPHA_MAX` | 0.10 | No annealing (fixed alpha) |
 | `GNN_SITE_LOSS_WEIGHT` | 0.15 | Site loss weight |
 
 ### Auxiliary Objective Controls

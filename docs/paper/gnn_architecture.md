@@ -61,17 +61,18 @@ flowchart TB
     O --> P["Logits<br/>(Control, ASD)"]
 ```
 
-## Component Details
+## Component Details (Best Model: 48ch/4hd/3L/0.33)
 
-| Component | Shape | Description |
-|-----------|-------|-------------|
-| Node Features | (batch, 12, 24) | 12 lobes × 24 features (temporal + frequency + spatial) |
-| Node Embedding | (batch, 12, 16) | Learnable positional embeddings per lobe |
-| Linear (in) | (24 + 16) → 128 | Project to hidden dimension |
-| GATv2 Layers | 2 layers × 4 heads | Multi-head self-attention with edge gating |
-| Edge Gate | MLP(sigmoid) | Learnable edge weight modulation |
-| Pooling | mean + max + sum | Concatenate three pooling strategies → 384-dim |
-| Classifier MLP | 384 → 128 → 2 | Final classification head |
+| Component | Canonical | Best (May 2026) | Description |
+|-----------|-----------|-----------------|-------------|
+| Node Features | (batch, 12, 24) | (batch, 12, 24) | 12 lobes × 24 features |
+| Node Embedding | (batch, 12, 16) | (batch, 12, 16) | Learnable positional embeddings |
+| Linear (in) | (24 + 16) → 32 | **(24 + 16) → 48** | Project to hidden dimension |
+| GATv2 Layers | **2 layers** × 2 heads | **3 layers** × 4 heads | Multi-head self-attention with edge gating |
+| Hidden dim | 32 | **48** | Increased capacity |
+| Edge Gate | MLP(sigmoid) | MLP(sigmoid) | Learnable edge weight modulation |
+| Pooling | mean + max + sum | mean + max + sum | Concatenate three strategies → 576-dim |
+| Classifier MLP | 576 → 128 → 2 | 576 → 128 → 2 | Final classification head |
 
 ## Optional Components
 

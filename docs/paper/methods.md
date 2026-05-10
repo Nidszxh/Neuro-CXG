@@ -21,11 +21,11 @@ We conducted **fresh end-to-end pipeline runs** comparing 12-lobe and 11-lobe ar
 
 | Architecture | Test AUC | 95% CI | CV AUC (5-fold) | Std |
 |--------------|----------|--------|-----------------|-----|
-| **12-Lobe (with Brainstem)** | **0.8657** | [0.8017, 0.9185] | 0.8102 | ±0.0273 |
+| **12-Lobe (with Brainstem)** | **0.8810** | [0.8277, 0.9322] | 0.8168 | ±0.0488 |
 | 11-Lobe (without Brainstem) | 0.8280 | [0.7653, 0.8891] | 0.8134 | ±0.0486 |
-| **Delta** | **+0.0377** | — | -0.0032 | — |
+| **Delta** | **+0.0530** | — | -0.0032 | — |
 
-**Key Finding**: 12-lobe outperforms 11-lobe by **+3.77%** on the test set. While 11-lobe shows marginally higher CV AUC (+0.32%), this difference is not statistically significant (paired t-test p=0.7813), and the test set advantage clearly favors 12-lobe.
+**Key Finding**: 12-lobe outperforms 11-lobe by **+5.30%** on the test set. While 11-lobe shows marginally higher CV AUC (+0.32%), this difference is not statistically significant (paired t-test p=0.7813), and the test set advantage clearly favors 12-lobe.
 
 ### Why Main CV Appears Lower Than Some Earlier Experiments
 
@@ -34,7 +34,7 @@ During development, some experiments showed higher CV AUC (~0.84) compared to th
 | Aspect | Main Pipeline | Earlier Experiments |
 |--------|---------------|---------------------|
 | Harmonization | **Fold-specific** (fit only on fold's train) | Global (fit on all train) |
-| CV AUC | 0.8102 | ~0.84 |
+| CV AUC | 0.8168 | ~0.84 |
 | Rigor | **Higher** (no leakage) | Lower (artificial inflation) |
 
 The **fold-specific harmonization** in the main pipeline prevents any data leakage from validation folds into the harmonization fitting process. While this produces a slightly lower CV, it is the more rigorous and correct approach.
@@ -43,7 +43,7 @@ The earlier "fair comparison" (CV 0.8393 vs 0.8635) was based on **global harmon
 
 ### Historical Note
 
-The earlier claim of +8.74% improvement (12-lobe 0.8694 vs 11-lobe 0.7995) was based on an **unfair comparison** — different graph construction methods (lagged_pearson vs ridge_granger) were used for each architecture. With identical methods (ridge_granger_hybrid), **12-lobe wins by +3.77%** on the test set.
+The earlier claim of +8.74% improvement (12-lobe 0.8694 vs 11-lobe 0.7995) was based on an **unfair comparison** — different graph construction methods (lagged_pearson vs ridge_granger) were used for each architecture. With identical methods (ridge_granger_hybrid), **12-lobe wins by +5.30%** on the test set.
 
 **Conclusion**: Brainstem inclusion provides a **+3.77% test AUC advantage** and is the canonical architecture. The 12-lobe model is retained as the primary model for publication.
 

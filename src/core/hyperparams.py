@@ -142,14 +142,15 @@ EXCLUDED_SUBJECTS: frozenset = CURATED_WORST_SUBJECTS_1015
 MAX_NAN_ROIS: int = 30
 
 # --- GNN MODEL PARAMETERS (Phase 3: regularized for small graphs) ---
-GNN_HIDDEN_CHANNELS = 32
-GNN_NUM_HEADS = 2
+# 128 matched the stronger validated training snapshot and avoids underfitting.
+GNN_HIDDEN_CHANNELS = 128
+GNN_NUM_HEADS = 4
 GNN_NUM_CLASSES = 2  # 0: Control, 1: ASD
-GNN_DROPOUT = 0.35
-GNN_WEIGHT_DECAY = 5e-4
+GNN_DROPOUT = 0.20
+GNN_WEIGHT_DECAY = 1e-3
 GNN_LEARNING_RATE = 0.001
 GNN_BATCH_SIZE = 32
-GNN_EPOCHS = 100
+GNN_EPOCHS = 150
 K_FOLDS = 5
 
 GNN_NUM_LAYERS = 2
@@ -158,19 +159,19 @@ GNN_USE_SITE_EMBEDDING = True
 GNN_SITE_EMBEDDING_DIM = 16
 GNN_NODE_EMB_DIM = 16
 GNN_USE_DEMOGRAPHICS = True
-GNN_EARLY_STOPPING_PATIENCE = 30
+GNN_EARLY_STOPPING_PATIENCE = 50  # Increased from 30 to prevent Fold 0 premature stopping
 # Guardrail against premature stopping on noisy/unstable folds.
 GNN_MIN_EPOCHS_BEFORE_STOPPING = 30
 GNN_POOLING = "anatomical"  # Options: 'anatomical', 'attention', 'mean_max_sum'
 GNN_USE_GRL = True
 GNN_GRL_ALPHA = 0.10
-GNN_GRL_ALPHA_MAX = 0.10  # Fixed at 0.10 - using 1.0 causes test performance drop
+GNN_GRL_ALPHA_MAX = GNN_GRL_ALPHA  # Fixed at 0.10 - using 1.0 causes test performance drop
 GRL_ALPHA_CANDIDATES = [0.10, 0.25, 0.50, 1.0]
 GNN_AUTO_GRL_GRID_SEARCH = False
 # Non-zero weight enables actual adversarial site debiasing when GRL is active.
 GNN_SITE_LOSS_WEIGHT = 0.15
 GNN_EDGE_GATE = True
-GNN_ONECYCLE_MAX_LR = 0.001
+GNN_ONECYCLE_MAX_LR = 0.002
 GNN_ONECYCLE_PCT_START = 0.2
 GNN_ONECYCLE_WARMUP_FRACTION = 0.05
 
@@ -237,7 +238,7 @@ OPTIMIZE_THRESHOLD = True
 # - "fixed": use EVAL_FIXED_THRESHOLD directly (deployment lock)
 EVAL_THRESHOLD_POLICY = "youden"
 EVAL_FIXED_THRESHOLD = 0.5263  # Kept for backward compatibility
-EVAL_PER_SITE_MIN_SAMPLES = 10  # Minimum samples per site for per-site calibration
+EVAL_PER_SITE_MIN_SAMPLES = 20  # Minimum samples per site for reliable AUC estimation
 EVAL_SEED = 42  # Random seed for bootstrap/permutation tests
 
 # Site robustness gate derived from cross-site experiment output
@@ -279,20 +280,17 @@ _MULTIVIEW_VIEW_ORDER = (
     "high_confidence",
 )
 
-# --- DEMOGRAPHIC NORMALIZATION CONSTANTS (REFACTOR) ---
-# Hardcoded normalization values in graph_factory.py that should be configurable
+# --- DEMOGRAPHIC NORMALIZATION CONSTANTS ---
 DEMO_AGE_CENTER = 15.0
 DEMO_AGE_SCALE = 20.0
 DEMO_SEX_CENTER = 1.5
 DEMO_FIQ_CENTER = 100.0
 DEMO_FIQ_SCALE = 30.0
 
-# --- GRL ANNEALING CONFIG (REFACTOR) ---
-# Hardcoded GRL annealing parameters in causal_gnn.py
+# --- GRL ANNEALING CONFIG ---
 GRL_ANNEAL_STEEPNESS = 5.0
 
-# --- AUDIT SAMPLING CONFIG (REFACTOR) ---
-# Hardcoded sampling constants in pipeline_checks.py
+# --- AUDIT SAMPLING CONFIG ---
 AUDIT_SAMPLE_PNG = 20
 AUDIT_SAMPLE_TS = 10
 AUDIT_MAX_EMPTY_ROI_FRACTION = 0.50

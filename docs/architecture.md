@@ -296,7 +296,7 @@ Into node tensor `x` with shape `(NUM_LOBES, GNN_IN_CHANNELS)`.
 - Edge attributes: 1 dimension (causality weight)
 
 **Architecture Details:**
-- Backbone: GATv2Conv (2 layers, 2 attention heads, 32 hidden channels)
+- Backbone: GATv2Conv (3 layers, 4 attention heads, 48 hidden channels)
 - Activation: GELU
 - Skip connections: Residual add between layers
 - Edge gating: Weight incoming messages by edge attributes

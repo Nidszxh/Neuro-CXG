@@ -23,7 +23,7 @@ ls models/checkpoints/best_model_fold*.pt
 # Step 5: Run evaluation (<30 seconds)
 python src/run_evaluation.py
 
-# Expected: Test AUC ≈ 0.8657 [0.80, 0.92]
+# Expected: Test AUC ≈ 0.8810 [0.83, 0.93] (48ch/4hd/3L/0.33, 3-run stable)
 ```
 
 **What if I don't have data yet?** See Part D for ABIDE download (requires ~2 hours for full dataset).

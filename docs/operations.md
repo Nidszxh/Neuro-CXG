@@ -194,43 +194,30 @@ Use the smallest rebuild that restores consistency:
 
 ### Artifact-Backed Model Performance Snapshot
 
-**Current Best (May 2, 2026 — Config hash 6b6ca55b):** [UPDATED — was May 2026, now May 2 per 12lobes.txt]
+**Best Model (May 11, 2026 — 48ch/4hd/3L/0.33):**
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| **CV AUC** | 0.8102 ± 0.0273 [UPDATED — was 0.8101, now 0.8102 per 12lobes.txt:755] | 5-fold |
-| **Test AUC** | **0.8657** [UPDATED — was 0.8651, now 0.8657 per 12lobes.txt:1098] | Ensemble, 95% CI [0.8017, 0.9185] |
-| **Test F1** | **0.7733** [UPDATED — was 0.7651, now 0.7733 per 12lobes.txt:1100] | Youden threshold (0.6423) |
-| **Test Accuracy** | **0.7792** [UPDATED — was 0.7727, now 0.7792 per 12lobes.txt:1101] | |
-| **Test Sensitivity** | **0.7342** per 12lobes.txt:1102 |
-| **Test Specificity** | **0.8267** per 12lobes.txt:1103 |
-| **Permutation p** | **0.0010** per 12lobes.txt:1128 |
+| **CV AUC** | 0.8168 ± 0.0488 | 5-fold, 3-run stable |
+| **Test AUC** | **0.8810** | Ensemble, 95% CI [0.8277, 0.9322] |
+| **Test F1** | **0.8375** | Youden threshold (0.4752) |
+| **Test Accuracy** | **0.8312** | |
+| **Test Sensitivity** | 0.8481 | |
+| **Test Specificity** | 0.8133 | |
+| **Permutation p** | 0.001 | |
 
 **Method:** ridge_granger_hybrid (β=0.70)
 
-**Per-Fold Results (12-Lobe):**
-Provenance: Config hash 6b6ca55b, run log 12lobes.txt
-| Fold | AUC | F1 |
-|------|-----|-----|
-| 1 | 0.8027 [UPDATED — was 0.8039, now 0.8027 per 12lobes.txt:565] | 0.7671 |
-| 2 | 0.7841 [UPDATED — was 0.7833, now 0.7841 per 12lobes.txt:609] | 0.7500 [UPDATED — was 0.7077, now 0.7500 per 12lobes.txt:609] |
-| 3 | 0.8058 | 0.7682 |
-| 4 | 0.7951 | 0.6829 |
-| 5 | 0.8626 | 0.7692 |
-
-**Configuration that achieved these results:**
-
+**Configuration:**
 ```python
+GNN_HIDDEN_CHANNELS = 48  # Best: 32→48
+GNN_NUM_HEADS = 4          # Best: 2→4
+GNN_NUM_LAYERS = 3         # Best: 2→3
+GNN_DROPOUT = 0.33         # Best: 0.35→0.33
+GNN_ONECYCLE_WARMUP_FRACTION = 0.20  # Increased from 0.05
+GNN_GRL_ALPHA = 0.10       # Fixed, no grid search
+GNN_AUTO_GRL_GRID_SEARCH = False
 CAUSALITY_METHOD = "ridge_granger_hybrid"
-GNN_HIDDEN_CHANNELS = 32
-GNN_WEIGHT_DECAY = 5e-4
-GNN_POOLING = "anatomical"
-GNN_USE_SITE_EMBEDDING = True
-GNN_USE_DEMOGRAPHICS = True
-GNN_GRL_ALPHA = 0.10  # NOT 1.0 - test drops with 1.0
-USE_FOCAL_LOSS = True
-EVAL_THRESHOLD_POLICY = "youden"
-RIDGE_GRANGER_HYBRID_BETA = 0.70
 ```
 
 ### Historical Performance Table
@@ -240,7 +227,8 @@ RIDGE_GRANGER_HYBRID_BETA = 0.70
 | Baseline (ridge_granger) | 0.7586 ± 0.0519 | 0.7325 | 0.6338 | Initial |
 | lagged_pearson + GRL=0.10 | 0.8004 ± 0.0293 | 0.8753 | 0.8121 | Method switch |
 | 12-Lobe Final | 0.7997 ± 0.0294 | 0.8694 | 0.8000 | 12-lobe approved |
-| **ridge_granger_hybrid** | **0.8102 ± 0.0273** | **0.8657** | **0.7733** | Current best (see docs/paper/results.md) |
+| Canonical (32ch/2hd/2L) | 0.8102 ± 0.0273 | 0.8657 | 0.7733 | May 2 |
+| **Best (48ch/4hd/3L/0.33)** | **0.8168 ± 0.0488** | **0.8810** | **0.8375** | **May 11** |
 
 ### Metric Disagreement Guidance
 

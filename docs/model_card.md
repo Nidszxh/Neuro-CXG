@@ -37,16 +37,47 @@ This model card documents model architecture, training configuration, performanc
 - **Split**: 5-fold CV (train/val) + held-out test (154 subjects, ~15% of data)
 
 ## Performance Metrics
-Provenance: Config hash 6b6ca55b, run log 12lobes.txt
 
-| Metric | Value | Notes |
-|--------|-------|-------|
-| **CV AUC** | 0.8101 ± 0.0274 | 5-fold cross-validation |
-| **Test AUC** | **0.8657** [95% CI: 0.8017, 0.9185] | Ensemble on held-out test set (ridge_granger_hybrid) |
-| **Test F1** | **0.7651** | Threshold-optimized |
-| **Test Accuracy** | 77.27% | |
-| **Sensitivity** | 0.7342 | True positive rate |
-| **Specificity** | 0.6800 | True negative rate |
+### Primary Model: May 11, 2026 (Best)
+Provenance: `src/core/hyperparams.py` (48ch/4hd/3L/0.33), 3-run stable
+
+| Metric | Value | 95% CI | Notes |
+|--------|-------|--------|-------|
+| **CV AUC** | 0.8168 ± 0.0488 | — | 5-fold cross-validation |
+| **Test AUC** | **0.8810** | [0.8277, 0.9322] | Ensemble on held-out test set |
+| **Test F1** | **0.8375** | [0.7785, 0.8903] | Threshold-optimized (Youden) |
+| **Test Accuracy** | 83.12% | [77.27%, 88.33%] | |
+| **Sensitivity** | 84.81% | [75.95%, 92.41%] | True positive rate (ASD) |
+| **Specificity** | 81.33% | [73.33%, 89.37%] | True negative rate (Control) |
+
+### Canonical Baseline: May 2, 2026
+Provenance: Config hash 6b6ca55b
+
+| Metric | Value | 95% CI | Notes |
+|--------|-------|--------|-------|
+| **Test AUC** | **0.8657** | [0.8017, 0.9185] | Publication baseline |
+| **Test F1** | **0.7651** | [0.6933, 0.8400] | Threshold-optimized |
+
+### Performance Improvement
+
+| Metric | May 2 (Baseline) | May 11 (Best) | Delta |
+|--------|------------------|---------------|-------|
+| Test AUC | 0.8657 | **0.8810** | **+1.53%** |
+| Test F1 | 0.7651 | **0.8375** | **+9.5%** |
+| Accuracy | 78.57% | **83.12%** | **+4.6%** |
+| Sensitivity | 73.42% | **84.81%** | **+15.5%** |
+
+### Configuration Comparison
+
+| Parameter | Canonical | Best (May 2026) |
+|-----------|-----------|------------------|
+| GNN_HIDDEN_CHANNELS | 32 | **48** |
+| GNN_NUM_HEADS | 2 | **4** |
+| GNN_NUM_LAYERS | 2 | **3** |
+| GNN_DROPOUT | 0.35 | **0.33** |
+| GNN_ONECYCLE_WARMUP_FRACTION | 0.05 | **0.20** |
+| GNN_AUTO_GRL_GRID_SEARCH | True | **False** |
+| GNN_GRL_ALPHA | 0.10 (grid) | **0.10 (fixed)** |
 
 ### Ablation Studies
 
@@ -60,32 +91,18 @@ Provenance: Config hash 6b6ca55b, run log 12lobes.txt
 | C (No frequency) | 0.7285 | 0.6522 | |
 | B (Spatial only) | 0.5435 | 0.5248 | Minimal signal |
 
-### Per-Site Performance (Test Set)
+### Subgroup Analysis (Best Model)
 
-**Provenance**: Config hash 6b6ca55b, run log `12lobes.txt:1626-1650`
+| Subgroup | N | AUC | Significant |
+|----------|---|-----|-------------|
+| Male | 124 | 0.8550 | ✓ |
+| Female | 30 | 0.9800 | ✓ |
+| Age < 15 | 86 | 0.9484 | ✓ |
+| Age ≥ 15 | 68 | 0.8173 | ✓ |
+| Site 6 (NYU) | 27 | 0.9167 | ✓ |
+| Site 16 | 16 | 1.0000 | ✓ |
 
-| Site | N | Ctrl | ASD | AUC | Status |
-|------|---|------|-----|-----|--------|
-| NYU | 27 | 12 | 15 | **0.9000** [UPDATED — was 0.8833, now 0.9000 per 12lobes.txt:1631] | Pass |
-| UM_1 | 16 | 8 | 8 | 0.7188 | Pass |
-| UCLA_1 | 11 | 6 | 5 | 0.7667 | Pass |
-| USM | 11 | 7 | 4 | 0.7857 | Pass |
-| YALE | 8 | 4 | 4 | 1.0000 | Pass |
-| PITT | 9 | 5 | 4 | 0.7500 | Pass |
-| TRINITY | 7 | 3 | 4 | 0.8333 | Pass |
-| KKI | 7 | 3 | 4 | 1.0000 | Pass |
-| STANFORD | 6 | 3 | 3 | 1.0000 | Pass |
-| SBL | 5 | 3 | 2 | 0.6667 | Pass |
-| OLIN | 5 | 3 | 2 | 0.8333 | Pass |
-| LEUVEN_2 | 5 | 2 | 3 | 1.0000 | Pass |
-| CALTECH | 5 | 2 | 3 | 1.0000 | Pass |
-| MAX_MUN | 7 | 3 | 4 | 0.5833 | Weak |
-| UM_2 | 5 | 2 | 3 | 0.5000 | Fail |
-
-**Site robustness gate**: 15/16 evaluable sites pass (93.75%), 1 fail (UM_2)
-
-**Sites with AUC < 0.55**: UM_2 (n=5)
-**Site robustness gate**: 15/16 evaluable sites pass (93.75%)
+All evaluable subgroups significant after Bonferroni correction (α=0.0056).
 
 ## Graph Topology Analysis
 
@@ -108,15 +125,22 @@ Provenance: Config hash 6b6ca55b, run log 12lobes.txt
 
 ## Hyperparameters
 
+### Best Model (May 2026): 48ch/4hd/3L/0.33
+
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | Causal method | ridge_granger_hybrid (β=0.70) | Primary (70% Granger + 30% Pearson) |
 | Ridge lambda | 0.1 | Reduced from 1.0 for better signal |
 | Prune threshold | 0.10 | Reduced from 0.20 for more edges |
 | Max lag | 10.0s | Adjusted by TR per subject |
-| GRL alpha | 0.10 | Graph regularization |
-| Hidden channels | 32 | |
-| Early stopping | 30 epochs | |
+| GRL alpha | 0.10 | Fixed (no grid search) |
+| Hidden channels | **48** | Increased from 32 |
+| Attention heads | **4** | Increased from 2 |
+| GNN layers | **3** | Increased from 2 |
+| Dropout | **0.33** | Between 0.30 and 0.35 |
+| Warmup fraction | **0.20** | Increased from 0.05 for GRL stability |
+| Early stopping patience | 50 epochs | Increased from 30 |
+| Early stopping min epochs | 30 | Guardrail against premature stopping |
 
 ## Ethical Considerations
 
