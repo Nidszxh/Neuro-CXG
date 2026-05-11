@@ -235,7 +235,7 @@ class EarlyStopping:
         self.min_delta = min_delta
         self.mode = mode
         self.counter = 0
-        self.best_score = None
+        self.best_score: float | None = None
         self.early_stop = False
 
     def __call__(self, score: float) -> bool:
@@ -796,7 +796,7 @@ def train_one_epoch_with_accumulation(
     # Task 4 additions (DD-012)
     spatial_invariance_loss_fn: nn.Module | None = None,
     spatial_invariance_weight: float = 0.0,
-) -> float:
+) -> tuple[float, float]:
     """
     Train for one epoch with gradient accumulation.
 
@@ -830,6 +830,7 @@ def train_one_epoch_with_accumulation(
     total_loss = 0.0
     num_batches = 0
     optimizer.zero_grad()
+    epoch_grad_norm = 0.0
 
     # Instantiate contrastive loss once per epoch (reuse temperature)
     contrastive_fn = EdgeStructureContrastiveLoss(temperature=0.5) if edge_contrastive_weight > 0 else None
@@ -982,6 +983,7 @@ def train_one_epoch_with_accumulation(
 
         else:
             if multiview_batches is not None:
+                assert invariance_loss_fn is not None, "invariance_loss_fn required when multiview_batches is not None"
                 logits_full, multiview_embeddings = model.forward_multiview(multiview_batches)
                 emb_full = multiview_embeddings[0]
                 focal = criterion(logits_full, data.y)
@@ -1037,9 +1039,10 @@ def train_one_epoch_with_accumulation(
         loss.backward()
 
         if (i + 1) % gradient_accumulation_steps == 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
             optimizer.step()
             optimizer.zero_grad()
+            epoch_grad_norm = max(epoch_grad_norm, (grad_norm.item() if torch.is_tensor(grad_norm) else float(grad_norm)))
 
         total_loss += loss.item() * gradient_accumulation_steps
         num_batches += 1
@@ -1050,7 +1053,7 @@ def train_one_epoch_with_accumulation(
         optimizer.step()
         optimizer.zero_grad()
 
-    return total_loss / max(num_batches, 1)
+    return total_loss / max(num_batches, 1), epoch_grad_norm
 
 
 
@@ -1128,7 +1131,7 @@ def train_fold_with_onecycle(
             progress = (epoch - 1) / max(epochs - 1, 1)
             model.set_grl_alpha(progress, alpha_max=grl_alpha_max)
 
-        loss = train_one_epoch_with_accumulation(
+        loss, grad_norm = train_one_epoch_with_accumulation(
             model, train_loader, optimizer, criterion, device,
             gradient_accumulation_steps=gradient_accumulation_steps,
             site_loss_weight=grl_weight,
@@ -1144,12 +1147,15 @@ def train_fold_with_onecycle(
         scheduler.step()
 
         metrics = _evaluate_model(model, val_loader, device, threshold=0.5)
+        val_loss = metrics.get("loss", None)
         opt_threshold, _ = resolve_threshold(metrics["probs"], metrics["labels"], EVAL_THRESHOLD_POLICY, EVAL_FIXED_THRESHOLD)
         metrics_opt = _evaluate_model(model, val_loader, device, threshold=opt_threshold)
 
         epoch_metrics = {
             'epoch': epoch,
-            'loss': loss,
+            'train_loss': loss,
+            'val_loss': val_loss if val_loss is not None else loss,
+            'grad_norm': grad_norm,
             'auc': metrics['auc'],
             'auprc': metrics['auprc'],
             'f1': metrics_opt['f1'],

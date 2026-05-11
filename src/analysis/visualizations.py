@@ -152,6 +152,10 @@ def run_visualization_pipeline(output_dir: Path):
 
                 monitor.plot_fold_comparison()
 
+                for fold_id in range(5):
+                    if monitor.fold_histories[fold_id].get("confusion_matrices"):
+                        monitor.plot_confusion_evolution(fold_id)
+
                 logger.info("Training history visualizations completed")
             else:
                 logger.warning("No training history files found. Run training with monitoring enabled.")

@@ -1,6 +1,6 @@
 """
 Ablation Study Comparison Figure
-=================================
+================================
 
 Generates publication-quality bar chart comparing all ablation experiments.
 
@@ -10,6 +10,11 @@ Output: results/paper_figures/ablations/ablation_comparison.png
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
+
+from src.core.plotting import ColorPalette, apply_professional_style
+
+palette = ColorPalette()
 
 ABLATION_DATA = {
     "Full Model": {"auc": 0.8587, "std": 0.0240, "f1": 0.8121},
@@ -33,7 +38,7 @@ def generate_ablation_figure(output_dir: Path | None = None, dpi: int = 300) -> 
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(12, 7))
 
     experiments = list(ABLATION_DATA.keys())
     aucs = [ABLATION_DATA[e]["auc"] for e in experiments]
@@ -42,46 +47,51 @@ def generate_ablation_figure(output_dir: Path | None = None, dpi: int = 300) -> 
     colors = []
     for e in experiments:
         if e == "Full Model":
-            colors.append("#0072B2")
+            colors.append(palette.BLUE)
         elif "LR" in e:
-            colors.append("#56B4E9")
+            colors.append(palette.SKY_BLUE)
         else:
             colors.append("#999999")
 
-    bars = ax.bar(range(len(experiments)), aucs, yerr=stds, capsize=4,
-                  color=colors, edgecolor="black", linewidth=0.8, alpha=0.85)
+    bars = ax.bar(range(len(experiments)), aucs, yerr=stds, capsize=5,
+                  color=colors, edgecolor="#333333", linewidth=1.2, alpha=0.85)
 
-    ax.axhline(y=BASELINE_AUC, color="#0072B2", linestyle="--", linewidth=1.5,
-               label=f"Full Model ({BASELINE_AUC:.3f})", alpha=0.7)
+    ax.axhline(y=BASELINE_AUC, color=palette.BLUE, linestyle="--", linewidth=2,
+               label=f"Full Model ({BASELINE_AUC:.3f})", alpha=0.8)
 
     for i, (exp, auc) in enumerate(zip(experiments, aucs)):
         delta = (auc - BASELINE_AUC) * 100
         label = f"{delta:+.1f}%"
         va = "bottom" if delta >= 0 else "top"
-        offset = 0.02 if delta >= 0 else -0.02
-        ax.annotate(label, (i, auc + stds[i] + offset),
-                    ha="center", va=va, fontsize=8, fontweight="bold")
+        offset = 0.025 if delta >= 0 else -0.025
+
+        color = palette.GREEN if delta >= 0 else palette.ORANGE
+
+        ax.annotate(label, (i, auc + stds[i] + offset if delta >= 0 else auc - stds[i] + offset),
+                    ha="center", va=va, fontsize=9, fontweight="bold", color=color)
 
     ax.set_xticks(range(len(experiments)))
-    ax.set_xticklabels(experiments, rotation=45, ha="right", fontsize=9)
-    ax.set_ylabel("Cross-Validation AUC", fontsize=11, fontweight="bold")
-    ax.set_xlabel("Ablation Experiment", fontsize=11, fontweight="bold")
-    ax.set_title("Ablation Study: Component Contribution Analysis", fontsize=13, fontweight="bold", pad=15)
+    ax.set_xticklabels(experiments, rotation=45, ha="right", fontsize=10)
+    ax.set_ylabel("Cross-Validation AUC", fontsize=12, fontweight="bold")
+    ax.set_xlabel("Ablation Experiment", fontsize=12, fontweight="bold")
+    ax.set_title("Ablation Study: Component Contribution Analysis", fontsize=15, fontweight="bold", pad=20)
 
     ax.set_ylim(0.45, 1.0)
     ax.set_xlim(-0.6, len(experiments) - 0.4)
 
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.grid(axis="y", alpha=0.3, linestyle="--")
+    ax.set_facecolor("#fafafa")
+    ax.grid(axis="y", alpha=0.3, linestyle="-", linewidth=0.5)
 
+    from matplotlib.patches import Patch
     legend_elements = [
-        plt.Line2D([0], [0], color="#0072B2", linewidth=1.5, linestyle="--", label="Full Model Baseline"),
-        plt.Rectangle((0, 0), 1, 1, fc="#0072B2", ec="black", label="Full Model"),
-        plt.Rectangle((0, 0), 1, 1, fc="#56B4E9", ec="black", label="Baseline Comparison"),
-        plt.Rectangle((0, 0), 1, 1, fc="#999999", ec="black", label="Ablation"),
+        plt.Line2D([0], [0], color=palette.BLUE, linewidth=2, linestyle="--", label="Full Model Baseline"),
+        Patch(facecolor=palette.BLUE, edgecolor="#333333", label="Full Model"),
+        Patch(facecolor=palette.SKY_BLUE, edgecolor="#333333", label="Baseline Comparison"),
+        Patch(facecolor="#999999", edgecolor="#333333", label="Ablation"),
     ]
-    ax.legend(handles=legend_elements, loc="lower right", fontsize=8)
+    ax.legend(handles=legend_elements, loc="lower right", fontsize=9, framealpha=0.95, fancybox=True)
+
+    apply_professional_style(ax)
 
     plt.tight_layout()
 

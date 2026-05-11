@@ -255,7 +255,8 @@ def audit_feature_tensor(graph_path: Path) -> bool:
         n_edges = data.edge_index.shape[1]
         logger.info("Edges: %d", n_edges)
         if n_edges == 0:
-            logger.error("  ✗ Zero edges — disconnected graph"); ok = False
+            logger.error("  ✗ Zero edges — disconnected graph")
+            ok = False
         elif n_edges < MIN_EDGES_PER_GRAPH:
             logger.warning("  ⚠ Below minimum floor (%d)", MIN_EDGES_PER_GRAPH)
         else:
@@ -335,10 +336,12 @@ def validate_granger_edges(subject_id: str | None = None, n_subjects: int = 5) -
     for sub_id in subjects:
         gp = CAUSAL_GRAPHS_DIR / f"{sub_id}_graph.pt"
         if not gp.exists():
-            logger.warning("  %s: graph not found", sub_id); continue
+            logger.warning("  %s: graph not found", sub_id)
+            continue
         data = torch.load(gp, weights_only=False)
         if not (isinstance(data, dict) and "adj" in data):
-            logger.warning("  %s: unexpected graph format", sub_id); continue
+            logger.warning("  %s: unexpected graph format", sub_id)
+            continue
         adj = data["adj"]
         n_total = adj.numel()
         n_nz = (adj.abs() > 0).sum().item()

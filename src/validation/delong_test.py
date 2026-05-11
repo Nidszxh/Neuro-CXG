@@ -47,7 +47,7 @@ def _bootstrap_auc_comparison(y_true, y_pred1, y_pred2, n_bootstrap=1000, seed=4
             auc1_boot = roc_auc_score(y_boot, p1_boot)
             auc2_boot = roc_auc_score(y_boot, p2_boot)
             diffs.append(auc1_boot - auc2_boot)
-        except:
+        except Exception:
             continue
 
     diffs = np.array(diffs)
@@ -191,7 +191,7 @@ def compute_auc_confidence_interval(
             continue
         try:
             aucs.append(roc_auc_score(y_boot, p_boot))
-        except:
+        except Exception:
             continue
 
     aucs = np.array(aucs)

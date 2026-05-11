@@ -391,27 +391,30 @@ class EdgeImportanceAnalyzer:
     ) -> None:
         import seaborn as sns
 
-        fig, axes = plt.subplots(1, 2, figsize=(18, 7))
+        short_labels = [name.replace("_", " ") if len(name) > 10 else name for name in REGION_LABELS]
+        fig, axes = plt.subplots(1, 2, figsize=(20, 8))
         for ax, mat, group in zip(axes, [ctrl_mat, asd_mat], ["Control", "ASD"], strict=False):
             sns.heatmap(
                 mat,
-                xticklabels=REGION_LABELS,
-                yticklabels=REGION_LABELS,
+                xticklabels=short_labels,
+                yticklabels=short_labels,
                 cmap="YlOrRd",
                 ax=ax,
                 linewidths=0.3,
                 linecolor="white",
                 vmin=0,
+                cbar_kws={"shrink": 0.6},
             )
             ax.set_title(f"{group}", fontsize=13, fontweight="bold")
-            ax.set_xlabel("Target Region", fontsize=10)
-            ax.set_ylabel("Source Region", fontsize=10)
-            plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
+            ax.set_xlabel("Target Region", fontsize=11, fontweight="bold")
+            ax.set_ylabel("Source Region", fontsize=11, fontweight="bold")
+            plt.setp(ax.get_xticklabels(), rotation=50, ha="right", fontsize=8)
             plt.setp(ax.get_yticklabels(), rotation=0, fontsize=8)
 
-        fig.suptitle(title, fontsize=15, fontweight="bold", y=1.01)
+        fig.suptitle(title, fontsize=15, fontweight="bold", y=1.02)
+        fig.subplots_adjust(bottom=0.2)
         plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
         plt.close()
         logger.info("Edge matrix plot saved → %s", save_path)
 
@@ -424,11 +427,12 @@ class EdgeImportanceAnalyzer:
         diff = gradient_results["asd_matrix"] - gradient_results["control_matrix"]
         max_abs = np.abs(diff).max() or 1.0
 
-        fig, ax = plt.subplots(figsize=(10, 8))
+        short_labels = [name.replace("_", " ") if len(name) > 10 else name for name in REGION_LABELS]
+        fig, ax = plt.subplots(figsize=(12, 9))
         sns.heatmap(
             diff,
-            xticklabels=REGION_LABELS,
-            yticklabels=REGION_LABELS,
+            xticklabels=short_labels,
+            yticklabels=short_labels,
             cmap="RdBu_r",
             center=0,
             vmin=-max_abs,
@@ -436,15 +440,18 @@ class EdgeImportanceAnalyzer:
             ax=ax,
             linewidths=0.3,
             linecolor="white",
+            cbar_kws={"label": "ΔImportance", "shrink": 0.6},
         )
         ax.set_title(
             "Differential Edge Importance: ASD − Control\n(positive = more important in ASD)",
-            fontsize=13, fontweight="bold",
+            fontsize=14, fontweight="bold", pad=15
         )
-        ax.set_xlabel("Target Region", fontsize=10)
-        ax.set_ylabel("Source Region", fontsize=10)
-        plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
+        ax.set_xlabel("Target Region", fontsize=11, fontweight="bold")
+        ax.set_ylabel("Source Region", fontsize=11, fontweight="bold")
+        plt.setp(ax.get_xticklabels(), rotation=50, ha="right", fontsize=8)
         plt.setp(ax.get_yticklabels(), rotation=0, fontsize=8)
+
+        fig.subplots_adjust(bottom=0.2)
 
         # Annotate top-5 differentially important edges
         flat_idx = np.argsort(np.abs(diff), axis=None)[::-1][:5]

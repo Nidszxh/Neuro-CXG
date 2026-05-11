@@ -180,7 +180,7 @@ def fit_per_site_calibrators(
 ) -> dict[int, LogisticRegression]:
     """Fit one-dimensional Platt calibrators per site using held-out val data."""
     calibrators: dict[int, LogisticRegression] = {}
-    for site in np.unique(site_ids):
+    for site in np.unique(np.asarray(site_ids, dtype=np.int64)):
         if site < 0:
             continue
         mask = site_ids == site
@@ -201,7 +201,7 @@ def apply_per_site_calibration(
     calibrators: dict[int, LogisticRegression],
 ) -> np.ndarray:
     """Apply per-site logistic calibration when a calibrator exists for that site."""
-    calibrated = probs.copy()
+    calibrated: np.ndarray = probs.copy()
     for site, calibrator in calibrators.items():
         mask = site_ids == site
         if not np.any(mask):

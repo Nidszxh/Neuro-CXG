@@ -291,8 +291,12 @@ def _restore_constant_features(
     """Re-attach zero-variance columns that were removed pre-harmonization."""
     df = pd.DataFrame(harmonized.values, columns=kept_cols, index=original.index)
 
-    for col in dropped_cols:
-        df[col] = original[col].values if col in original.columns else 0.0
+    drop_series = {
+        col: (original[col].values if col in original.columns else np.zeros(len(df)))
+        for col in dropped_cols
+    }
+    if drop_series:
+        df = pd.concat([df, pd.DataFrame(drop_series, index=df.index)], axis=1)
 
     all_cols = [c for c in original.columns if c != "subject_id"]
     return df[[c for c in all_cols if c in df.columns]]

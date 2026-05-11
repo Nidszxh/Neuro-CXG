@@ -1,6 +1,6 @@
 """
 CONSORT-Style Flow Diagram
-==========================
+===========================
 
 Generates subject flow diagram following CONSORT guidelines for clinical/medical papers.
 
@@ -12,6 +12,10 @@ from pathlib import Path
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch
+
+from src.core.plotting import ColorPalette, apply_professional_style
+
+palette = ColorPalette()
 
 SUBJECT_FLOW = {
     "initial": {"n": 1112, "label": "ABIDE-I Assessed for Eligibility"},

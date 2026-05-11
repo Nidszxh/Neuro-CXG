@@ -573,14 +573,14 @@ def run_subgroup_analysis(
     all_labels = []
     fold_probs_list = []
     fold_weights = []
-    
+
     # First, collect labels from test graphs
     loader = make_loader(test_graphs, batch_size=1, shuffle=False)
     for batch in loader:
         if hasattr(batch, 'y') and batch.y is not None:
             all_labels.append(batch.y.item())
     labels_np = np.array(all_labels)
-    
+
     # Collect predictions from each fold model
     for fold_id in sorted(ens_models_probs.keys()):
         probs_f = ens_models_probs[fold_id]
@@ -588,7 +588,7 @@ def run_subgroup_analysis(
             fold_probs_list.append(probs_f)
             fold_weights.append(fold_aucs[fold_id] if fold_id < len(fold_aucs) else 0.5)
             continue
-        
+
         try:
             model = load_model(fold_id=fold_id, device=DEVICE)
             probs_f, _ = _predict_probs(model, make_loader(test_graphs, batch_size=1, shuffle=False))
@@ -598,11 +598,11 @@ def run_subgroup_analysis(
             del model
         except FileNotFoundError:
             continue
-    
+
     if len(fold_probs_list) == 0:
         logger.warning("No fold probs collected — skipping subgroup analysis")
         return {}
-    
+
     # Extract metadata from test_graphs
     age_list, sex_list, site_list = [], [], []
     for g in test_graphs:
@@ -618,7 +618,7 @@ def run_subgroup_analysis(
         age_list.append(age_actual)
         sex_list.append(sex_actual)
         site_list.append(site_raw)
-    
+
     # Weighted ensemble probs
     stacked = np.stack(fold_probs_list, axis=0)
     w = np.array(fold_weights, dtype=float)
@@ -715,14 +715,14 @@ def _plot_subgroups(subgroups: dict, save_path: Path) -> None:
 
         for _i, (bar, auc, n) in enumerate(zip(bars, aucs_plot, ns_plot, strict=False)):
             if not np.isnan(auc):
-                ax.text(auc + 0.005, bar.get_y() + bar.get_height() / 2,
+                ax.text(auc + 0.02, bar.get_y() + bar.get_height() / 2,
                         f"{auc:.3f}  (n={n})", va="center", fontsize=9)
 
         ax.set_yticks(y)
         ax.set_yticklabels(labels_plot, fontsize=10)
         ax.set_xlabel("AUC", fontsize=12, fontweight="bold")
         ax.set_title("Subgroup Analysis — AUC by Sex / Age / Site", fontsize=13, fontweight="bold")
-        ax.set_xlim(0.3, 1.0)
+        ax.set_xlim(0.3, 1.05)
         from matplotlib.patches import Patch
         legend_elems = [
             Patch(fc="#9b59b6", label="Sex"),
@@ -821,14 +821,19 @@ def _plot_baselines(baselines: dict[str, float], save_path: Path) -> None:
         aucs = list(baselines.values())
         colors = [palette.GREEN if "Ours" in n else palette.CONTROL for n in names]
         y = range(len(names))
-        ax.barh(y, aucs, color=colors, alpha=0.85, edgecolor="black", linewidth=0.5)
+        bars = ax.barh(y, aucs, color=colors, alpha=0.85, edgecolor="black", linewidth=0.5)
         ax.set_yticks(y)
         ax.set_yticklabels(names)
         ax.set_xlabel("AUC", fontsize=12, fontweight="bold")
         ax.set_title("Baseline Model Comparison", fontsize=13, fontweight="bold")
         ax.axvline(0.5, color=palette.NEUTRAL, linestyle="--", lw=1.5, alpha=0.7)
-        ax.set_xlim(0.5, 1.0)
+        ax.set_xlim(0.5, 1.05)
         apply_publication_style(ax)
+
+        # Add value labels
+        for bar, auc in zip(bars, aucs, strict=False):
+            ax.text(auc + 0.01, bar.get_y() + bar.get_height() / 2,
+                    f"{auc:.3f}", va="center", fontsize=10)
 
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches="tight")

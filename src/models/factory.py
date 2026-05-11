@@ -101,12 +101,15 @@ def load_model(
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if fold_id is not None:
-        checkpoint_path = get_active_checkpoint_dir() / f"best_model_fold{fold_id}.pt"
+        resolved_path = get_active_checkpoint_dir() / f"best_model_fold{fold_id}.pt"
+    else:
+        assert checkpoint_path is not None
+        resolved_path = checkpoint_path
 
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    if not resolved_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {resolved_path}")
 
-    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    ckpt = torch.load(resolved_path, map_location=device, weights_only=False)
     state = ckpt.get("model_state", ckpt)
 
     has_site_embedding = any(k.startswith("site_embedding.") for k in state)

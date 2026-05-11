@@ -37,7 +37,7 @@ import torch.nn.functional as F
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.atlas_config import NETWORK_NAMES, NETWORK_TO_LOBES, NUM_NETWORKS
 from src.core.config import LOBE_NAMES, NUM_LOBES
-from src.core.plotting import ColorPalette
+from src.core.plotting import ColorPalette, apply_professional_style
 
 palette = ColorPalette()
 
@@ -509,22 +509,35 @@ class NodeImportanceAnalyzer:
         ctrl_sd = results.get("control_std",  np.zeros(NUM_LOBES))
 
         x = np.arange(NUM_LOBES)
-        w = 0.38
-        fig, ax = plt.subplots(figsize=(14, 6))
-        ax.bar(x - w / 2, ctrl, w, label="Control", color="#3498db",
-               yerr=ctrl_sd, capsize=3, alpha=0.85, ecolor="#1a5276")
-        ax.bar(x + w / 2, asd, w, label="ASD",     color="#e74c3c",
-               yerr=asd_sd,  capsize=3, alpha=0.85, ecolor="#7b241c")
+        w = 0.35
+        fig, ax = plt.subplots(figsize=(14, 7))
+
+        bars1 = ax.bar(x - w / 2, ctrl, w, label="Control", color=palette.CONTROL,
+               yerr=ctrl_sd, capsize=4, alpha=0.85, ecolor="#333333", error_kw={'linewidth': 1.5})
+        bars2 = ax.bar(x + w / 2, asd, w, label="ASD",     color=palette.ASD,
+               yerr=asd_sd,  capsize=4, alpha=0.85, ecolor="#333333", error_kw={'linewidth': 1.5})
+
+        for bar in bars1:
+            bar.set_edgecolor("#333333")
+            bar.set_linewidth(1.2)
+        for bar in bars2:
+            bar.set_edgecolor("#333333")
+            bar.set_linewidth(1.2)
 
         ax.set_xticks(x)
-        ax.set_xticklabels(REGION_LABELS, rotation=45, ha="right", fontsize=10)
+        short_labels = [name.replace("_", "\n") if len(name) > 12 else name for name in REGION_LABELS]
+        ax.set_xticklabels(short_labels, rotation=50, ha="right", fontsize=9)
         ax.set_ylabel("GradCAM Importance Score", fontsize=12, fontweight="bold")
-        ax.set_title("Node Importance by Brain Region (GradCAM)", fontsize=14, fontweight="bold")
-        ax.legend(fontsize=11)
-        ax.grid(axis="y", alpha=0.3)
+        ax.set_title("Node Importance by Brain Region (GradCAM)", fontsize=14, fontweight="bold", pad=20)
+        fig.subplots_adjust(bottom=0.25)
+        ax.legend(fontsize=11, framealpha=0.95, fancybox=True, loc="upper right")
+        ax.grid(axis="y", alpha=0.25, linestyle="-", linewidth=0.5)
+
+        ax.set_facecolor("#fafafa")
+        apply_professional_style(ax)
 
         plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
         plt.close()
         logger.info("GradCAM plot saved → %s", save_path)
 
@@ -534,23 +547,34 @@ class NodeImportanceAnalyzer:
         ctrl = results.get("control_mean", np.zeros(NUM_LOBES))
         mat  = np.stack([ctrl, asd])        # (2, NUM_LOBES)
 
-        fig, ax = plt.subplots(figsize=(14, 3.5))
+        fig, ax = plt.subplots(figsize=(16, 5))
         import seaborn as sns
+        short_labels = [name.replace("_", " ") if len(name) > 10 else name for name in REGION_LABELS]
         sns.heatmap(
             mat,
-            xticklabels=REGION_LABELS,
+            xticklabels=short_labels,
             yticklabels=["Control", "ASD"],
             cmap="YlOrRd",
             ax=ax,
-            linewidths=0.5,
+            linewidths=1,
             fmt=".3f",
             annot=True,
-            annot_kws={"size": 8},
+            annot_kws={"size": 8, "fontweight": "bold"},
+            cbar_kws={"label": "Attention Weight", "shrink": 0.6},
         )
-        plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=9)
-        ax.set_title("Mean GAT Attention Weight per Brain Region", fontsize=13, fontweight="bold")
+        plt.setp(ax.get_xticklabels(), rotation=50, ha="right", fontsize=9)
+        plt.setp(ax.get_yticklabels(), fontsize=11, fontweight="bold")
+        ax.set_title("Mean GAT Attention Weight per Brain Region", fontsize=14, fontweight="bold", pad=20)
+        ax.set_xlabel("Brain Region", fontsize=12, fontweight="bold")
+        ax.set_ylabel("Diagnosis Group", fontsize=12, fontweight="bold")
+
+        for spine in ax.spines.values():
+            spine.set_linewidth(1.5)
+            spine.set_color("#333333")
+
+        fig.subplots_adjust(bottom=0.28)
         plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
         plt.close()
         logger.info("Attention heatmap saved → %s", save_path)
 
@@ -558,30 +582,31 @@ class NodeImportanceAnalyzer:
         """Horizontal bar chart of ASD - Control GradCAM score difference."""
         order = np.argsort(diff)
         sorted_diff   = diff[order]
-        sorted_labels = [REGION_LABELS[i] for i in order]
+        sorted_labels = [REGION_LABELS[i].replace("_", " ") for i in order]
         colors = [palette.ASD if v > 0 else palette.CONTROL for v in sorted_diff]
 
-        fig, ax = plt.subplots(figsize=(9, 7))
+        fig, ax = plt.subplots(figsize=(10, 8))
         y = np.arange(NUM_LOBES)
-        ax.barh(y, sorted_diff, color=colors, edgecolor="white", linewidth=0.5)
-        ax.axvline(0, color="black", linewidth=0.8, linestyle="--")
+        ax.barh(y, sorted_diff, color=colors, edgecolor="#333333", linewidth=0.8)
+        ax.axvline(0, color="#333333", linewidth=1.2, linestyle="--")
         ax.set_yticks(y)
         ax.set_yticklabels(sorted_labels, fontsize=10)
         ax.set_xlabel("ΔImportance (ASD − Control)", fontsize=12, fontweight="bold")
         ax.set_title(
             "Differential Node Importance: ASD vs Control (GradCAM)",
-            fontsize=13, fontweight="bold",
+            fontsize=13, fontweight="bold", pad=15
         )
 
         from matplotlib.patches import Patch
         legend_elements = [
-            Patch(facecolor=palette.ASD, label="Higher in ASD"),
-            Patch(facecolor=palette.CONTROL, label="Higher in Control"),
+            Patch(facecolor=palette.ASD, edgecolor="#333333", label="Higher in ASD"),
+            Patch(facecolor=palette.CONTROL, edgecolor="#333333", label="Higher in Control"),
         ]
-        ax.legend(handles=legend_elements, loc="lower right", fontsize=10)
-        ax.grid(axis="x", alpha=0.3)
+        ax.legend(handles=legend_elements, loc="lower right", fontsize=10, framealpha=0.95)
+        ax.grid(axis="x", alpha=0.3, linestyle="-", linewidth=0.5)
+        apply_professional_style(ax)
         plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
         plt.close()
         logger.info("Differential importance plot saved → %s", save_path)
 
@@ -595,29 +620,29 @@ class NodeImportanceAnalyzer:
         """Bar chart of ASD vs Control GradCAM importance at the network level (Task 3 — DD-011)."""
         x = np.arange(NUM_NETWORKS)
         w = 0.30
-        fig, ax = plt.subplots(figsize=(9, 5))
-        ax.bar(x - w / 2, ctrl_net, w, label="Control", color="#3498db", alpha=0.85)
-        ax.bar(x + w / 2, asd_net,  w, label="ASD",     color="#e74c3c", alpha=0.85)
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.bar(x - w / 2, ctrl_net, w, label="Control", color=palette.CONTROL, alpha=0.85, edgecolor="#333333", linewidth=1)
+        ax.bar(x + w / 2, asd_net,  w, label="ASD",     color=palette.ASD, alpha=0.85, edgecolor="#333333", linewidth=1)
 
         ax.set_xticks(x)
-        ax.set_xticklabels(NETWORK_LABELS, fontsize=12, fontweight="bold")
-        ax.set_ylabel("Mean GradCAM Importance", fontsize=12)
+        ax.set_xticklabels(NETWORK_LABELS, fontsize=11, fontweight="bold")
+        ax.set_ylabel("Mean GradCAM Importance", fontsize=12, fontweight="bold")
         ax.set_title(
-            "Network-Level Node Importance: ASD vs Control\n"
-            "(two-level anatomical hierarchical pooling, DD-011)",
-            fontsize=13, fontweight="bold",
+            "Network-Level Node Importance: ASD vs Control",
+            fontsize=14, fontweight="bold", pad=15
         )
-        ax.legend(fontsize=11)
-        ax.grid(axis="y", alpha=0.3)
+        ax.legend(fontsize=11, framealpha=0.95, fancybox=True, loc="upper right")
+        ax.grid(axis="y", alpha=0.3, linestyle="-", linewidth=0.5)
+        apply_professional_style(ax)
 
-        # Annotate difference
         for ni in range(NUM_NETWORKS):
             delta = net_diff[ni]
-            ypos = max(asd_net[ni], ctrl_net[ni]) + 0.002
-            ax.text(x[ni], ypos, f"Δ{delta:+.3f}", ha="center", fontsize=9,
-                    color="#e74c3c" if delta > 0 else "#3498db")
+            ypos = max(asd_net[ni], ctrl_net[ni]) + 0.003
+            ax.text(x[ni], ypos, f"Δ{delta:+.3f}", ha="center", fontsize=10, fontweight="bold",
+                    color=palette.ASD if delta > 0 else palette.CONTROL)
 
+        fig.subplots_adjust(left=0.15)
         plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
         plt.close()
         logger.info("Network-level importance plot saved → %s", save_path)

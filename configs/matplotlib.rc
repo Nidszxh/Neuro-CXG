@@ -10,7 +10,7 @@ figure.constrained_layout.use: True
 
 # Save settings - high DPI for publication
 savefig.dpi: 300
-savefig.bbox_inches: tight
+savefig.bbox: tight
 savefig.format: png
 savefig.transparent: False
 savefig.pad_inches: 0.1

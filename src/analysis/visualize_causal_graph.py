@@ -13,8 +13,17 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from collections.abc import Sequence
+import warnings
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
 from pathlib import Path
+
+# Suppress tight_layout warning with colorbars
+warnings.filterwarnings('ignore', message='.*tight_layout.*not compatible.*')
 
 import matplotlib.pyplot as plt
 import networkx as nx

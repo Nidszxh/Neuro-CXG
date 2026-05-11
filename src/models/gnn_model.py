@@ -60,7 +60,6 @@ from src.core.config import (
     GNN_USE_GRL,
     GNN_USE_SITE_EMBEDDING,
     GNN_WEIGHT_DECAY,
-    GRL_ALPHA_CANDIDATES,
     HARMONIZED_FOLDS_DIR,
     K_FOLDS,
     MASTER_MANIFEST,
@@ -865,8 +864,8 @@ def _run_training_once(
                     fold_id=fold,
                     epoch=entry['epoch'],
                     metrics={
-                        'train_loss': entry['loss'],
-                        'val_loss': entry['loss'],  # actual validation loss
+                        'train_loss': entry['train_loss'],
+                        'val_loss': entry['val_loss'],
                         'val_inverse_auc': 1.0 - entry['auc'],  # inverse AUC for monitoring
                         'val_auc': entry['auc'],
                         'val_auprc': entry['auprc'],
@@ -874,11 +873,11 @@ def _run_training_once(
                         'val_acc': entry['acc'],
                         'lr': entry['lr']
                     },
-                    grad_norm=0.0,
+                    grad_norm=entry.get('grad_norm', 0.0),
                     confusion_matrix=entry['cm']
                 )
                 logger.info(
-                    f"Epoch {entry['epoch']:03d} | LR: {entry['lr']:.6f} | Loss: {entry['loss']:.4f} | "
+                    f"Epoch {entry['epoch']:03d} | LR: {entry['lr']:.6f} | Loss: {entry['train_loss']:.4f} | "
                     f"AUC: {entry['auc']:.4f} | AUPRC: {entry['auprc']:.4f} | "
                     f"F1@{entry['threshold']:.2f}: {entry['f1']:.4f}"
                 )
@@ -1035,7 +1034,7 @@ def _run_training_once(
             feature_output.mkdir(parents=True, exist_ok=True)
             feature_analyzer.visualize_feature_importance(
                 attributions,
-                str(feature_output / 'feature_importance.png')
+                feature_output / 'feature_importance.png'
             )
             logger.info(f"  Feature importance plot saved to: {feature_output / 'feature_importance.png'}")
 
@@ -1060,7 +1059,7 @@ def _run_training_once(
             graph_output.mkdir(parents=True, exist_ok=True)
             graph_analyzer.compare_asd_vs_control(
                 graph_metrics,
-                str(graph_output)
+                graph_output
             )
             logger.info(f"  Graph analysis plots saved to: {graph_output}")
 
@@ -1083,11 +1082,12 @@ def _run_training_once(
 
 def run_training():
     """Entry point for model training with optional GRL alpha grid search."""
-    if GNN_AUTO_GRL_GRID_SEARCH and GRL_ALPHA_CANDIDATES:
-        logger.info("Starting GRL alpha grid search: %s", GRL_ALPHA_CANDIDATES)
+    if GNN_AUTO_GRL_GRID_SEARCH:
+        _GRL_CANDIDATES = [0.10, 0.25, 0.50, 1.0]
+        logger.info("Starting GRL alpha grid search: %s", _GRL_CANDIDATES)
         candidate_results = []
 
-        for alpha in GRL_ALPHA_CANDIDATES:
+        for alpha in _GRL_CANDIDATES:
             run_name = f"grl_alpha_{alpha:.2f}"
             candidate_dir = CHECKPOINT_DIR / run_name
             result = _run_training_once(

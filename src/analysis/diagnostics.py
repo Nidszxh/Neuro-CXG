@@ -25,7 +25,7 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import LOBE_NAMES, NUM_LOBES
-from src.core.plotting import ColorPalette, FigureSize, apply_publication_style
+from src.core.plotting import ColorPalette, FigureSize, apply_publication_style, apply_professional_style
 
 palette = ColorPalette()
 
@@ -110,7 +110,7 @@ class TrainingMonitor:
     # ── plotting ──────────────────────────────────────────────────────────────
 
     def plot_training_curves(
-        self, fold_id: int, figsize: tuple[int, int] = (18, 12)
+        self, fold_id: int, figsize: tuple[int, int] = (16, 12)
     ) -> Path | None:
         """4-panel training diagnostic: loss · AUC · LR schedule · gradient norm."""
         h = self.fold_histories[fold_id]
@@ -119,46 +119,100 @@ class TrainingMonitor:
             return None
 
         fig, axes = plt.subplots(2, 2, figsize=figsize)
-        epochs = range(1, len(h["train_loss"]) + 1)
+        plt.subplots_adjust(hspace=0.35, wspace=0.3, left=0.08, right=0.95, top=0.92, bottom=0.10)
+        epochs = list(range(1, len(h["train_loss"]) + 1))
 
         # Loss
         ax = axes[0, 0]
-        ax.plot(epochs, h["train_loss"], label="Train Loss", lw=2.5, color=palette.CONTROL, alpha=0.8)
-        ax.plot(epochs, h["val_loss"], label="Val Loss", lw=2.5, color=palette.ASD, alpha=0.8)
+        ax.plot(epochs, h["train_loss"], label="Train Loss", lw=2.5, color=palette.CONTROL, alpha=0.9)
+        ax.plot(epochs, h["val_loss"], label="Val Loss", lw=2.5, color=palette.ASD, alpha=0.9)
+
+        if len(epochs) > 4:
+            train_smooth = np.convolve(h["train_loss"], np.ones(5)/5, mode='valid')
+            val_smooth = np.convolve(h["val_loss"], np.ones(5)/5, mode='valid')
+            ax.fill_between(epochs[:len(train_smooth)], train_smooth, alpha=0.15, color=palette.CONTROL)
+            ax.fill_between(epochs[:len(val_smooth)], val_smooth, alpha=0.15, color=palette.ASD)
+
         best_idx = int(np.argmin(h["val_loss"]))
-        ax.scatter([best_idx + 1], [h["val_loss"][best_idx]], color="#e74c3c", s=200, zorder=5,
-                   marker="*", label=f"Best Val (Epoch {best_idx + 1})")
-        ax.set(xlabel="Epoch", ylabel="Loss", title="Loss Curves")
-        ax.legend(fontsize=10)
-        apply_publication_style(ax)
+        ax.scatter([best_idx + 1], [h["val_loss"][best_idx]], color=palette.AMBER, s=250, zorder=5,
+                   marker="*", edgecolors="#333333", linewidths=0.5,
+                   label=f"Best Val (Epoch {best_idx + 1})")
+        ax.set_xlabel("Epoch", fontsize=11, fontweight="bold")
+        ax.set_ylabel("Loss", fontsize=11, fontweight="bold")
+        ax.set_title("Loss Curves", fontsize=13, fontweight="bold", pad=10)
+        ax.legend(fontsize=9, framealpha=0.95, fancybox=True, loc="upper right")
+        apply_professional_style(ax)
+        ax.tick_params(axis='both', which='major', labelsize=10)
 
         # AUC
         ax = axes[0, 1]
-        ax.plot(epochs, h["val_auc"], color=palette.GREEN, lw=2.5, alpha=0.8, label="Validation AUC")
+        ax.plot(epochs, h["val_auc"], color=palette.GREEN, lw=2.5, alpha=0.9, label="Validation AUC")
+
+        if len(epochs) > 4:
+            auc_smooth = np.convolve(h["val_auc"], np.ones(5)/5, mode='valid')
+            ax.fill_between(epochs[:len(auc_smooth)], auc_smooth, alpha=0.2, color=palette.GREEN)
+
         ax.axhline(0.5, color="#95a5a6", ls="--", alpha=0.7, lw=2, label="Random (0.5)")
         best_auc = max(h["val_auc"])
         best_auc_ep = h["val_auc"].index(best_auc) + 1
-        ax.axhline(best_auc, color="#27ae60", ls="--", alpha=0.7, lw=2,
-                   label=f"Best: {best_auc:.4f} (Epoch {best_auc_ep})")
-        ax.scatter([best_auc_ep], [best_auc], color="#27ae60", s=200, zorder=5, marker="*")
-        ax.set(xlabel="Epoch", ylabel="Validation AUC", title="AUC Progression")
-        ax.legend(loc="lower right", fontsize=10)
-        ax.grid(alpha=0.3, ls="--")
+        ax.axhline(best_auc, color=palette.GREEN, ls="--", alpha=0.7, lw=2,
+                   label=f"Best: {best_auc:.3f} (Ep {best_auc_ep})")
+        ax.scatter([best_auc_ep], [best_auc], color=palette.GREEN, s=250, zorder=5, marker="*",
+                   edgecolors="#333333", linewidths=0.5)
+        ax.set_xlabel("Epoch", fontsize=11, fontweight="bold")
+        ax.set_ylabel("Validation AUC", fontsize=11, fontweight="bold")
+        ax.set_title("AUC Progression", fontsize=13, fontweight="bold", pad=10)
+        ax.legend(loc="lower right", fontsize=9, framealpha=0.95, fancybox=True)
+        ax.grid(alpha=0.25, linestyle="-", linewidth=0.5)
         ax.set_ylim([0.4, 1.0])
+        ax.tick_params(axis='both', which='major', labelsize=10)
 
+        # Gradient Norm
         ax = axes[1, 0]
         if h["grad_norm"]:
-            ax.plot(epochs, h["grad_norm"], color=palette.PINK, lw=2.5, alpha=0.8, label="Gradient Norm")
+            ax.plot(epochs, h["grad_norm"], color=palette.PINK, lw=2.5, alpha=0.9, label="Gradient Norm")
             ax.axhline(1.0, color=palette.NEGATIVE, ls="--", lw=2, alpha=0.7,
                         label="Clip Threshold (1.0)")
-            ax.set(xlabel="Epoch", ylabel="Gradient Norm", title="Gradient Stability")
-            ax.legend(fontsize=10)
-            ax.grid(alpha=0.3, ls="--")
+
+            if len(epochs) > 4:
+                grad_smooth = np.convolve(h["grad_norm"], np.ones(5)/5, mode='valid')
+                ax.fill_between(epochs[:len(grad_smooth)], grad_smooth, alpha=0.2, color=palette.PINK)
+
+            ax.set_xlabel("Epoch", fontsize=11, fontweight="bold")
+            ax.set_ylabel("Gradient Norm", fontsize=11, fontweight="bold")
+            ax.set_title("Gradient Stability", fontsize=13, fontweight="bold", pad=10)
+            ax.legend(fontsize=9, framealpha=0.95, fancybox=True, loc="upper right")
+            ax.grid(alpha=0.25, linestyle="-", linewidth=0.5)
             ax.set_ylim(bottom=0)
+            ax.tick_params(axis='both', which='major', labelsize=10)
         else:
             ax.text(0.5, 0.5, "Gradient norm not tracked", ha="center", va="center",
                     transform=ax.transAxes, fontsize=14, color="#7f8c8d")
             ax.axis("off")
+
+        # Summary info panel
+        ax = axes[1, 1]
+        ax.axis("off")
+        summary_text = (
+            f"Training Summary - Fold {fold_id}\n"
+            f"{'─' * 30}\n"
+            f"Total Epochs: {len(epochs)}\n"
+            f"Best Val Loss: {min(h['val_loss']):.4f} (Epoch {best_idx + 1})\n"
+            f"Best Val AUC: {best_auc:.4f} (Epoch {best_auc_ep})\n"
+            f"Final Train Loss: {h['train_loss'][-1]:.4f}\n"
+            f"Final Val Loss: {h['val_loss'][-1]:.4f}\n"
+            f"Final Val AUC: {h['val_auc'][-1]:.4f}"
+        )
+        ax.text(0.5, 0.5, summary_text, ha="center", va="center", transform=ax.transAxes,
+                fontsize=11, fontfamily='monospace',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='#f8f9fa', edgecolor='#dee2e6', alpha=0.95))
+        axes[1, 1].text(0.5, 0.5, f"Epochs: {len(epochs)}\n"
+                       f"Final Train Loss: {h['train_loss'][-1]:.4f}\n"
+                       f"Final Val Loss: {h['val_loss'][-1]:.4f}\n"
+                       f"Best Val AUC: {best_auc:.4f}",
+                       ha="center", va="center", transform=axes[1, 1].transAxes,
+                       fontsize=12, bbox=dict(boxstyle="round", facecolor="#f8f9fa",
+                       edgecolor="#dee2e6", alpha=0.9))
 
         plt.suptitle(f"Training Diagnostics — Fold {fold_id}", fontsize=18, fontweight="bold", y=0.995)
         plt.tight_layout()
@@ -174,7 +228,7 @@ class TrainingMonitor:
         self,
         fold_id: int,
         key_epochs: list[int] | None = None,
-        figsize: tuple[int, int] = (18, 12),
+        figsize: tuple[int, int] = (16, 10),
     ) -> Path | None:
         """Visualise confusion matrix changes across epochs."""
         cm_history = self.fold_histories[fold_id]["confusion_matrices"]
@@ -187,45 +241,86 @@ class TrainingMonitor:
             key_epochs = [min(e, total - 1) for e in [0, 9, 24, 49, 74, total - 1]]
 
         fig, axes = plt.subplots(2, 3, figsize=figsize)
+        plt.subplots_adjust(hspace=0.4, wspace=0.25, left=0.08, right=0.95, top=0.92, bottom=0.08)
         axes = axes.flatten()
+
         for idx, ep_idx in enumerate(key_epochs[:6]):
             ax = axes[idx]
             sns.heatmap(cm_history[ep_idx], annot=True, fmt="d", cmap="Blues", ax=ax,
-                        xticklabels=["Control", "ASD"], yticklabels=["Control", "ASD"])
-            ax.set(title=f"Epoch {ep_idx + 1}", xlabel="Predicted", ylabel="True")
+                        xticklabels=["Control", "ASD"], yticklabels=["Control", "ASD"],
+                        annot_kws={"size": 11, "fontweight": "bold"},
+                        cbar_kws={"shrink": 0.6})
+            ax.set_xlabel("Predicted", fontsize=10, fontweight="bold")
+            ax.set_ylabel("True Label", fontsize=10, fontweight="bold")
+            ax.set_title(f"Epoch {ep_idx + 1}", fontsize=12, fontweight="bold", pad=8)
+            ax.tick_params(axis='both', which='major', labelsize=9)
 
-        plt.tight_layout()
+        fig.suptitle(f"Confusion Matrix Evolution - Fold {fold_id}", fontsize=15, fontweight="bold", y=0.98)
         out = self.output_dir / f"confusion_evolution_fold_{fold_id}.png"
-        plt.savefig(out, dpi=300, bbox_inches="tight"); plt.close()
+        plt.savefig(out, dpi=300, bbox_inches="tight", facecolor="white"); plt.close()
         logger.info("Confusion evolution saved → %s", out)
         return out
 
-    def plot_fold_comparison(self, figsize: tuple[int, int] = (14, 8)) -> Path | None:
+    def plot_fold_comparison(self, figsize: tuple[int, int] = (14, 6)) -> Path | None:
         """Compare validation AUC curves across all folds."""
         if not any(h["val_auc"] for h in self.fold_histories.values()):
             logger.warning("No validation AUC data to compare")
             return None
 
         fig, axes = plt.subplots(1, 2, figsize=figsize)
+        plt.subplots_adjust(wspace=0.3, left=0.08, right=0.95, top=0.90, bottom=0.12)
+
         for fold_id, h in self.fold_histories.items():
             if h["val_auc"]:
-                axes[0].plot(range(1, len(h["val_auc"]) + 1), h["val_auc"],
+                epochs = list(range(1, len(h["val_auc"]) + 1))
+                axes[0].plot(epochs, h["val_auc"],
                             label=f"Fold {fold_id}",
                             color=palette.cycle()[fold_id % 8], lw=2.5, alpha=0.8)
-        axes[0].set(title="Validation AUC by Fold", xlabel="Epoch", ylabel="AUC")
-        axes[0].legend(); axes[0].grid(alpha=0.3)
+
+                if len(epochs) > 2:
+                    auc_smooth = np.convolve(h["val_auc"], np.ones(3)/3, mode='valid')
+                    axes[0].fill_between(epochs[:len(auc_smooth)], auc_smooth,
+                                        alpha=0.1, color=palette.cycle()[fold_id % 8])
+
+        axes[0].set_xlabel("Epoch", fontsize=11, fontweight="bold")
+        axes[0].set_ylabel("AUC", fontsize=11, fontweight="bold")
+        axes[0].set_title("Validation AUC by Fold", fontsize=13, fontweight="bold", pad=10)
+        axes[0].legend(framealpha=0.95, fancybox=True, fontsize=9, ncol=5, loc='lower right')
+        axes[0].grid(alpha=0.25, linestyle="-", linewidth=0.5)
+        axes[0].tick_params(axis='both', which='major', labelsize=10)
+        apply_professional_style(axes[0])
 
         final = [h["val_auc"][-1] for h in self.fold_histories.values() if h["val_auc"]]
         if final:
-            axes[1].bar(range(len(final)), final, color=palette.CONTROL,
-                        edgecolor="black", linewidth=0.5)
-            axes[1].set(title="Final Validation AUC per Fold", xlabel="Fold", ylabel="AUC")
-            axes[1].grid(axis="y", alpha=0.3)
-            apply_publication_style(axes[1])
+            fold_ids = [i for i, h in self.fold_histories.items() if h["val_auc"]]
+            bar_colors = [palette.cycle()[fid % 8] for fid in fold_ids]
+
+            bars = axes[1].bar(range(len(final)), final, color=bar_colors,
+                        edgecolor="#333333", linewidth=1.2, alpha=0.85)
+
+            for i, (bar, val) in enumerate(zip(bars, final)):
+                axes[1].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.008,
+                           f"{val:.3f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
+
+            axes[1].axhline(y=np.mean(final), color=palette.GREEN, linestyle="--", lw=2,
+                           label=f"Mean: {np.mean(final):.3f}")
+            axes[1].set_xlabel("Fold", fontsize=11, fontweight="bold")
+            axes[1].set_ylabel("AUC", fontsize=11, fontweight="bold")
+            axes[1].set_title("Final Validation AUC per Fold", fontsize=13, fontweight="bold", pad=10)
+            axes[1].set_xticks(range(len(final)))
+            axes[1].set_xticklabels([f"Fold {i}" for i in fold_ids], fontsize=10)
+            axes[1].legend(framealpha=0.95, fancybox=True, fontsize=9)
+            axes[1].grid(axis="y", alpha=0.25, linestyle="-", linewidth=0.5)
+            axes[1].tick_params(axis='both', which='major', labelsize=10)
+            apply_professional_style(axes[1])
+
+            axes[1].set_ylim([min(0.4, min(final) - 0.05), max(1.0, max(final) + 0.05)])
+
+        fig.suptitle("Cross-Validation Fold Comparison", fontsize=15, fontweight="bold", y=0.98)
 
         plt.tight_layout()
         out = self.output_dir / "fold_comparison.png"
-        plt.savefig(out, dpi=300, bbox_inches="tight"); plt.close()
+        plt.savefig(out, dpi=300, bbox_inches="tight", facecolor="white"); plt.close()
         logger.info("Fold comparison saved → %s", out)
         return out
 
@@ -277,10 +372,9 @@ class CausalGraphAnalyzer:
     def compute_graph_properties(self, max_graphs: int | None = None) -> pd.DataFrame:
         """Compute standard graph metrics (degree, density, clustering) for each subject."""
         graph_files = list(self.graphs_dir.glob("*_graph.pt"))
-        if max_graphs is not None:
-            graph_files = list(
-                np.random.choice(graph_files, min(max_graphs, len(graph_files)), replace=False)
-            )
+        if max_graphs is not None and len(graph_files) > max_graphs:
+            indices = np.random.choice(len(graph_files), max_graphs, replace=False)
+            graph_files = [graph_files[i] for i in indices]
         logger.info("Computing properties for %d graphs…", len(graph_files))
 
         results = []
@@ -428,7 +522,8 @@ class CausalGraphAnalyzer:
                 else:
                     dx_value = 0
             else:
-                dx_value = group
+                # group is already a numeric DX_GROUP value
+                dx_value = int(group)  # type: ignore[arg-type]
 
             group_subjects = set(
                 self.manifest[self.manifest["DX_GROUP"] == dx_value]["subject_id"].astype(str)
@@ -441,10 +536,9 @@ class CausalGraphAnalyzer:
                 logger.warning(f"No causal graphs found for group={group}")
                 return None
 
-        if max_graphs is not None:
-            graph_files = list(
-                np.random.choice(graph_files, min(max_graphs, len(graph_files)), replace=False)
-            )
+        if max_graphs is not None and len(graph_files) > max_graphs:
+            indices = np.random.choice(len(graph_files), max_graphs, replace=False)
+            graph_files = [graph_files[i] for i in indices]
         matrices = []
         for gf in graph_files:
             try:
@@ -459,21 +553,23 @@ class CausalGraphAnalyzer:
             return None
 
         avg = np.mean(np.stack(matrices), axis=0)
-        labels = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
+        labels = [LOBE_NAMES[i].replace("_", " ") for i in range(NUM_LOBES)]
         title_suffix = f" ({group})" if group else ""
-        fig, ax = plt.subplots(figsize=FigureSize.HEATMAP)
+        fig, ax = plt.subplots(figsize=(12, 10))
 
         vmax = max(abs(avg.min()), abs(avg.max()))
-        sns.heatmap(avg, xticklabels=labels, yticklabels=labels,
+        hm = sns.heatmap(avg, xticklabels=labels, yticklabels=labels,
                     cmap="RdYlBu_r", center=0, linewidths=0.5,
-                    vmin=-vmax, vmax=vmax, ax=ax)
+                    vmin=-vmax, vmax=vmax, ax=ax,
+                    cbar_kws={"label": "Causal Strength", "shrink": 0.8})
 
-        ax.set(title=f"Average Causal Adjacency Matrix{title_suffix}",
-               xlabel="Target Region", ylabel="Source Region")
-        plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
-        plt.setp(ax.get_yticklabels(), rotation=0)
+        ax.set_xlabel("Target Region (To)", fontsize=12, fontweight="bold")
+        ax.set_ylabel("Source Region (From)", fontsize=12, fontweight="bold")
+        ax.set_title(f"Average Causal Adjacency Matrix{title_suffix}", fontsize=14, fontweight="bold", pad=15)
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=9)
+        plt.setp(ax.get_yticklabels(), rotation=0, fontsize=9)
 
-        plt.tight_layout()
-        plt.savefig(output_path, dpi=300, bbox_inches="tight"); plt.close()
+        fig.subplots_adjust(bottom=0.18, left=0.15, right=0.92, top=0.92)
+        plt.savefig(output_path, dpi=300, bbox_inches="tight", facecolor="white"); plt.close()
         logger.info("Average causal graph saved → %s", output_path)
         return output_path

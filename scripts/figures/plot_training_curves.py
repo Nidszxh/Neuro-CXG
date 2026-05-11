@@ -16,7 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.core.plotting import ColorPalette, FigureSize
+from src.core.plotting import ColorPalette, FigureSize, apply_professional_style
 
 palette = ColorPalette()
 
@@ -124,6 +124,10 @@ def generate_mean_training_curves(output_dir: Path | None = None, dpi: int = 300
         result[:len(arr)] = arr
         return result
 
+    def smooth_curve(arr, window=5):
+        """Apply moving average smoothing."""
+        return np.convolve(arr, np.ones(window)/window, mode='same')
+
     mean_train_loss = np.nanmean([pad_to_length(h["train_loss"], max_epochs) for h in histories], axis=0)
     std_train_loss = np.nanstd([pad_to_length(h["train_loss"], max_epochs) for h in histories], axis=0)
 
@@ -136,44 +140,54 @@ def generate_mean_training_curves(output_dir: Path | None = None, dpi: int = 300
     mean_val_f1 = np.nanmean([pad_to_length(h["val_f1"], max_epochs) for h in histories], axis=0)
     std_val_f1 = np.nanstd([pad_to_length(h["val_f1"], max_epochs) for h in histories], axis=0)
 
-    epochs = range(1, max_epochs + 1)
+    epochs = list(range(1, max_epochs + 1))
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
 
-    axes[0].plot(epochs, mean_train_loss, color="#0072B2", linewidth=2, label="Train")
+    axes[0].plot(epochs, smooth_curve(mean_train_loss), color=palette.CONTROL, linewidth=2.5, label="Train")
     axes[0].fill_between(epochs, mean_train_loss - std_train_loss,
-                         mean_train_loss + std_train_loss, alpha=0.2, color="#0072B2")
-    axes[0].plot(epochs, mean_val_loss, color="#D55E00", linewidth=2, label="Validation")
+                         mean_train_loss + std_train_loss, alpha=0.2, color=palette.CONTROL)
+    axes[0].plot(epochs, smooth_curve(mean_val_loss), color=palette.ASD, linewidth=2.5, label="Validation")
     axes[0].fill_between(epochs, mean_val_loss - std_val_loss,
-                         mean_val_loss + std_val_loss, alpha=0.2, color="#D55E00")
-    axes[0].set_xlabel("Epoch")
-    axes[0].set_ylabel("Loss")
-    axes[0].set_title("Loss Curves", fontweight="bold")
-    axes[0].legend()
-    axes[0].spines["top"].set_visible(False)
-    axes[0].spines["right"].set_visible(False)
+                         mean_val_loss + std_val_loss, alpha=0.2, color=palette.ASD)
+    axes[0].set_xlabel("Epoch", fontsize=11, fontweight="bold")
+    axes[0].set_ylabel("Loss", fontsize=11, fontweight="bold")
+    axes[0].set_title("Loss Curves", fontsize=13, fontweight="bold")
+    axes[0].legend(fontsize=10, framealpha=0.95, fancybox=True)
+    apply_professional_style(axes[0])
 
-    axes[1].plot(epochs, mean_val_auc, color="#009E73", linewidth=2)
+    axes[1].plot(epochs, smooth_curve(mean_val_auc), color=palette.GREEN, linewidth=2.5)
     axes[1].fill_between(epochs, mean_val_auc - std_val_auc,
-                         mean_val_auc + std_val_auc, alpha=0.2, color="#009E73")
-    axes[1].set_xlabel("Epoch")
-    axes[1].set_ylabel("AUC")
-    axes[1].set_title("Validation AUC", fontweight="bold")
-    axes[1].set_ylim(0.6, 0.9)
-    axes[1].spines["top"].set_visible(False)
-    axes[1].spines["right"].set_visible(False)
+                         mean_val_auc + std_val_auc, alpha=0.2, color=palette.GREEN)
+    axes[1].set_xlabel("Epoch", fontsize=11, fontweight="bold")
+    axes[1].set_ylabel("AUC", fontsize=11, fontweight="bold")
+    axes[1].set_title("Validation AUC", fontsize=13, fontweight="bold")
+    axes[1].set_ylim(0.55, 0.95)
+    axes[1].grid(alpha=0.25, linestyle="-", linewidth=0.5)
 
-    axes[2].plot(epochs, mean_val_f1, color="#CC79A7", linewidth=2)
+    best_auc = np.max(mean_val_auc)
+    best_epoch = np.argmax(mean_val_auc) + 1
+    axes[1].axhline(y=best_auc, color=palette.GREEN, linestyle="--", alpha=0.6, lw=1.5)
+    axes[1].annotate(f"Best: {best_auc:.3f}", xy=(best_epoch, best_auc),
+                     xytext=(best_epoch + max_epochs*0.1, best_auc - 0.03),
+                     fontsize=10, fontweight="bold", color=palette.GREEN,
+                     arrowprops=dict(arrowstyle="->", color=palette.GREEN, lw=1.5))
+    apply_professional_style(axes[1])
+
+    axes[2].plot(epochs, smooth_curve(mean_val_f1), color=palette.PINK, linewidth=2.5)
     axes[2].fill_between(epochs, mean_val_f1 - std_val_f1,
-                         mean_val_f1 + std_val_f1, alpha=0.2, color="#CC79A7")
-    axes[2].set_xlabel("Epoch")
-    axes[2].set_ylabel("F1 Score")
-    axes[2].set_title("Validation F1", fontweight="bold")
-    axes[2].set_ylim(0.5, 0.85)
-    axes[2].spines["top"].set_visible(False)
-    axes[2].spines["right"].set_visible(False)
+                         mean_val_f1 + std_val_f1, alpha=0.2, color=palette.PINK)
+    axes[2].set_xlabel("Epoch", fontsize=11, fontweight="bold")
+    axes[2].set_ylabel("F1 Score", fontsize=11, fontweight="bold")
+    axes[2].set_title("Validation F1", fontsize=13, fontweight="bold")
+    axes[2].set_ylim(0.5, 0.9)
+    apply_professional_style(axes[2])
 
-    fig.suptitle("Mean Training Curves ± Std (5-Fold CV)", fontsize=12, fontweight="bold")
+    for ax in axes:
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    fig.suptitle("Mean Training Curves ± Std (5-Fold Cross-Validation)", fontsize=14, fontweight="bold", y=1.02)
     plt.tight_layout()
 
     output_path = output_dir / "training_curves_mean.png"

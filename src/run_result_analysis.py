@@ -52,6 +52,7 @@ from src.core.config import (
     RESULTS_DIR,
     get_active_checkpoint_dir,
 )
+from src.core.plotting import ColorPalette, apply_professional_style
 from src.features.graph_factory import ABIDECausalDataset
 from src.models.causal_gnn import CausalBrainGNN
 from src.models.evaluation import (
@@ -69,6 +70,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+palette = ColorPalette()
 
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 OUTPUT_DIR  = RESULTS_DIR / "analysis"
@@ -419,6 +421,7 @@ def _resolve_analysis_threshold(
     fallback_threshold = float(np.mean(fold_thresholds)) if fold_thresholds else 0.5
 
     # For youden/f1: attempt to compute threshold from calibration data
+    calibration_graphs = _load_last_fold_val_graphs()
     fold_probs = []
     loaded_fold_ids = []
     labels_ref = None
@@ -755,28 +758,39 @@ def _plot_site_auc(site_stats: list[dict], save_path: Path) -> None:
 
         has_ci = all(c is not None for c in ci_lows)
 
-        fig, ax = plt.subplots(figsize=(max(8, len(valid) * 0.7), 5))
-        colors  = ["#e74c3c" if a >= 0.6 else "#f39c12" if a >= 0.5 else "#bdc3c7" for a in aucs]
-        bars    = ax.bar(x_labels, aucs, color=colors, alpha=0.85, edgecolor="white")
+        # Dynamic figure sizing based on number of sites
+        n_sites = len(valid)
+        fig_width = max(12, min(n_sites * 1.0, 20))
+        fig_height = 6 if n_sites <= 10 else 7
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+        colors = [palette.GREEN if a >= 0.6 else palette.AMBER if a >= 0.5 else "#bdc3c7" for a in aucs]
+        bars = ax.bar(x_labels, aucs, color=colors, alpha=0.85, edgecolor="#333333", linewidth=1.2)
 
         if has_ci:
             yerrs = [[acc - lo if lo is not None else 0 for acc, lo in zip(accs, ci_lows, strict=False)],
                      [hi - acc if hi is not None else 0 for acc, hi in zip(accs, ci_highs, strict=False)]]
-            ax.errorbar(x_labels, accs, yerr=yerrs, fmt='s', color='darkgreen',
-                        capsize=4, elinewidth=1.5, markersize=6, label='Accuracy (95% CI)')
+            ax.errorbar(x_labels, accs, yerr=yerrs, fmt='s', color='#1a5276',
+                        capsize=5, elinewidth=1.5, markersize=7, label='Accuracy (95% CI)', zorder=3)
 
         for bar, auc, n in zip(bars, aucs, ns, strict=False):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005,
-                    f"{auc:.2f}\nn={n}", ha="center", va="bottom", fontsize=8)
-        ax.axhline(0.5, color="gray", lw=1.2, ls="--", label="Chance (0.50)")
-        ax.set_ylim(0.3, 1.05)
-        ax.set_ylabel("AUC / Accuracy", fontsize=12, fontweight="bold")
-        ax.set_title("Per-Site Performance on Test Set (AUC & 95% CI)", fontsize=13, fontweight="bold")
-        plt.xticks(rotation=30, ha="right", fontsize=9)
-        ax.grid(axis="y", alpha=0.3)
-        ax.legend(fontsize=10)
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02,
+                    f"{auc:.2f}", ha="center", va="bottom", fontsize=9, fontweight="bold")
+
+        ax.axhline(0.5, color="#666666", lw=2, ls="--", label="Chance (0.50)", alpha=0.8)
+        ax.axhline(0.6, color=palette.GREEN, lw=1.5, ls=':', alpha=0.5, label="Good AUC (0.60)")
+
+        ax.set_ylim(0.35, 1.08)
+        ax.set_ylabel("AUC Score", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Site ID", fontsize=12, fontweight="bold")
+        ax.set_title("Per-Site Model Performance on Test Set (AUC & 95% CI)", fontsize=14, fontweight="bold", pad=15)
+        plt.xticks(rotation=45, ha="right", fontsize=10)
+        ax.grid(axis="y", alpha=0.25, linestyle="-", linewidth=0.5)
+        ax.legend(fontsize=10, framealpha=0.95, fancybox=True, loc="upper right")
+        ax.set_facecolor("#fafafa")
+        apply_professional_style(ax)
         plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
         plt.close()
         logger.info("  Site AUC plot saved → %s", save_path)
     except Exception as e:
@@ -792,23 +806,38 @@ def _plot_site_bias(site_stats: list[dict], save_path: Path) -> None:
         labels = [f"Site {s['site_id']}" for s in sorted_sites]
         asd_pct = [100 * s["n_asd"] / s["n_total"] if s["n_total"] > 0 else 50 for s in sorted_sites]
 
-        fig, ax = plt.subplots(figsize=(max(8, len(labels) * 0.7), 4))
+        # Dynamic figure sizing based on number of sites
+        n_sites = len(labels)
+        fig_width = max(12, min(n_sites * 1.2, 20))  # Min 12, max 20 inches
+        fig_height = 5 if n_sites <= 10 else 6
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+        
         norm    = mcolors.TwoSlopeNorm(vmin=0, vcenter=50, vmax=100)
         colors  = [plt.cm.RdYlGn(1 - norm(p)) for p in asd_pct]
-        bars    = ax.bar(labels, asd_pct, color=colors, alpha=0.9, edgecolor="white")
-        for bar, pct in zip(bars, asd_pct, strict=False):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
-                    f"{pct:.0f}%", ha="center", va="bottom", fontsize=8)
-        ax.axhline(50, color=palette.NEUTRAL, linestyle="--", lw=1.5, alpha=0.7, label="50% balanced")
-        ax.set_ylim(0, 110)
+        bars    = ax.bar(labels, asd_pct, color=colors, alpha=0.9, edgecolor="#333333", linewidth=1.2)
+
+        # Adjust text position based on bar width to prevent overlap
+        for bar, pct, s in zip(bars, asd_pct, sorted_sites, strict=False):
+            bar_width = bar.get_width()
+            if bar_width > 0.15:  # Wide bars - full label
+                label = f"{pct:.0f}%\n(n={s['n_total']})"
+            else:  # Narrow bars - simplified label
+                label = f"{pct:.0f}%"
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 2,
+                    label, ha="center", va="bottom", fontsize=9, fontweight="bold")
+
+        ax.axhline(50, color=palette.BLACK, linestyle="--", lw=2, alpha=0.7, label="50% balanced")
+        ax.set_ylim(0, 115)
         ax.set_ylabel("% ASD subjects", fontsize=12, fontweight="bold")
-        ax.set_title("ASD Prevalence per Site (Potential Site Bias)", fontsize=14, fontweight="bold")
-        plt.xticks(rotation=30, ha="right", fontsize=10)
-        ax.grid(axis="y", alpha=0.3)
-        ax.legend(fontsize=10)
-        ax.legend(fontsize=10)
+        ax.set_xlabel("Site ID", fontsize=12, fontweight="bold")
+        ax.set_title("ASD Prevalence per Site (Potential Site Bias)", fontsize=14, fontweight="bold", pad=15)
+        plt.xticks(rotation=45, ha="right", fontsize=10)
+        ax.grid(axis="y", alpha=0.25, linestyle="-", linewidth=0.5)
+        ax.legend(fontsize=10, framealpha=0.95, fancybox=True, loc="upper right")
+        ax.set_facecolor("#fafafa")
+        apply_professional_style(ax)
         plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
         plt.close()
         logger.info("  Site bias heatmap saved → %s", save_path)
     except Exception as e:
@@ -864,45 +893,60 @@ def _plot_calibration(
         import matplotlib.pyplot as plt
         from matplotlib.gridspec import GridSpec
 
-        fig = plt.figure(figsize=(14, 5))
+        fig = plt.figure(figsize=(15, 5))
         gs  = GridSpec(1, 3, figure=fig)
 
-        # ── Left: confidence distribution by true class ────────────────────
         ax1 = fig.add_subplot(gs[0])
         asd_conf  = df[df["true_label"] == 1]["prob_asd"]
         ctrl_conf = df[df["true_label"] == 0]["prob_asd"]
-        ax1.hist(asd_conf,  bins=20, alpha=0.7, color="#e74c3c",  label="ASD (true)",     density=True)
-        ax1.hist(ctrl_conf, bins=20, alpha=0.7, color="#3498db",  label="Control (true)", density=True)
-        ax1.axvline(0.5, color="black", lw=1, ls="--")
-        ax1.set_xlabel("P(ASD)", fontsize=11)
-        ax1.set_ylabel("Density", fontsize=11)
-        ax1.set_title("Confidence Distribution\nby True Class", fontsize=11, fontweight="bold")
-        ax1.legend(fontsize=9)
+        ax1.hist(asd_conf,  bins=20, alpha=0.7, color=palette.ASD,  label="ASD (true)",     density=True, edgecolor="#333333", linewidth=0.5)
+        ax1.hist(ctrl_conf, bins=20, alpha=0.7, color=palette.CONTROL,  label="Control (true)", density=True, edgecolor="#333333", linewidth=0.5)
+        ax1.axvline(0.5, color="#333333", lw=1.5, ls="--", label="Decision boundary")
+        ax1.set_xlabel("P(ASD)", fontsize=12, fontweight="bold")
+        ax1.set_ylabel("Density", fontsize=12, fontweight="bold")
+        ax1.set_title("Confidence Distribution\nby True Class", fontsize=12, fontweight="bold")
+        ax1.legend(fontsize=9, framealpha=0.95, fancybox=True)
+        ax1.set_facecolor("#fafafa")
+        apply_professional_style(ax1)
 
-        # ── Middle: confidence by prediction correctness ───────────────────
         ax2 = fig.add_subplot(gs[1])
-        ax2.hist(df[df["correct"] == 1]["confidence"], bins=20, alpha=0.8, color=palette.GREEN,  label="Correct", density=True)
-        ax2.hist(df[df["correct"] == 0]["confidence"], bins=20, alpha=0.8, color=palette.ASD,  label="Wrong",   density=True)
-        ax2.set_xlabel("Confidence", fontsize=11)
-        ax2.set_title("Confidence vs\nCorrectness", fontsize=11, fontweight="bold")
-        ax2.legend(fontsize=9)
+        ax2.hist(df[df["correct"] == 1]["confidence"], bins=20, alpha=0.8, color=palette.GREEN,  label="Correct", density=True, edgecolor="#333333", linewidth=0.5)
+        ax2.hist(df[df["correct"] == 0]["confidence"], bins=20, alpha=0.8, color=palette.ORANGE,  label="Misclassified",   density=True, edgecolor="#333333", linewidth=0.5)
+        ax2.set_xlabel("Model Confidence", fontsize=12, fontweight="bold")
+        ax2.set_ylabel("Density", fontsize=12, fontweight="bold")
+        ax2.set_title("Confidence vs\nPrediction Correctness", fontsize=12, fontweight="bold")
+        ax2.legend(fontsize=9, framealpha=0.95, fancybox=True)
+        ax2.set_facecolor("#fafafa")
+        apply_professional_style(ax2)
 
-        # ── Right: reliability diagram ─────────────────────────────────────
         ax3 = fig.add_subplot(gs[2])
         if bin_labels:
             x   = np.arange(len(bin_labels))
-            ax3.bar(x, frac_correct, color=palette.PINK, alpha=0.8, edgecolor="black")
+
+            perfect_cal = np.linspace(0, 1, len(bin_labels) + 1)[1:]
+            ax3.plot(x, perfect_cal, color="#666666", lw=2, linestyle="--", alpha=0.7, label="Perfect calibration")
+
+            bars = ax3.bar(x, frac_correct, color=palette.PINK, alpha=0.8, edgecolor="#333333", linewidth=1.2)
+
+            for bar, val in zip(bars, frac_correct):
+                ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
+                        f"{val:.2f}", ha="center", va="bottom", fontsize=9, fontweight="bold")
+
             ax3.axhline(1.0, color=palette.NEUTRAL, lw=0.8, ls="--")
             ax3.set_xticks(x)
-            ax3.set_xticklabels(bin_labels, rotation=35, ha="right", fontsize=7)
-            ax3.set_ylabel("Fraction Correct", fontsize=11)
-            ax3.set_ylim(0, 1.1)
-            ax3.set_title("Reliability Diagram\n(Confidence → Accuracy)", fontsize=11, fontweight="bold")
-            ax3.grid(axis="y", alpha=0.3)
+            ax3.set_xticklabels(bin_labels, rotation=45, ha="right", fontsize=9)
+            ax3.set_ylabel("Fraction Correct", fontsize=12, fontweight="bold")
+            ax3.set_xlabel("Confidence Bin", fontsize=12, fontweight="bold")
+            ax3.set_ylim(0, 1.15)
+            ax3.set_title("Reliability Diagram\n(Confidence → Accuracy)", fontsize=12, fontweight="bold")
+            ax3.legend(fontsize=9, framealpha=0.95, fancybox=True)
+            ax3.grid(axis="y", alpha=0.25, linestyle="-", linewidth=0.5)
+            ax3.set_facecolor("#fafafa")
+            apply_professional_style(ax3)
 
-        plt.suptitle("Prediction Confidence Analysis", fontsize=13, fontweight="bold", y=1.01)
+        plt.suptitle("Prediction Confidence & Calibration Analysis", fontsize=14, fontweight="bold", y=1.02)
         plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
         plt.close()
         logger.info("  Calibration plot saved → %s", save_path)
     except Exception as e:

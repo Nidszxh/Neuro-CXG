@@ -212,7 +212,6 @@ class CausalBrainGNN(torch.nn.Module):
         node_emb_dim=16,
     ):
         super().__init__()
-        torch.manual_seed(42)
 
         self.use_site_embedding = use_site_embedding
         self.use_demographics = use_demographics

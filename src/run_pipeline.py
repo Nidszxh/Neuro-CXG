@@ -97,8 +97,8 @@ from src.core.config import (
     RESULTS_DIR,
     YOLO_WEIGHTS_PATH,
     validate_environment,
-    validate_gnn_training_inputs,
 )
+from src.core.validators import validate_gnn_training_inputs
 from src.pipeline.registry import STAGES as STAGE_REGISTRY
 from src.pipeline.registry import completion_snapshot, stage_map
 

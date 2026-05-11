@@ -44,6 +44,36 @@ LOBE_NAMES = {
     10: "Cerebellum",
     11: "Brainstem",
 }
+
+LOBE_ANATOMICAL_ORDER = [
+    0,   # Frontal_Superior   - Frontoparietal Network
+    1,   # Frontal_Orbital     - Default Mode Network
+    2,   # Motor_Premotor     - Sensorimotor Network
+    3,   # Insula             - Salience Network
+    4,   # Cingulate          - Salience Network
+    5,   # Limbic             - Limbic System
+    6,   # Occipital          - Visual Network
+    7,   # Parietal           - Default Mode Network
+    8,   # Temporal           - Default Mode / Social Network
+    9,   # Subcortical        - Subcortical Network
+    10,  # Cerebellum         - Cerebellar Network
+    11,  # Brainstem          - Brainstem
+]
+
+LOBE_NETWORK_MAPPING = {
+    "Frontal_Superior": "FPN",
+    "Frontal_Orbital": "DMN",
+    "Motor_Premotor": "Sensorimotor",
+    "Insula": "Salience",
+    "Cingulate": "Salience",
+    "Limbic": "Limbic",
+    "Occipital": "Visual",
+    "Parietal": "DMN",
+    "Temporal": "DMN/Social",
+    "Subcortical": "Subcortical",
+    "Cerebellum": "Cerebellar",
+    "Brainstem": "Brainstem",
+}
 import os
 
 # 11-lobe mode: Set USE_11_LOBES=True to exclude Brainstem (see ablation studies for performance comparison)

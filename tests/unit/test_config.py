@@ -14,8 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     LOBE_MAPPING,
     NUM_LOBES,
-    validate_lobe_mapping,
 )
+from src.core.validators import validate_lobe_mapping
 
 # ── Happy-path tests ───────────────────────────────────────────────────────────
 
@@ -83,7 +83,7 @@ class TestValidateLobeMappingErrorPath:
         bad_mapping = {k: v for k, v in LOBE_MAPPING.items() if k < NUM_LOBES - 1}
         monkeypatch.setattr(cfg, "LOBE_MAPPING", bad_mapping)
         with pytest.raises(ValueError, match="NUM_LOBES"):
-            cfg.validate_lobe_mapping()
+            validate_lobe_mapping()
 
     def test_out_of_range_roi_raises(self, monkeypatch):
         """Should raise when an ROI index is outside [0, 169]."""
@@ -94,7 +94,7 @@ class TestValidateLobeMappingErrorPath:
         patched[NUM_LOBES - 1] = [170]  # 0-indexed 170 → 1-indexed 171, out of range
         monkeypatch.setattr(cfg, "LOBE_MAPPING", patched)
         with pytest.raises(ValueError, match="out-of-range"):
-            cfg.validate_lobe_mapping()
+            validate_lobe_mapping()
 
     def test_duplicate_roi_raises(self, monkeypatch):
         """Should raise when the same ROI index appears in two lobes."""
@@ -105,7 +105,7 @@ class TestValidateLobeMappingErrorPath:
         patched[1] = patched[1] + [0]  # index 0 already in lobe 0
         monkeypatch.setattr(cfg, "LOBE_MAPPING", patched)
         with pytest.raises(ValueError, match="duplicate"):
-            cfg.validate_lobe_mapping()
+            validate_lobe_mapping()
 
     def test_missing_roi_raises(self, monkeypatch):
         """Should raise when at least one ROI is not assigned to any lobe."""
@@ -117,4 +117,4 @@ class TestValidateLobeMappingErrorPath:
         patched[last_key] = patched[last_key][:-1]
         monkeypatch.setattr(cfg, "LOBE_MAPPING", patched)
         with pytest.raises(ValueError, match="does not cover"):
-            cfg.validate_lobe_mapping()
+            validate_lobe_mapping()
