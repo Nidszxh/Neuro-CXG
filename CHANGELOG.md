@@ -4,6 +4,27 @@ All notable changes to Neuro-CXG are documented here. Format follows [Keep a Cha
 
 ---
 
+## [1.1.0] — May 11, 2026
+
+### Added
+- Optimized GNN hyperparameters: 48ch/4hd/3L/0.33 (best config)
+
+### Changed
+- GNN hidden channels: 32 → 48
+- GNN num heads: 2 → 4
+- GNN num layers: 2 → 3
+- GNN dropout: 0.35 → 0.33
+- GRL warmup fraction: 0.10 → 0.20 (stability improvement)
+- Auto GRL grid search: disabled (fixed alpha=0.10)
+
+### Results
+- Test AUC: **0.8810** [0.8277, 0.9322] (3-run stable)
+- Test F1: **0.8375** (+9.5% vs canonical 0.7651)
+- Sensitivity: **84.8%** (+15.5% vs canonical 73.4%)
+- See [`docs/paper/results.md`](docs/paper/results.md) for full metrics
+
+---
+
 ## [1.0.0] — May 2, 2026
 
 ### Added

@@ -62,4 +62,4 @@ python src/run_result_analysis.py
 
 ---
 
-*Neuro-CXG v1.1 — May 2, 2026*
+*Neuro-CXG v1.1 — May 11, 2026*
