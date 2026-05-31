@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import torch
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.models.training_utils import attach_feature_scaler_from_checkpoint
 
@@ -16,7 +11,6 @@ class _DummyModel(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.lin = torch.nn.Linear(4, 2)
-
 
 def test_attach_legacy_scaler_metadata():
     model = _DummyModel()
@@ -31,7 +25,6 @@ def test_attach_legacy_scaler_metadata():
     assert hasattr(model, "_feature_std")
     assert model._feature_mean.shape[0] == 4
     assert model._feature_std.shape[0] == 4
-
 
 def test_attach_wave1_preprocessing_metadata():
     model = _DummyModel()
@@ -64,7 +57,6 @@ def test_attach_wave1_preprocessing_metadata():
     assert model._selected_feature_idx == [0, 2]
     assert set(model._site_feature_means.keys()) == {0, 2}
     assert set(model._site_feature_stds.keys()) == {0, 2}
-
 
 def test_graceful_when_metadata_missing():
     model = _DummyModel()

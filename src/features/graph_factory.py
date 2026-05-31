@@ -1,7 +1,6 @@
 import functools
 import hashlib
 import logging
-import sys
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -12,7 +11,6 @@ import torch
 from torch_geometric.data import Data, Dataset
 
 # Setup paths and config
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     CAUSAL_GRAPHS_DIR,
     EXCLUDED_SUBJECTS,
@@ -37,14 +35,9 @@ from src.core.hyperparams import (
 )
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 _exclusion_logged = False  # Suppress repeated exclusion log messages
-
 
 def _log_exclusions_once():
     """Log excluded subjects only once per session."""
@@ -56,7 +49,6 @@ def _log_exclusions_once():
         )
         _exclusion_logged = True
 
-
 def _trim_to_num_lobes(tensor: torch.Tensor, name: str) -> torch.Tensor | None:
     """Handle lobe count mismatch (12→11) for compatibility."""
     if tensor.shape[0] == NUM_LOBES:
@@ -67,7 +59,6 @@ def _trim_to_num_lobes(tensor: torch.Tensor, name: str) -> torch.Tensor | None:
     logger.warning(f"{name} shape {tensor.shape} mismatches NUM_LOBES={NUM_LOBES}")
     return None
 
-
 @functools.lru_cache(maxsize=64)
 def _load_csv_cached(csv_path_str: str, index_col: str | None = None) -> pd.DataFrame:
     """Load CSV with in-memory caching for faster repeated reads."""
@@ -76,7 +67,6 @@ def _load_csv_cached(csv_path_str: str, index_col: str | None = None) -> pd.Data
     if index_col is not None:
         df = df.set_index(index_col)
     return df
-
 
 def _stable_subject_seed(subject_id: str) -> int:
     """Derive a reproducible 32-bit seed from subject_id."""
@@ -199,7 +189,7 @@ class ABIDECausalDataset(Dataset):
             graph_path = self.adj_dir / f"{sub}_graph.pt"
             if graph_path.exists():
                 try:
-                    graph_data = torch.load(graph_path, map_location='cpu', weights_only=False)
+                    graph_data = torch.load(graph_path, map_location='cpu', weights_only=True)
                     if 'adj' not in graph_data:
                         invalid_count += 1
                         continue
@@ -311,7 +301,7 @@ class ABIDECausalDataset(Dataset):
             graph_dict = self._graph_cache.get(sub_id)
             if graph_dict is None:
                 graph_path = self.adj_dir / f"{sub_id}_graph.pt"
-                raw_graph = torch.load(graph_path, weights_only=False)
+                raw_graph = torch.load(graph_path, weights_only=True)
                 graph_dict = {
                     'adj': raw_graph['adj'].clone().to(torch.float32),
                     'internal_features': raw_graph.get('internal_features'),
@@ -665,7 +655,6 @@ class ABIDECausalDataset(Dataset):
             data.edge_attr = data.edge_attr * keep_mask.unsqueeze(1).float()
 
         return data
-
 
 if __name__ == "__main__":
     # Test with comprehensive validation

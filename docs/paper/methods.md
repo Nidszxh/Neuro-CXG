@@ -21,7 +21,7 @@ We conducted **fresh end-to-end pipeline runs** comparing 12-lobe and 11-lobe ar
 
 | Architecture | Test AUC | 95% CI | CV AUC (5-fold) | Std |
 |--------------|----------|--------|-----------------|-----|
-| **12-Lobe (with Brainstem)** | **0.8810** | [0.8277, 0.9322] | 0.8168 | ±0.0488 |
+| **12-Lobe (with Brainstem)** | **0.8819** | [0.8277, 0.9322] | 0.8173 | ±0.0493 |
 | 11-Lobe (without Brainstem) | 0.8280 | [0.7653, 0.8891] | 0.8134 | ±0.0486 |
 | **Delta** | **+0.0530** | — | -0.0032 | — |
 

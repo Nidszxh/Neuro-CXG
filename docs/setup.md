@@ -23,7 +23,7 @@ ls models/checkpoints/best_model_fold*.pt
 # Step 5: Run evaluation (<30 seconds)
 python src/run_evaluation.py
 
-# Expected: Test AUC ≈ 0.8810 [0.83, 0.93] (48ch/4hd/3L/0.33, 3-run stable)
+# Expected: Test AUC ≈ 0.8819 [0.83, 0.93] (48ch/4hd/3L/0.33)
 ```
 
 **What if I don't have data yet?** See Part D for ABIDE download (requires ~2 hours for full dataset).
@@ -141,8 +141,8 @@ python -m src.data.split --site-stratified-cv
 
 **Labels and detection:**
 ```bash
-python -m src.pipelines.generate_labels
-python -m src.pipelines.roi_detection
+python -m src.detection.generate_labels
+python -m src.detection.roi_detection
 ```
 
 **Features and harmonization:**

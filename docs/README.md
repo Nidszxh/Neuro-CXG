@@ -29,7 +29,7 @@
 | File | Purpose |
 |------|---------|
 | [test_set_protocol.md](./test_set_protocol.md) | Test set evaluation history |
-| [evaluation.md](./evaluation.md) | Legacy evaluation documentation (deprecated) |
+| ~~evaluation.md~~ | ~~Legacy evaluation documentation (deprecated)~~ [REMOVED] |
 | [operations.md](./operations.md) | Pipeline operations guide |
 | [data.md](./data.md) | Data processing documentation |
 | [literature.md](./literature.md) | Prior work and citations |

@@ -38,23 +38,23 @@
   "gradcam_top5_differential": [
     {
       "region": "Frontal_Orbital",
-      "delta": 0.009027991443872452
+      "delta": 0.009089789353311062
     },
     {
       "region": "Motor_Premotor",
-      "delta": 0.008576781488955021
+      "delta": 0.00863154511898756
     },
     {
       "region": "Cerebellum",
-      "delta": 0.007959019392728806
+      "delta": 0.008023113012313843
     },
     {
       "region": "Insula",
-      "delta": 0.006829861551523209
+      "delta": 0.006918004713952541
     },
     {
       "region": "Temporal",
-      "delta": 0.006758463568985462
+      "delta": 0.0068468875251710415
     }
   ],
   "network_embeddings": {
@@ -64,10 +64,10 @@
       48
     ],
     "mean_abs_per_network": [
-      0.37008073925971985,
-      0.37340742349624634,
-      0.3688800632953644,
-      0.375499427318573
+      0.37021446228027344,
+      0.3737747073173523,
+      0.3691735565662384,
+      0.37580758333206177
     ],
     "saved_path": "/home/nidszxh/Projects/Neuro-CXG/results/explainability/node/network_embeddings_last_batch.npy"
   },
@@ -75,27 +75,27 @@
     {
       "source": "Motor_Premotor",
       "target": "Occipital",
-      "delta": 0.002715993137663733
+      "delta": 0.0027820278082775073
     },
     {
       "source": "Insula",
       "target": "Motor_Premotor",
-      "delta": 0.0027036090507650667
+      "delta": 0.0026894459375856783
     },
     {
       "source": "Brainstem",
       "target": "Motor_Premotor",
-      "delta": 0.0022657561939301066
+      "delta": 0.0022667829040143215
     },
     {
       "source": "Frontal_Orbital",
       "target": "Frontal_Superior",
-      "delta": 0.0018063502227165901
+      "delta": 0.0017974288880053836
     },
     {
       "source": "Motor_Premotor",
       "target": "Frontal_Orbital",
-      "delta": 0.0016607783994291897
+      "delta": 0.00164473665957077
     }
   ]
 }

@@ -11,13 +11,11 @@ Usage:
 import logging
 import random
 import sys
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     CAUSAL_GRAPHS_DIR,
     GNN_IN_CHANNELS,
@@ -33,12 +31,7 @@ from src.core.config import (
 )
 from src.features.graph_factory import ABIDECausalDataset
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
-
 
 class AuditCheck:
     """Comprehensive post-fix validation."""
@@ -341,7 +334,7 @@ class AuditCheck:
 
         for graph_file in sample_files:
             try:
-                graph_dict = torch.load(graph_file, map_location='cpu')
+                graph_dict = torch.load(graph_file, map_location='cpu', weights_only=True)
 
                 # Validate structure
                 required_keys = {'adj', 'internal_features', 'subject_id', 'lobe_order'}
@@ -466,7 +459,6 @@ class AuditCheck:
         else:
             logger.info("\n✅ ALL CHECKS PASSED - Pipeline is ready!")
             sys.exit(0)
-
 
 if __name__ == "__main__":
     auditor = AuditCheck()

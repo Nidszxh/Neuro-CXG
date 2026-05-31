@@ -13,7 +13,6 @@ import torch
 from PIL import Image
 
 # Setup paths from config
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     ALL_FEATURE_NAMES,
     ATLAS_PATH,
@@ -47,7 +46,6 @@ from src.core.hyperparams import (
 )
 from src.core.validators import summarize_graph_degeneracy_from_adj
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Integrity defaults
@@ -57,7 +55,6 @@ VALID_ROI_RANGE = (164, 170)  # AAL3v1 atlas variants
 PNG_DIR = DATA_ROOT / "images"
 TS_DIR = DATA_PROCESSED
 
-
 def _collect_split_files(subdir: str, pattern: str = "*.png") -> list[Path]:
     """Collect files from train/val/test splits into a single list."""
     return [
@@ -65,7 +62,6 @@ def _collect_split_files(subdir: str, pattern: str = "*.png") -> list[Path]:
         for p in (DATA_FINAL / split / subdir).glob(pattern)
         if (DATA_FINAL / split / subdir).exists()
     ]
-
 
 def _redownload_npy(corrupted_npy_paths: list, incomplete_subs: list) -> None:
     """
@@ -142,7 +138,6 @@ def _redownload_npy(corrupted_npy_paths: list, incomplete_subs: list) -> None:
                 logger.error(f"  EXCEPTION {sub_id}: {exc}")
 
     logger.info("NPY re-download complete. Re-run --dataset to verify.")
-
 
 def check_dataset_integrity() -> None:
     """
@@ -330,7 +325,6 @@ def check_dataset_integrity() -> None:
         elif choice == "4":
             _redownload_npy(corrupted_npys, incomplete_subs)
 
-
 def check_distribution() -> None:
     """
     Pre-GNN integrity check.
@@ -386,7 +380,6 @@ def check_distribution() -> None:
                 logger.info(f"  ✓ Image/Label count matches ({n_files} files)")
 
     logger.info("\nPre-GNN integrity check complete.")
-
 
 def analyze_class_distribution() -> None:
     """
@@ -541,7 +534,6 @@ def analyze_class_distribution() -> None:
             logger.info("   -> Standard training should work")
 
     logger.info("=" * 70)
-
 
 def generate_health_report(
     pheno_path: Path | None = None,
@@ -812,7 +804,6 @@ def generate_health_report(
     logger.info("Health report complete.")
     return True
 
-
 def _sample_graphs(graph_files: list[Path], sample_size: int = 200) -> dict:
     """
     Sample up to *sample_size* graph .pt files and return validity statistics.
@@ -844,7 +835,7 @@ def _sample_graphs(graph_files: list[Path], sample_size: int = 200) -> dict:
     sample = list(np.random.choice(graph_files, min(sample_size, len(graph_files)), replace=False))
     for gf in sample:
         try:
-            data = torch.load(gf, weights_only=False)
+            data = torch.load(gf, weights_only=True)
             if "adj" not in data:
                 stats["corrupted"] += 1
                 continue
@@ -898,7 +889,6 @@ def _sample_graphs(graph_files: list[Path], sample_size: int = 200) -> dict:
         stats["edge_weight_abs_std"] = float(np.abs(w).std())
     return stats
 
-
 @dataclass
 class ValidationResult:
     """Structured validation result."""
@@ -909,7 +899,6 @@ class ValidationResult:
     severity: str  # 'critical', 'warning', 'info'
     fix_suggestion: str | None = None
     metrics: dict | None = None
-
 
 class PipelineValidator:
     """
@@ -1931,7 +1920,6 @@ class PipelineValidator:
         is_healthy, _ = self.generate_report()
         return is_healthy
 
-
 def run_quality_validation(visualize: bool = False, strict: bool = False) -> bool:
     checker = PipelineValidator(visualize=visualize)
     is_healthy = checker.run_full_validation()
@@ -1939,14 +1927,12 @@ def run_quality_validation(visualize: bool = False, strict: bool = False) -> boo
         sys.exit(1)
     return is_healthy
 
-
 def run_pipeline_validation(strict: bool = False) -> bool:
     validator = PipelineValidator()
     is_healthy = validator.run_full_validation()
     if strict and not is_healthy:
         sys.exit(1)
     return is_healthy
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Unified validation and integrity checks")
@@ -1982,7 +1968,6 @@ def main() -> None:
         return
 
     run_pipeline_validation(strict=args.strict)
-
 
 if __name__ == "__main__":
     main()

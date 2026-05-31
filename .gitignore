@@ -117,7 +117,7 @@ patch_*.py
 *.log
 # Documentation drafts (already moved to archive_docs/)
 docs/archive/**
-docs/deprecated/**
+
 archive_docs/**
 
 # SECTION 9: OS & IDE Files
@@ -147,3 +147,5 @@ tree/
 
 # CI/CD workflows (kept locally only)
 .github/**
+!.github/workflows/
+!.github/workflows/*.yml

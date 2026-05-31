@@ -2,14 +2,12 @@ import logging
 import os
 import random
 import shutil
-import sys
 from pathlib import Path
 
 import pandas as pd
 from sklearn.model_selection import GroupKFold, StratifiedKFold, train_test_split
 
 # Setup paths from config
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     DATA_FINAL,
     DATA_PROCESSED,
@@ -21,10 +19,6 @@ from src.core.config import (
 )
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-)
 logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
@@ -79,7 +73,6 @@ _SITE_TR: dict[str, float] = {
 }
 
 _N_SITE_CLUSTERS = 5
-
 
 def _assign_site_clusters(sites: list[str]) -> dict[str, int]:
     """
@@ -140,7 +133,6 @@ def _assign_site_clusters(sites: list[str]) -> dict[str, int]:
             cluster_idx += 1
 
     return cluster_map
-
 
 def generate_site_stratified_folds(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -203,7 +195,6 @@ def generate_site_stratified_folds(df: pd.DataFrame) -> pd.DataFrame:
     )
     return df
 
-
 def _resolve_source_ts_dir() -> Path:
     """Resolve source time-series directory across canonical and legacy layouts."""
     candidates = [
@@ -232,9 +223,7 @@ def _resolve_source_ts_dir() -> Path:
     logger.info("No source time-series directory found; defaulting to %s", DATA_TIME_SERIES)
     return DATA_TIME_SERIES
 
-
 SOURCE_TS = _resolve_source_ts_dir()
-
 
 def _move_with_dedup(src: Path, dst: Path):
     """Move file to destination, dropping duplicate source if destination already exists."""
@@ -245,7 +234,6 @@ def _move_with_dedup(src: Path, dst: Path):
         return
     shutil.move(src, dst)
 
-
 def consolidate_split_back_to_source():
     """Bring previously split files back to source pools so re-splitting uses full dataset."""
     moved = {'images': 0, 'labels': 0, 'ts': 0, 'roi_labels': 0}
@@ -254,20 +242,23 @@ def consolidate_split_back_to_source():
         if not split_root.exists():
             continue
         for f in (split_root / "images").glob("*.png") if (split_root / "images").exists() else []:
-            _move_with_dedup(f, SOURCE_IMG / f.name); moved['images'] += 1
+            _move_with_dedup(f, SOURCE_IMG / f.name)
+            moved['images'] += 1
         for f in (split_root / "labels").glob("*.txt") if (split_root / "labels").exists() else []:
-            _move_with_dedup(f, SOURCE_LBL / f.name); moved['labels'] += 1
+            _move_with_dedup(f, SOURCE_LBL / f.name)
+            moved['labels'] += 1
         if (split_root / "time_series").exists():
             for f in (split_root / "time_series").glob("*_ts.npy"):
-                _move_with_dedup(f, SOURCE_TS / f.name); moved['ts'] += 1
+                _move_with_dedup(f, SOURCE_TS / f.name)
+                moved['ts'] += 1
             for f in (split_root / "time_series").glob("*_roi_labels.npy"):
-                _move_with_dedup(f, SOURCE_TS / f.name); moved['roi_labels'] += 1
+                _move_with_dedup(f, SOURCE_TS / f.name)
+                moved['roi_labels'] += 1
 
     if any(moved.values()):
         logger.info("Consolidated previous splits: %s", moved)
     else:
         logger.info("No existing split files needed consolidation")
-
 
 def run_stratified_split():
     # 0. Consolidate existing split outputs back to source pools
@@ -401,7 +392,6 @@ def run_stratified_split():
 
     logger.info(f"\n✅ SUCCESS: Stratified split complete. Saved to {DATA_FINAL}")
 
-
 def run_site_stratified_split():
     """
     Task 5 (DD-013): Re-assign cv_fold using site-stratified GroupKFold.
@@ -440,7 +430,6 @@ def run_site_stratified_split():
         "⚠️  Re-run fold_safe_harmonization.py to regenerate fold-specific harmonized features "
         "before training: python -m src.features.fold_safe_harmonization"
     )
-
 
 if __name__ == "__main__":
     import argparse

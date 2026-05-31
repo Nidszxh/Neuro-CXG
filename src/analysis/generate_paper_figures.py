@@ -14,7 +14,6 @@ Usage:
 """
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import matplotlib
@@ -24,9 +23,6 @@ matplotlib.use("Agg")  # Non-interactive backend
 import matplotlib.pyplot as plt
 
 # Add project to path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
-
 from src.core.config import LOBE_NAMES, NUM_LOBES, PROJECT_ROOT, RESULTS_DIR
 
 # Load publication-quality matplotlib style from configs/
@@ -49,7 +45,6 @@ plt.rcParams['axes.prop_cycle'] = cycler(color=palette.cycle())
 # Override DPI for publication
 plt.rcParams.update({"figure.dpi": 300, "savefig.dpi": 300})
 
-
 def setup_output_dir(output_dir: Path) -> Path:
     """Create output directory structure."""
     output_dir = Path(output_dir)
@@ -60,7 +55,6 @@ def setup_output_dir(output_dir: Path) -> Path:
     (output_dir / "causal_graphs").mkdir(parents=True, exist_ok=True)
     (output_dir / "calibration").mkdir(parents=True, exist_ok=True)
     return output_dir
-
 
 def generate_roc_curves(output_dir: Path):
     """Generate combined ROC curve figure for all models."""
@@ -107,7 +101,6 @@ def generate_roc_curves(output_dir: Path):
     fig.savefig(output_dir / "roc_curves" / "roc_curve.pdf", bbox_inches="tight")
     plt.close(fig)
     print("  Saved ROC curve to roc_curves/")
-
 
 def generate_ablation_figure(output_dir: Path):
     """Generate ablation study bar chart."""
@@ -162,7 +155,6 @@ def generate_ablation_figure(output_dir: Path):
     plt.close()
     print(f"  Saved ablation figure to {output_dir}")
 
-
 def generate_training_curves(output_dir: Path):
     """Generate training curves (loss + AUC by fold)."""
     print("Generating training curves...")
@@ -215,7 +207,6 @@ def generate_training_curves(output_dir: Path):
     plt.close(fig)
     print("  Saved training curves to training_curves/")
 
-
 def generate_attention_heatmap(output_dir: Path):
     """Generate brain region attention heatmap."""
     print("Generating attention heatmap...")
@@ -257,7 +248,6 @@ def generate_attention_heatmap(output_dir: Path):
     fig.savefig(output_dir / "attention" / "attention_heatmap.pdf", bbox_inches="tight")
     plt.close(fig)
     print("  Saved attention heatmap to attention/")
-
 
 def generate_causal_graphs(output_dir: Path):
     """Generate causal graph visualizations (ASD vs Control)."""
@@ -301,7 +291,7 @@ def generate_causal_graphs(output_dir: Path):
         output_path = output_dir / "causal_graphs" / "causal_graph_comparison.png"
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        result = plot_comparison(
+        plot_comparison(
             asd_subject,
             control_subject,
             output_path,
@@ -315,7 +305,6 @@ def generate_causal_graphs(output_dir: Path):
     except Exception as e:
         if "Colorbar layout" not in str(e):
             print(f"  Warning: causal graph visualization failed: {e}")
-
 
 def generate_calibration_plot(output_dir: Path):
     """Generate confidence calibration plot."""
@@ -360,7 +349,6 @@ def generate_calibration_plot(output_dir: Path):
     plt.close(fig)
     print("  Saved calibration plot to calibration/")
 
-
 def generate_dataflow_diagram(output_dir: Path):
     """Generate LaTeX-style data pipeline diagram."""
     print("Generating dataflow diagram...")
@@ -368,10 +356,10 @@ def generate_dataflow_diagram(output_dir: Path):
     # Use LaTeX-style font
     plt.rcParams['font.family'] = 'sans-serif'
     plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
-    
+
     fig, ax = plt.subplots(figsize=(12, 3))
     ax.axis('off')
-    
+
     # Clean horizontal layout
     stages = [
         ('ABIDE I', '15 sites, 154 subjects'),
@@ -382,53 +370,52 @@ def generate_dataflow_diagram(output_dir: Path):
         ('GNN', 'GATv2+GRL\n5-fold CV'),
         ('Eval', 'AUC=0.877')
     ]
-    
+
     n = len(stages)
     xs = np.linspace(0.06, 0.94, n)
-    
-    for i, ((name, desc), x) in enumerate(zip(stages, xs)):
+
+    for i, ((name, desc), x) in enumerate(zip(stages, xs, strict=False)):
         # Clean rectangle
-        rect = plt.Rectangle((x-0.055, 0.2), 0.11, 0.6, 
+        rect = plt.Rectangle((x-0.055, 0.2), 0.11, 0.6,
                             facecolor='#f5f5f5', edgecolor='#333', linewidth=1.5,
                             transform=ax.transAxes)
         ax.add_patch(rect)
-        
+
         # Stage name
-        ax.text(x, 0.55, name, ha='center', va='center', fontsize=10, 
+        ax.text(x, 0.55, name, ha='center', va='center', fontsize=10,
                fontweight='bold', transform=ax.transAxes)
-        
+
         # Description
-        ax.text(x, 0.38, desc, ha='center', va='center', fontsize=8, 
+        ax.text(x, 0.38, desc, ha='center', va='center', fontsize=8,
                transform=ax.transAxes, color='#555')
-        
+
         # Arrow
         if i < n-1:
             ax.annotate('', xy=(xs[i+1]-0.058, 0.5), xytext=(x+0.058, 0.5),
-                      arrowprops=dict(arrowstyle='->', color='#333', lw=1.5),
+                      arrowprops={"arrowstyle": '->', "color": '#333', "lw": 1.5},
                       transform=ax.transAxes)
-    
+
     # Top label
     ax.text(0.5, 0.95, 'Data Processing Pipeline', ha='center', va='top',
            fontsize=12, fontweight='bold', transform=ax.transAxes)
-    
+
     plt.tight_layout()
     output_dir.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_dir / 'dataflow_diagram.png', dpi=300, bbox_inches='tight', facecolor='white')
     plt.close(fig)
     print('  Saved dataflow_diagram.png')
 
-
 def generate_feature_extraction_diagram(output_dir: Path):
     """Generate clean, minimal feature extraction diagram."""
     print("Generating feature extraction diagram...")
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    
+
     # === Panel A: Feature Groups (clean grid) ===
     ax1 = axes[0]
     ax1.axis("off")
     ax1.set_title("A. 24 Features", fontsize=13, fontweight="bold", pad=10)
-    
+
     # Feature groups as clean boxes
     groups = [
         ("Temporal\n8", "#3498db"),
@@ -436,15 +423,15 @@ def generate_feature_extraction_diagram(output_dir: Path):
         ("Internal\n2", "#27ae60"),
         ("Spatial\n4", "#9b59b6")
     ]
-    
+
     for i, (label, color) in enumerate(groups):
         x = 0.2 + i * 0.2
-        rect = plt.Rectangle((x-0.08, 0.4), 0.16, 0.3, facecolor=color, alpha=0.85, 
+        rect = plt.Rectangle((x-0.08, 0.4), 0.16, 0.3, facecolor=color, alpha=0.85,
                              edgecolor="black", linewidth=2, transform=ax1.transAxes)
         ax1.add_patch(rect)
-        ax1.text(x, 0.55, label, ha="center", va="center", fontsize=11, 
+        ax1.text(x, 0.55, label, ha="center", va="center", fontsize=11,
                 fontweight="bold", color="white", transform=ax1.transAxes)
-    
+
     # Feature list
     features_text = (
         "Temporal: mean, std, skew, kurt, PSD, MSSD, range, autocorr\n"
@@ -453,9 +440,9 @@ def generate_feature_extraction_diagram(output_dir: Path):
         "Spatial: x, y, z_depth, size"
     )
     ax1.text(0.5, 0.15, features_text, ha="center", va="center", fontsize=9,
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="#f8f9fa", edgecolor="#bdc3c7"),
+            bbox={"boxstyle": "round,pad=0.3", "facecolor": "#f8f9fa", "edgecolor": "#bdc3c7"},
             transform=ax1.transAxes)
-    
+
     # Exclusions note
     ax1.text(0.5, 0.02, "Excluded: gamma (Nyquist), conf_std/detection_count (site leakage)",
              ha="center", fontsize=8, style="italic", color="#7f8c8d", transform=ax1.transAxes)
@@ -473,20 +460,20 @@ def generate_feature_extraction_diagram(output_dir: Path):
         ("ComBat", "#f39c12"),
         ("Graph", "#2c3e50")
     ]
-    
+
     n_steps = len(steps)
     x_pos = np.linspace(0.1, 0.9, n_steps)
-    
-    for i, ((step, color), x) in enumerate(zip(steps, x_pos)):
+
+    for i, ((step, color), x) in enumerate(zip(steps, x_pos, strict=False)):
         circle = plt.Circle((x, 0.5), 0.055, color=color, alpha=0.85)
         ax2.add_patch(circle)
-        ax2.text(x, 0.5, str(i+1), ha="center", va="center", fontsize=10, 
+        ax2.text(x, 0.5, str(i+1), ha="center", va="center", fontsize=10,
                 fontweight="bold", color="white")
         ax2.text(x, 0.28, step, ha="center", fontsize=9, fontweight="bold", transform=ax2.transAxes)
-        
+
         if i < n_steps - 1:
             ax2.annotate("", xy=(x_pos[i+1]-0.07, 0.5), xytext=(x+0.07, 0.5),
-                        arrowprops=dict(arrowstyle="->", lw=2, color="#2c3e50"))
+                        arrowprops={"arrowstyle": "->", "lw": 2, "color": "#2c3e50"})
 
     # Key stats
     ax2.text(0.5, 0.12, "TR=2.0s • 0.01-0.15 Hz • Ridge-Granger (70% + 30% Pearson)",
@@ -497,7 +484,6 @@ def generate_feature_extraction_diagram(output_dir: Path):
     fig.savefig(output_dir / "feature_extraction.png", dpi=300, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     print("  Saved feature_extraction.png")
-
 
 def generate_architecture_diagram(output_dir: Path):
     """Generate clean, minimal GNN architecture diagram."""
@@ -518,23 +504,23 @@ def generate_architecture_diagram(output_dir: Path):
         ("MLP\nClassifier", "#16a085"),
         ("Output\nASD/Control", "#17a2b8")
     ]
-    
+
     n = len(layers)
     x_positions = np.linspace(0.07, 0.93, n)
-    
-    for i, ((layer, color), x) in enumerate(zip(layers, x_positions)):
+
+    for i, ((layer, color), x) in enumerate(zip(layers, x_positions, strict=False)):
         # Clean box
         rect = plt.Rectangle((x-0.05, 0.35), 0.1, 0.3, facecolor=color, alpha=0.85,
                              edgecolor="black", linewidth=2)
         ax.add_patch(rect)
-        ax.text(x, 0.5, layer, ha="center", va="center", fontsize=9, 
+        ax.text(x, 0.5, layer, ha="center", va="center", fontsize=9,
                 fontweight="bold", color="white")
-        
+
         # Arrow
         if i < n - 1:
             ax.annotate("", xy=(x_positions[i+1]-0.055, 0.5), xytext=(x+0.055, 0.5),
-                       arrowprops=dict(arrowstyle="->", lw=2.5, color="#2c3e50"))
-    
+                       arrowprops={"arrowstyle": "->", "lw": 2.5, "color": "#2c3e50"})
+
     # Key hyperparameters (clean sidebar)
     hyperparams = (
         "HYPERPARAMETERS\n"
@@ -548,13 +534,13 @@ def generate_architecture_diagram(output_dir: Path):
         "Site emb: 16D"
     )
     ax.text(0.97, 0.5, hyperparams, ha="right", va="center", fontsize=9,
-            bbox=dict(boxstyle="round,pad=0.5", facecolor="#ecf0f1", edgecolor="#34495e", linewidth=2),
+            bbox={"boxstyle": "round,pad=0.5", "facecolor": "#ecf0f1", "edgecolor": "#34495e", "linewidth": 2},
             transform=ax.transAxes, family="monospace")
 
     # Input/output annotations
-    ax.text(0.02, 0.5, "fMRI\nFeatures", ha="left", va="center", fontsize=9, 
+    ax.text(0.02, 0.5, "fMRI\nFeatures", ha="left", va="center", fontsize=9,
             fontweight="bold", transform=ax.transAxes)
-    ax.text(0.98, 0.5, "ASD /\nControl", ha="right", va="center", fontsize=9, 
+    ax.text(0.98, 0.5, "ASD /\nControl", ha="right", va="center", fontsize=9,
             fontweight="bold", transform=ax.transAxes)
 
     plt.tight_layout()
@@ -562,7 +548,6 @@ def generate_architecture_diagram(output_dir: Path):
     fig.savefig(output_dir / "gnn_architecture.png", dpi=300, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     print("  Saved gnn_architecture.png")
-
 
 def generate_per_site_chart(output_dir: Path):
     """Generate per-site AUC bar chart."""
@@ -593,8 +578,8 @@ def generate_per_site_chart(output_dir: Path):
 
     fig, ax = plt.subplots(1, 1, figsize=FigureSize.BAR_CHART)
     colors = [palette.ASD if site_data[k].get("n_asd", 0) > 0 else palette.NEUTRAL for k in names]
-    labels = ["ASD + Control" if site_data[k].get("n_asd", 0) > 0 else "Control only" for k in names]
-    bars = ax.bar(range(len(names)), aucs, color=colors, edgecolor="black", linewidth=0.5)
+    ["ASD + Control" if site_data[k].get("n_asd", 0) > 0 else "Control only" for k in names]
+    ax.bar(range(len(names)), aucs, color=colors, edgecolor="black", linewidth=0.5)
 
     # Create legend handles manually since bars have same color but different categories
     asd_handle = plt.Rectangle((0, 0), 1, 1, facecolor=palette.ASD, edgecolor="black", linewidth=0.5)
@@ -613,7 +598,6 @@ def generate_per_site_chart(output_dir: Path):
     fig.savefig(output_dir / "per_site_auc.pdf", bbox_inches="tight")
     plt.close(fig)
     print("  Saved per-site AUC chart to per_site_auc.{png,pdf}")
-
 
 def generate_bootstrap_ci_figure(output_dir: Path):
     """Generate Bootstrap CI visualization."""
@@ -663,11 +647,10 @@ def generate_bootstrap_ci_figure(output_dir: Path):
     plt.close(fig)
     print("  Saved Bootstrap CI figure to bootstrap_ci.{png,pdf}")
 
-
 def main():
     parser = argparse.ArgumentParser(description="Generate Neuro-CXG paper figures")
     parser.add_argument(
-        "--output", type=str, default="results/paper_figures", help="Output directory for figures"
+        "--output", type=str, default=str(RESULTS_DIR / "paper_figures"), help="Output directory for figures"
     )
     args = parser.parse_args()
 
@@ -703,7 +686,6 @@ def main():
     print("  [10] Feature extraction - feature_extraction.png")
     print("  [11] GNN architecture - gnn_architecture.png")
     print("  [9] Architecture diagram - architecture_diagram.{png,svg}")
-
 
 if __name__ == "__main__":
     main()

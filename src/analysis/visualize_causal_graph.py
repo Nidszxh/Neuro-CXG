@@ -12,28 +12,23 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 import warnings
+from collections.abc import Sequence
 
 import matplotlib
+
 matplotlib.use('Agg')
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
-from pathlib import Path
 
 # Suppress tight_layout warning with colorbars
 warnings.filterwarnings('ignore', message='.*tight_layout.*not compatible.*')
 
-import matplotlib.pyplot as plt
-import networkx as nx
-import numpy as np
 import pandas as pd
 import torch
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.core.config import (
     CAUSAL_GRAPHS_DIR,
@@ -43,10 +38,6 @@ from src.core.config import (
     RESULTS_DIR,
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 # Preferred anatomical display order.
@@ -80,13 +71,11 @@ LOBE_COLORS = {
     "Insula": "#f1ce63",
 }
 
-
 def _resolve_lobe_order(raw_order: Sequence[str]) -> list[str]:
     """Resolve lobe order with fallback to config names when missing."""
     if raw_order and len(raw_order) == NUM_LOBES:
         return list(raw_order)
     return [LOBE_NAMES[i] for i in range(NUM_LOBES)]
-
 
 def _compute_stats_from_adj(adj: np.ndarray) -> dict[str, float]:
     """Compute graph stats robustly from adjacency matrix."""
@@ -110,14 +99,13 @@ def _compute_stats_from_adj(adj: np.ndarray) -> dict[str, float]:
         "max_weight": float(np.max(np.abs(nonzero))),
     }
 
-
 def load_graph(subject_id: str) -> tuple[np.ndarray, list[str], dict[str, float]]:
     """Load graph file and return adjacency, lobe order, and stats."""
     graph_path = CAUSAL_GRAPHS_DIR / f"{subject_id}_graph.pt"
     if not graph_path.exists():
         raise FileNotFoundError(f"Graph not found: {graph_path}")
 
-    data = torch.load(graph_path, map_location="cpu", weights_only=False)
+    data = torch.load(graph_path, map_location="cpu", weights_only=True)
     if "adj" not in data:
         raise KeyError(f"Missing 'adj' key in graph file: {graph_path}")
 
@@ -128,7 +116,6 @@ def load_graph(subject_id: str) -> tuple[np.ndarray, list[str], dict[str, float]
     lobe_order = _resolve_lobe_order(data.get("lobe_order", []))
     stats = data.get("stats") or _compute_stats_from_adj(adj_tensor.numpy())
     return adj_tensor.numpy(), lobe_order, stats
-
 
 def build_graph(adj: np.ndarray, lobe_order: Sequence[str], threshold: float) -> nx.DiGraph:
     """Build directed graph from adjacency matrix with thresholding."""
@@ -145,7 +132,6 @@ def build_graph(adj: np.ndarray, lobe_order: Sequence[str], threshold: float) ->
 
     return graph
 
-
 def _position_map(lobe_order: Sequence[str]) -> dict[str, tuple[float, float]]:
     """Create stable anatomical circular layout for provided lobe order."""
     display_index = {name: i for i, name in enumerate(DISPLAY_ORDER)}
@@ -159,7 +145,6 @@ def _position_map(lobe_order: Sequence[str]) -> dict[str, tuple[float, float]]:
         angle = 2 * np.pi * idx / denom - np.pi / 2
         pos[name] = (float(np.cos(angle)), float(np.sin(angle)))
     return pos
-
 
 def draw_graph(
     ax,
@@ -233,14 +218,12 @@ def draw_graph(
     )
     ax.axis("off")
 
-
 def _load_manifest() -> pd.DataFrame:
     """Load manifest with safe defaults."""
     manifest = pd.read_csv(MASTER_MANIFEST)
     if "subject_id" not in manifest.columns:
         raise KeyError(f"Manifest missing subject_id column: {MASTER_MANIFEST}")
     return manifest
-
 
 def resolve_dx_label(subject_id: str, manifest: pd.DataFrame) -> str:
     """Map DX_GROUP to readable label for one subject."""
@@ -253,7 +236,6 @@ def resolve_dx_label(subject_id: str, manifest: pd.DataFrame) -> str:
     if dx == 1:
         return "Control"
     return f"DX_{dx}"
-
 
 def pick_asd_control_pair(manifest: pd.DataFrame, site_id: str | None) -> tuple[str, str]:
     """Pick one ASD and one Control subject, optionally constrained to site."""
@@ -269,7 +251,6 @@ def pick_asd_control_pair(manifest: pd.DataFrame, site_id: str | None) -> tuple[
         raise ValueError("Could not find both ASD and Control subjects for requested selection")
 
     return str(asd_rows.iloc[0]["subject_id"]), str(ctrl_rows.iloc[0]["subject_id"])
-
 
 def plot_single(subject_id: str, output_path: Path, threshold: float, dpi: int) -> None:
     """Render a single-subject causal graph."""
@@ -298,7 +279,6 @@ def plot_single(subject_id: str, output_path: Path, threshold: float, dpi: int) 
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     logger.info("Saved plot to %s", output_path)
-
 
 def plot_comparison(
     asd_subject: str,
@@ -348,7 +328,6 @@ def plot_comparison(
     plt.close(fig)
     logger.info("Saved comparison plot to %s", output_path)
 
-
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Visualize directed causal graph(s)")
     parser.add_argument("--subject", type=str, default=None, help="Plot one subject")
@@ -360,7 +339,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--dpi", type=int, default=160, help="Output image DPI")
     parser.add_argument("--output", type=Path, default=None, help="Output PNG path")
     return parser.parse_args()
-
 
 def main() -> None:
     args = _parse_args()
@@ -385,7 +363,6 @@ def main() -> None:
         threshold=args.threshold,
         dpi=args.dpi,
     )
-
 
 if __name__ == "__main__":
     main()

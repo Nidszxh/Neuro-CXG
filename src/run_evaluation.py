@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-scripts/run_evaluation.py
+src/run_evaluation.py
 Phase 9.2 / 9.3  Comprehensive Evaluation & Subgroup Analysis
 ==============================================================
 Covers all remaining TODOs in Section 3 (Evaluation & Reporting):
@@ -15,19 +15,19 @@ Covers all remaining TODOs in Section 3 (Evaluation & Reporting):
 Usage
 -----
     # Full evaluation (all sections)
-    python scripts/run_evaluation.py
+    python src/run_evaluation.py
 
     # Skip slow permutation test (1 000 shuffles default)
-    python scripts/run_evaluation.py --no-permutation
+    python src/run_evaluation.py --no-permutation
 
     # Fewer permutations for interactive debugging
-    python scripts/run_evaluation.py --n-permutations 100
+    python src/run_evaluation.py --n-permutations 100
 
     # Custom output directory
-    python scripts/run_evaluation.py --output-dir results/eval_v2
+    python src/run_evaluation.py --output-dir results/eval_v2
 
     # Skip baselines (faster)
-    python scripts/run_evaluation.py --no-baselines
+    python src/run_evaluation.py --no-baselines
 
 Outputs
 -------
@@ -45,8 +45,6 @@ import logging
 import sys
 import time
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 import pandas as pd
@@ -84,7 +82,9 @@ from src.models.evaluation import (
     _json_safe,
     apply_per_site_calibration,
     fit_per_site_calibrators,
+    load_last_fold_val_graphs,
     optimal_threshold,
+    site_ids_from_graphs,
     youden_threshold,
 )
 from src.models.factory import load_model
@@ -105,7 +105,6 @@ logger = logging.getLogger(__name__)
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 OUTPUT_DIR = RESULTS_DIR / "evaluation"
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS
@@ -134,7 +133,6 @@ def _predict_probs(model: CausalBrainGNN, loader: DataLoader) -> tuple[np.ndarra
         all_labels.append(batch.y.cpu().numpy())
     return np.concatenate(all_probs), np.concatenate(all_labels)
 
-
 def _full_metrics(probs: np.ndarray, labels: np.ndarray, threshold: float = 0.5) -> dict:
     """Compute the full metric suite from probability scores."""
     preds = (probs >= threshold).astype(int)
@@ -155,30 +153,6 @@ def _full_metrics(probs: np.ndarray, labels: np.ndarray, threshold: float = 0.5)
         "n_control":   int((labels == 0).sum()),
     }
 
-
-def _site_ids_from_graphs(graphs: list) -> np.ndarray:
-    """Extract integer site_id vector aligned to the provided graph order."""
-    return np.array([
-        int(g.site_id.item())
-        if hasattr(g, "site_id") and g.site_id is not None and g.site_id.numel() > 0
-        else -1
-        for g in graphs
-    ])
-
-
-def _load_last_fold_val_graphs() -> list:
-    """Use the last fold validation partition from train split as calibration set."""
-    train_dataset = ABIDECausalDataset(split="train")
-    train_dataset.augment_graphs = False
-    if "cv_fold" not in train_dataset.manifest.columns:
-        logger.warning("Manifest has no cv_fold column; skipping per-site calibration")
-        return []
-
-    fold_id = K_FOLDS - 1
-    val_indices = np.where(train_dataset.manifest["cv_fold"].values == fold_id)[0]
-    return [train_dataset[i] for i in val_indices if train_dataset[i] is not None]
-
-
 def _bootstrap_ci(
     probs: np.ndarray,
     labels: np.ndarray,
@@ -194,7 +168,6 @@ def _bootstrap_ci(
     Returns a dict: { metric_name: (lower, upper) }
     """
     rng = np.random.default_rng(seed)
-    len(labels)
     aucs, auprcs, f1s, accs, senss, specs = [], [], [], [], [], []
 
     # Stratified bootstrap: resample ASD and Control indices separately so that
@@ -232,7 +205,6 @@ def _bootstrap_ci(
         "specificity": _ci(specs),
     }
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 1: ENSEMBLE TEST-SET EVALUATION
 # ══════════════════════════════════════════════════════════════════════════════
@@ -249,7 +221,7 @@ def run_ensemble_evaluation(test_graphs: list, output_dir: Path, enable_calibrat
     loader = make_loader(test_graphs, batch_size=GNN_BATCH_SIZE, shuffle=False)
     calibration_graphs = None  # disabled by default: calibration degrades AUC (0.8650 -> 0.8403)
     if enable_calibration:
-        calibration_graphs = _load_last_fold_val_graphs()
+        calibration_graphs = load_last_fold_val_graphs()
     calibration_loader = make_loader(calibration_graphs, batch_size=GNN_BATCH_SIZE, shuffle=False) if calibration_graphs else None
 
     fold_ids = []
@@ -276,7 +248,7 @@ def run_ensemble_evaluation(test_graphs: list, output_dir: Path, enable_calibrat
             ckpt = torch.load(
                 active_dir / f"best_model_fold{fold_id}.pt",
                 map_location="cpu",
-                weights_only=False,
+                weights_only=True,
             )
             fold_auc = float(ckpt.get("auc", 0.5))
             if "auc" not in ckpt:
@@ -326,14 +298,14 @@ def run_ensemble_evaluation(test_graphs: list, output_dir: Path, enable_calibrat
     calibration_applied = False
     calibrators: dict[int, LogisticRegression] = {}
     if calibration_graphs and fold_cal_probs and cal_labels is not None:
-        cal_site_ids = _site_ids_from_graphs(calibration_graphs)
+        cal_site_ids = site_ids_from_graphs(calibration_graphs)
         ens_cal_probs_raw = np.average(np.stack(fold_cal_probs, axis=0), axis=0, weights=weights)
         calibrators = fit_per_site_calibrators(ens_cal_probs_raw, cal_labels, cal_site_ids)
 
         if calibrators:
             ens_cal_probs = apply_per_site_calibration(ens_cal_probs_raw, cal_site_ids, calibrators)
             f1_threshold = optimal_threshold(ens_cal_probs, cal_labels)[0]
-            test_site_ids = _site_ids_from_graphs(test_graphs)
+            test_site_ids = site_ids_from_graphs(test_graphs)
             ens_probs = apply_per_site_calibration(ens_probs_raw, test_site_ids, calibrators)
             calibration_applied = True
             logger.info(
@@ -370,8 +342,8 @@ def run_ensemble_evaluation(test_graphs: list, output_dir: Path, enable_calibrat
     # Per-fold results table using cached predictions
     per_fold = []
     for idx, fold_id in enumerate(fold_ids):
-        p, l = cached_test_preds[fold_id]
-        m = _full_metrics(p, l, threshold=fold_thresholds[idx])
+        p, lbl = cached_test_preds[fold_id]
+        m = _full_metrics(p, lbl, threshold=fold_thresholds[idx])
         per_fold.append({"fold": fold_id, **m})
         del loaded_models[fold_id]
 
@@ -396,7 +368,6 @@ def run_ensemble_evaluation(test_graphs: list, output_dir: Path, enable_calibrat
         "labels":            labels.tolist(),
     }
     return result
-
 
 def run_paired_ttest(ensemble_result: dict, output_dir: Path) -> dict:
     """
@@ -436,7 +407,6 @@ def run_paired_ttest(ensemble_result: dict, output_dir: Path) -> dict:
     }
     return result
 
-
 def _print_metrics_table(
     metrics: dict,
     ci: dict,
@@ -460,7 +430,6 @@ def _print_metrics_table(
         logger.info("\n  Per-fold AUC on test set:")
         for pf in per_fold:
             logger.info("    Fold %d  AUC=%.4f  F1=%.4f  Acc=%.4f", pf["fold"], pf["auc"], pf["f1"], pf["accuracy"])
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 2: PERMUTATION SIGNIFICANCE TESTING
@@ -627,10 +596,10 @@ def run_subgroup_analysis(
 
     subgroup_results: dict[str, dict] = {}
 
-    def _safe_auc(p, l):
-        if len(np.unique(l)) < 2 or len(l) < 5:
+    def _safe_auc(p, lbl):
+        if len(np.unique(lbl)) < 2 or len(lbl) < 5:
             return float("nan")
-        return float(roc_auc_score(l, p))
+        return float(roc_auc_score(lbl, p))
 
     # ── Sex subgroups ─────────────────────────────────────────────────────────
     for sex_code, sex_name in [(1, "Male"), (2, "Female")]:
@@ -694,7 +663,6 @@ def run_subgroup_analysis(
 
     return subgroup_results
 
-
 def _plot_subgroups(subgroups: dict, save_path: Path) -> None:
     try:
         import matplotlib.pyplot as plt
@@ -704,9 +672,12 @@ def _plot_subgroups(subgroups: dict, save_path: Path) -> None:
         ns_plot     = [subgroups[k]["n"]   for k in labels_plot]
         colors      = []
         for k in labels_plot:
-            if k.startswith("sex"):   colors.append(palette.PINK)
-            elif k.startswith("age"): colors.append(palette.GREEN)
-            else:                     colors.append(palette.CONTROL)
+            if k.startswith("sex"):
+                colors.append(palette.PINK)
+            elif k.startswith("age"):
+                colors.append(palette.GREEN)
+            else:
+                colors.append(palette.CONTROL)
 
         fig, ax = plt.subplots(figsize=(10, max(4, len(labels_plot) * 0.7 + 1)))
         y = np.arange(len(labels_plot))
@@ -738,7 +709,6 @@ def _plot_subgroups(subgroups: dict, save_path: Path) -> None:
     except Exception as e:
         logger.warning("  Subgroup plot failed: %s", e)
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 4: BASELINE COMPARISON
 # ══════════════════════════════════════════════════════════════════════════════
@@ -761,7 +731,6 @@ class FlatMLP(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
-
 def _collect_flat_features(graphs: list) -> tuple[np.ndarray, np.ndarray]:
     """Flatten node feature matrices (12 × 24) → 288-dim vector per subject."""
     X, y = [], []
@@ -772,7 +741,6 @@ def _collect_flat_features(graphs: list) -> tuple[np.ndarray, np.ndarray]:
         X.append(x_np)
         y.append(int(g.y.item()))
     return np.array(X, dtype=np.float32), np.array(y, dtype=np.int32)
-
 
 def _train_mlp(X_train, y_train, X_test, y_test, epochs=80, lr=1e-3, seed=42) -> tuple[float, np.ndarray]:
     """Train a flat MLP and return test AUC and probabilities."""
@@ -801,7 +769,6 @@ def _train_mlp(X_train, y_train, X_test, y_test, epochs=80, lr=1e-3, seed=42) ->
         probs = torch.softmax(model(X_te), dim=1)[:, 1].cpu().numpy()
     return float(roc_auc_score(y_test, probs)), probs
 
-
 def _print_baseline_table(baselines: dict[str, float]) -> None:
     """Print baseline comparison table."""
     logger.info("\n  Baseline Comparison:")
@@ -810,7 +777,6 @@ def _print_baseline_table(baselines: dict[str, float]) -> None:
         marker = " *" if "Ours" in name else ""
         logger.info(f"    {name:<25} AUC: {auc:.4f}{marker}")
     logger.info("  " + "-" * 40)
-
 
 def _plot_baselines(baselines: dict[str, float], save_path: Path) -> None:
     """Plot baseline comparison bar chart."""
@@ -841,7 +807,6 @@ def _plot_baselines(baselines: dict[str, float], save_path: Path) -> None:
         logger.info(f"  Plot saved → {save_path}")
     except Exception as e:
         logger.warning(f"  Baseline plot failed: {e}")
-
 
 def run_baseline_comparison(
     train_graphs: list,
@@ -929,7 +894,6 @@ def run_baseline_comparison(
 
     return delong_results
 
-
 def _run_delong_tests(
     y_test: np.ndarray,
     baselines: dict[str, float],
@@ -998,7 +962,6 @@ def _run_delong_tests(
             logger.warning("  DeLong test failed for GNN vs %s: %s", name, e)
 
     return results
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 5: COMPREHENSIVE RESULTS TABLE
@@ -1101,7 +1064,6 @@ def save_comprehensive_results(
             perm.get("p_value_within_site", float("nan")),
         )
     logger.info("═" * 65)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN
@@ -1221,7 +1183,6 @@ def main() -> None:
 
     # ── Section 5: Comprehensive results table ────────────────────────────────
     save_comprehensive_results(ensemble_result, perm_result, sg_result, bl_result, paired_ttest_result, args.output_dir)
-
 
 if __name__ == "__main__":
     main()

@@ -34,7 +34,6 @@ Usage
 """
 
 import logging
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -42,17 +41,14 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import LOBE_NAMES, NUM_LOBES
 from src.core.plotting import ColorPalette
 
 palette = ColorPalette()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 REGION_LABELS: list[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
-
 
 # ── GradientEdgeAttributor ─────────────────────────────────────────────────────
 
@@ -106,7 +102,6 @@ class GradientEdgeAttributor:
 
         grads = grads.squeeze(-1).detach().cpu()     # (E,)
         return grads.abs()
-
 
 # ── EdgeMaskingAnalyzer ───────────────────────────────────────────────────────
 
@@ -172,7 +167,6 @@ class EdgeMaskingAnalyzer:
 
         return delta_p
 
-
 # ── _build_matrix ─────────────────────────────────────────────────────────────
 
 def _edge_scores_to_matrix(
@@ -204,7 +198,6 @@ def _edge_scores_to_matrix(
     with np.errstate(invalid="ignore", divide="ignore"):
         mat = np.where(counts > 0, mat / counts, 0.0)
     return mat
-
 
 # ── EdgeImportanceAnalyzer ─────────────────────────────────────────────────────
 

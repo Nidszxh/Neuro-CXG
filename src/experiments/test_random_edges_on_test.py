@@ -6,15 +6,12 @@ Uses same inference approach as run_evaluation.py for fair comparison.
 
 import argparse
 import logging
-import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     CHECKPOINT_DIR,
     DEVICE,
@@ -24,9 +21,7 @@ from src.features.graph_factory import ABIDECausalDataset
 from src.models.factory import build_model
 from src.models.training_utils import make_loader
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
 
 def load_model(fold_id: int):
     """Load model for a specific fold."""
@@ -35,14 +30,13 @@ def load_model(fold_id: int):
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
+    checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=True)
 
     model = build_model(device=DEVICE)
     model.load_state_dict(checkpoint['model_state'])
     model.eval()
 
     return model
-
 
 def create_identity_edges(num_nodes: int):
     """Create fully connected graph (all-to-all edges except self-loops)."""
@@ -56,7 +50,6 @@ def create_identity_edges(num_nodes: int):
     edge_index = torch.tensor([src_nodes, dst_nodes], dtype=torch.long)
     edge_attr = torch.ones(edge_index.shape[1], 1, dtype=torch.float32)
     return edge_index, edge_attr
-
 
 def predict_probs(model, loader):
     """Run inference using same approach as run_evaluation.py."""
@@ -85,7 +78,6 @@ def predict_probs(model, loader):
         all_labels.append(batch.y.cpu().numpy())
 
     return np.concatenate(all_probs), np.concatenate(all_labels)
-
 
 def randomize_graphs(test_ds, seed: int = 42):
     """Create test data with randomized edge topology (F ablation)."""
@@ -122,7 +114,6 @@ def randomize_graphs(test_ds, seed: int = 42):
 
     return randomized_data
 
-
 def identity_graphs(test_ds, num_lobes: int = 12):
     """Create test data with fully connected edges (G ablation)."""
     identity_data = []
@@ -151,7 +142,6 @@ def identity_graphs(test_ds, num_lobes: int = 12):
         identity_data.append(data)
 
     return identity_data
-
 
 def run_test(fold_id: int, randomize: bool = False, seed: int = 42):
     """Run test inference for one fold."""
@@ -195,7 +185,6 @@ def run_test(fold_id: int, randomize: bool = False, seed: int = 42):
         'acc': acc,
         'n_samples': len(labels),
     }
-
 
 def main():
     parser = argparse.ArgumentParser(description="Test edge topology on test set")
@@ -271,7 +260,6 @@ def main():
     logger.info(f"\nOriginal vs Random (F): {rand_mean - orig_mean:+.4f}")
     logger.info(f"Original vs Identity (G): {ident_mean - orig_mean:+.4f}")
     logger.info(f"Random (F) vs Identity (G): {ident_mean - rand_mean:+.4f}")
-
 
 if __name__ == "__main__":
     main()

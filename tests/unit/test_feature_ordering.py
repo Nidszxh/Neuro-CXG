@@ -16,7 +16,6 @@ Tests guard against the P0/P1 bugs identified in the March 2026 audit:
   the right feature at each index.
 """
 
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -24,8 +23,6 @@ import pandas as pd
 import pytest
 
 # Ensure project root is importable
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-
 from src.core.config import FEATURE_GROUPS, LOBE_NAMES, NUM_LOBES
 from src.features.fold_safe_harmonization import FEATURE_TYPES, aggregate_to_lobes
 
@@ -95,7 +92,6 @@ class TestFeatureTypesOrdering:
             "uses 'kurt'. This would cause silent feature misalignment."
         )
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # 2. aggregate_to_lobes() column ordering
 # ──────────────────────────────────────────────────────────────────────────────
@@ -108,8 +104,6 @@ class TestAggregateToLobesOrdering:
         """Build a minimal (2-subject) ROI-level DataFrame with all required columns."""
         n_subjects = 2
         n_rois = 170
-        n_features = len(FEATURE_TYPES)
-
         data = {"subject_id": [f"sub_{i:04d}" for i in range(n_subjects)]}
         rng = np.random.default_rng(42)
         for r in range(1, n_rois + 1):
@@ -144,7 +138,7 @@ class TestAggregateToLobesOrdering:
             "aggregate_to_lobes() output column order does not match "
             "LOBE_NAMES × FEATURE_TYPES.\n"
             f"First mismatch at index: "
-            f"{next(i for i, (a, b) in enumerate(zip(feat_cols, expected)) if a != b)}"
+            f"{next(i for i, (a, b) in enumerate(zip(feat_cols, expected, strict=True)) if a != b)}"
         )
 
     def test_frequency_interleaved_in_output(self, minimal_roi_df):
@@ -167,7 +161,6 @@ class TestAggregateToLobesOrdering:
         """Output must include a subject_id column."""
         result = aggregate_to_lobes(minimal_roi_df)
         assert "subject_id" in result.columns
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 3. Z-score normalisation: construct_causal applies exactly one z-score
@@ -215,7 +208,6 @@ class TestSingleZScore:
             "abide_download.py still has standardize=True in NiftiLabelsMasker. "
             "This causes double z-scoring. Fix: set standardize=False."
         )
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 4. Evaluation threshold: loaded from checkpoints, not optimised on test set

@@ -110,8 +110,8 @@ This log records active architectural and modeling decisions reflected in source
 |-------|---------|
 | **Decision** | Use site conditioning, demographic conditioning, anatomical pooling, and optimized GNN architecture |
 | **Key settings** | `GNN_USE_SITE_EMBEDDING = True`, `GNN_USE_DEMOGRAPHICS = True`, `GNN_GRL_ALPHA = 0.10`, `GNN_POOLING = "anatomical"`, `GNN_HIDDEN_CHANNELS = 48`, `GNN_NUM_HEADS = 4`, `GNN_NUM_LAYERS = 3`, `GNN_DROPOUT = 0.33` |
-| **Results** | CV AUC: 0.8168 ± 0.0488, Test AUC: **0.8810** (3-run stable), Test F1: 0.8375 |
-| **Status** | Active — **BEST CONFIG** (May 11, 2026) |
+| **Results** | CV AUC: 0.8173 ± 0.0493, Test AUC: **0.8819**, Test F1: 0.8485 |
+| **Status** | Active — **BEST CONFIG** (May 31, 2026) |
 | **Source of truth** | `src/core/hyperparams.py` |
 
 ### DD-011b: Hyperparameter Tuning Results (May 2026)
@@ -120,7 +120,7 @@ This log records active architectural and modeling decisions reflected in source
 |--------|----------|----|-----|-----|-------|
 | Canonical (32ch/2hd/2L/0.35) | 0.8657 | 0.765 | 73.4% | 82.7% | Baseline |
 | Prior best (May 10, 64ch/4hd/2L/0.35) | 0.8798 | 0.795 | 73.4% | 88.0% | GRL grid search |
-| **48ch/4hd/3L/0.33 (Best)** | **0.8810** | **0.8375** | **84.8%** | **81.3%** | **Stable, 3-run** |
+| **48ch/4hd/3L/0.33 (Best)** | **0.8819** | **0.8485** | **88.6%** | **78.7%** | **May 31 run** |
 
 ---
 
@@ -201,7 +201,7 @@ This log records active architectural and modeling decisions reflected in source
 | **Rationale** | Test AUC +8.74% vs 11-lobe; Brainstem constant features act as implicit regularization; better generalization (CV < Test) |
 | **Trade-offs** | Brainstem uses synthetic fallback coordinates |
 | **Status** | Active — APPROVED FOR PUBLICATION |
-| **Source of truth** | `src/core/atlas_config.py`, `docs/deprecated/FINAL_ARCHITECTURE_ANALYSIS.md` |
+| **Source of truth** | `src/core/atlas_config.py` |
 
 **Empirical Evidence:**
 
@@ -231,7 +231,7 @@ This log records active architectural and modeling decisions reflected in source
 | Method | CV AUC | Test AUC | Methodological Strength |
 |--------|--------|----------|-------------------------|
 | lagged_pearson | 0.7997 ± 0.0294 | **0.8694** | Correlation (not causal) |
-| ridge_granger_hybrid (β=0.70) | **0.8168 ± 0.0488** | **0.8810** | 70% Causality + 30% Correlation (Best, May 11) |
+| ridge_granger_hybrid (β=0.70) | **0.8173 ± 0.0493** | **0.8819** | 70% Causality + 30% Correlation (Best, May 31) |
 | ridge_granger (pure) | 0.7856 ± 0.0290 | 0.8413 | Pure Granger Causality |
 | **Canonical (32ch/2hd/2L)** | 0.8102 ± 0.0273 | 0.8657 | Baseline |
 

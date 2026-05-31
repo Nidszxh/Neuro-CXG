@@ -35,7 +35,6 @@ from src.core.paths import (
     NODE_FEATURES_3D,
 )
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

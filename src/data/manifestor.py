@@ -1,12 +1,9 @@
 import logging
 import os
-import sys
-from pathlib import Path
 
 import pandas as pd
 
 # Setup paths from config
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     DATA_FINAL,
     DATA_METADATA,
@@ -17,9 +14,6 @@ from src.core.config import (
 )
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def create_manifest():

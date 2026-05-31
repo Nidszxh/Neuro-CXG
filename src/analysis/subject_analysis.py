@@ -13,17 +13,12 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.core.config import (
     CAUSAL_GRAPHS_DIR,
@@ -37,15 +32,10 @@ from src.core.config import (
 )
 from src.core.validators import summarize_graph_degeneracy_from_adj
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 LOBE_NAME_LIST = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 DEFAULT_OUTPUT_DIR = RESULTS_DIR / "subject_analysis"
-
 
 def _build_ts_index() -> dict[str, Path]:
     """Map subject_id to its time-series file path across train/val/test splits."""
@@ -58,7 +48,6 @@ def _build_ts_index() -> dict[str, Path]:
             subject_id = ts_file.stem.replace("_ts", "")
             ts_index[subject_id] = ts_file
     return ts_index
-
 
 def _analyze_time_series(ts_path: Path) -> dict[str, object]:
     """Compute per-subject time-series quality metrics."""
@@ -88,11 +77,10 @@ def _analyze_time_series(ts_path: Path) -> dict[str, object]:
 
     return out
 
-
 def _analyze_graph(graph_path: Path) -> dict[str, object]:
     """Compute per-subject graph quality metrics from graph file."""
     out: dict[str, object] = {}
-    data = torch.load(graph_path, map_location="cpu", weights_only=False)
+    data = torch.load(graph_path, map_location="cpu", weights_only=True)
 
     if "adj" not in data:
         raise KeyError(f"Missing adj in graph file: {graph_path}")
@@ -144,7 +132,6 @@ def _analyze_graph(graph_path: Path) -> dict[str, object]:
 
     return out
 
-
 def _analyze_harmonized_row(row: pd.Series) -> dict[str, object]:
     """Compute harmonized feature quality metrics for one subject row."""
     out: dict[str, object] = {}
@@ -161,7 +148,6 @@ def _analyze_harmonized_row(row: pd.Series) -> dict[str, object]:
     out["harm_zero_lobes"] = int(zero_lobes)
     return out
 
-
 def _safe_manifest_value(manifest_row: pd.Series, col: str, default=None):
     if col not in manifest_row.index:
         return default
@@ -169,7 +155,6 @@ def _safe_manifest_value(manifest_row: pd.Series, col: str, default=None):
     if pd.isna(value):
         return default
     return value
-
 
 def run_analysis(limit: int | None = None) -> pd.DataFrame:
     """Run full subject-level analysis across manifest, ts, graph, and harmonized files."""
@@ -298,7 +283,6 @@ def run_analysis(limit: int | None = None) -> pd.DataFrame:
 
     return pd.DataFrame(rows)
 
-
 def build_report(df: pd.DataFrame) -> str:
     """Build text summary report from per-subject diagnostics DataFrame."""
     lines: list[str] = []
@@ -374,14 +358,12 @@ def build_report(df: pd.DataFrame) -> str:
     lines.append("=" * 78)
     return "\n".join(lines)
 
-
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Comprehensive per-subject pipeline analysis")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Output directory")
     parser.add_argument("--limit", type=int, default=None, help="Optional limit for number of subjects")
     parser.add_argument("--prefix", type=str, default="subject_analysis", help="Output filename prefix")
     return parser.parse_args()
-
 
 def main() -> None:
     args = _parse_args()
@@ -401,7 +383,6 @@ def main() -> None:
     logger.info("Saved summary report to %s", txt_path)
 
     print(report)
-
 
 if __name__ == "__main__":
     main()

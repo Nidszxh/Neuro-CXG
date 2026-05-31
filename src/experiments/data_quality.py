@@ -20,9 +20,7 @@ Usage:
 
 import argparse
 import logging
-import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -31,7 +29,6 @@ import torch.nn as nn
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     CAUSAL_GRAPHS_DIR,
     DATA_FINAL,
@@ -80,12 +77,10 @@ from src.models.training_utils import (
     train_fold_with_onecycle,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 RESULTS_DIR = RESULTS_DATA_QUALITY_DIR
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EXPERIMENT 1: CROSS-SITE GENERALISATION
@@ -123,7 +118,6 @@ def _collect_predictions(model, loader, device=DEVICE):
             np.concatenate(all_labels),
             np.concatenate(all_sites))
 
-
 def experiment_cross_site_auc() -> pd.DataFrame:
     """
     Loads the best checkpoint from Fold 0 (representative model) and evaluates
@@ -156,7 +150,7 @@ def experiment_cross_site_auc() -> pd.DataFrame:
         logger.error(f"Checkpoint fold0 not found: {checkpoint_path}")
         return pd.DataFrame()
 
-    checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
+    checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=True)
     state_dict = checkpoint.get("model_state", checkpoint) if isinstance(checkpoint, dict) else checkpoint
     site_dim = GNN_SITE_EMBEDDING_DIM if GNN_USE_SITE_EMBEDDING else 0
     saved_in_features = state_dict["lin_in.weight"].shape[1]
@@ -252,7 +246,6 @@ def experiment_cross_site_auc() -> pd.DataFrame:
 
     return df
 
-
 def _apply_site_robustness_gate(site_auc_df: pd.DataFrame) -> dict[str, object]:
     """Apply configurable site-robustness gate to cross-site AUC output."""
     result = {
@@ -326,7 +319,6 @@ def _apply_site_robustness_gate(site_auc_df: pd.DataFrame) -> dict[str, object]:
     result["status"] = "passed"
     logger.info("Site robustness gate passed")
     return result
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EXPERIMENT 2: SUBJECT COUNT AUDIT
@@ -456,7 +448,6 @@ def experiment_subject_count_audit() -> pd.DataFrame:
 
     return df
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # EXPERIMENT 3: ATLAS-CENTROID SPATIAL BASELINE
 # ─────────────────────────────────────────────────────────────────────────────
@@ -573,7 +564,6 @@ def _compute_atlas_centroids() -> np.ndarray | None:
 
     return None
 
-
 class AtlasCentroidDataset:
     """
     Wraps ABIDECausalDataset and replaces per-subject YOLO spatial features with
@@ -604,7 +594,6 @@ class AtlasCentroidDataset:
 
     def get(self, idx):
         return self[idx]
-
 
 def experiment_atlas_centroid_baseline() -> dict:
     """
@@ -726,7 +715,6 @@ def experiment_atlas_centroid_baseline() -> dict:
         "fold_aucs": fold_aucs,
     }
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
@@ -736,7 +724,6 @@ EXP_MAP = {
     "2": "Subject count audit",
     "3": "Atlas-centroid spatial baseline",
 }
-
 
 def main():
     parser = argparse.ArgumentParser(description="Data quality experiments")
@@ -767,7 +754,6 @@ def main():
     logger.info("DATA QUALITY EXPERIMENTS COMPLETE")
     logger.info(f"Results saved to: {RESULTS_DIR}")
     logger.info("=" * 70)
-
 
 if __name__ == "__main__":
     main()

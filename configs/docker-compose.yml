@@ -5,7 +5,7 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:
-      - ./data:/data
+      - ./data:/workspace/data
       - ./results:/workspace/results
     working_dir: /workspace
     command: python src/run_pipeline.py --auto

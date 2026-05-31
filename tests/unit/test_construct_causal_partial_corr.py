@@ -4,12 +4,9 @@ Run:
     pytest tests/unit/test_construct_causal_partial_corr.py -v
 """
 
-import sys
-from pathlib import Path
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import NUM_LOBES
 from src.features import construct_causal as cc
 from src.features.construct_causal import compute_causality_matrix

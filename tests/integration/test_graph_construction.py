@@ -17,14 +17,11 @@ Notes:
   too slow for CI).
 * No external data files are required; the time series is synthesised inline.
 """
-import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 import torch
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.core.config import NUM_LOBES
 from src.features.construct_causal import (
@@ -46,7 +43,6 @@ def synthetic_ts_tensor():
     torch.manual_seed(0)
     return torch.randn(200, 170, dtype=torch.float32)
 
-
 @pytest.fixture(scope="module")
 def aggregated(synthetic_ts_tensor):
     """Run aggregate_to_lobes() once and return (lobe_signals, internal_features).
@@ -56,13 +52,11 @@ def aggregated(synthetic_ts_tensor):
     result = aggregate_to_lobes(synthetic_ts_tensor)
     return result[0], result[1]   # lobe_signals, internal_features
 
-
 @pytest.fixture(scope="module")
 def causal_matrix(aggregated):
     """Compute a causal matrix using the fast lagged_pearson method."""
     lobe_signals, _ = aggregated
     return compute_causality_matrix(lobe_signals, method='lagged_pearson')
-
 
 @pytest.fixture(scope="module")
 def sparsified_matrix(causal_matrix):
@@ -71,7 +65,6 @@ def sparsified_matrix(causal_matrix):
     """
     adj, _ = adaptive_sparsification(causal_matrix, method='fixed')
     return adj
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Stage 1: aggregate_to_lobes
@@ -118,7 +111,6 @@ class TestAggregateToLobes:
             f"Spatial variance has negative values: {spatial_var}"
         )
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Stage 2: compute_causality_matrix
 # ══════════════════════════════════════════════════════════════════════════════
@@ -141,7 +133,6 @@ class TestComputeCausalityMatrix:
     def test_not_all_zeros(self, causal_matrix):
         """A non-trivial time series should produce at least some non-zero edges."""
         assert (causal_matrix != 0).any(), "Causal matrix is entirely zero"
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Stage 3: adaptive_sparsification
@@ -174,7 +165,6 @@ class TestAdaptiveSparsification:
         sparse, _ = adaptive_sparsification(causal_matrix, method='fixed')
         assert torch.isfinite(sparse).all()
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Stage 4: torch.save / torch.load round-trip
 # ══════════════════════════════════════════════════════════════════════════════
@@ -195,7 +185,7 @@ class TestGraphSaveLoadRoundTrip:
 
         try:
             torch.save(graph_dict, path)
-            loaded = torch.load(path, weights_only=False)
+            loaded = torch.load(path, weights_only=True)
 
             for key in ('adj', 'internal_features', 'subject_id', 'lobe_order'):
                 assert key in loaded, f"Key '{key}' missing from loaded graph dict"

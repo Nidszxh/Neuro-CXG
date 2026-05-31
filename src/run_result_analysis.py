@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-scripts/run_result_analysis.py
+src/run_result_analysis.py
 Phase 9.3  Result Interpretation & Analysis
 ============================================
 Covers all ROADMAP Phase 9.3 deliverables:
@@ -11,7 +11,6 @@ Covers all ROADMAP Phase 9.3 deliverables:
     ✅ Case studies — top-K correctly and incorrectly classified subjects
     ✅ Prediction confidence distribution (calibration)
     ✅ Relationship between prediction confidence and clinical severity
-
 
 Outputs
 -------
@@ -30,7 +29,6 @@ results/analysis/
 import argparse
 import json
 import logging
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -43,7 +41,6 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.core.config import (
     ALL_FEATURE_NAMES,
     EVAL_THRESHOLD_POLICY,
@@ -59,7 +56,9 @@ from src.models.evaluation import (
     _json_safe,
     apply_per_site_calibration,
     fit_per_site_calibrators,
+    load_last_fold_val_graphs,
     optimal_threshold,
+    site_ids_from_graphs,
     youden_threshold,
 )
 from src.models.factory import load_model
@@ -76,7 +75,6 @@ DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 OUTPUT_DIR  = RESULTS_DIR / "analysis"
 LOBE_LABELS = {v: k for k, v in LOBE_NAMES.items()} if isinstance(LOBE_NAMES, dict) else {}
 
-
 def _safe_roc_auc(labels: np.ndarray, probs: np.ndarray) -> float | None:
     """Return ROC-AUC when both classes are present; else None."""
     if labels is None or probs is None:
@@ -91,33 +89,9 @@ def _safe_roc_auc(labels: np.ndarray, probs: np.ndarray) -> float | None:
         return None
     return val if np.isfinite(val) else None
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
-
-def _site_ids_from_graphs(graphs: list) -> np.ndarray:
-    """Extract integer site_id vector aligned to graph order."""
-    return np.array([
-        int(g.site_id.item())
-        if hasattr(g, "site_id") and g.site_id is not None and g.site_id.numel() > 0
-        else -1
-        for g in graphs
-    ])
-
-
-def _load_last_fold_val_graphs() -> list:
-    """Use last fold validation partition from train split as calibration set."""
-    train_dataset = ABIDECausalDataset(split="train")
-    train_dataset.augment_graphs = False
-    if "cv_fold" not in train_dataset.manifest.columns:
-        logger.warning("Manifest has no cv_fold column; skipping per-site calibration")
-        return []
-
-    fold_id = K_FOLDS - 1
-    val_indices = np.where(train_dataset.manifest["cv_fold"].values == fold_id)[0]
-    return [train_dataset[i] for i in val_indices if train_dataset[i] is not None]
-
 
 @torch.no_grad()
 def _predict_probs(model: CausalBrainGNN, graphs: list) -> tuple[np.ndarray, np.ndarray]:
@@ -145,7 +119,6 @@ def _predict_probs(model: CausalBrainGNN, graphs: list) -> tuple[np.ndarray, np.
     if not all_probs:
         return np.array([]), np.array([])
     return np.concatenate(all_probs), np.concatenate(all_labels)
-
 
 @torch.no_grad()
 def _collect_per_subject(
@@ -194,7 +167,7 @@ def _collect_per_subject(
     calibration_applied = False
     calibration_sites = 0
     if calibration_requested:
-        calibration_graphs = _load_last_fold_val_graphs()
+        calibration_graphs = load_last_fold_val_graphs()
         if calibration_graphs:
             calibration_fold_probs = []
             calibration_fold_ids = []
@@ -227,10 +200,10 @@ def _collect_per_subject(
                     axis=0,
                     weights=cal_weights,
                 )
-                cal_site_ids = _site_ids_from_graphs(calibration_graphs)
+                cal_site_ids = site_ids_from_graphs(calibration_graphs)
                 calibrators = fit_per_site_calibrators(ens_cal_probs, calibration_labels, cal_site_ids)
                 if calibrators:
-                    test_site_ids = _site_ids_from_graphs(graphs)
+                    test_site_ids = site_ids_from_graphs(graphs)
                     ens_probs = apply_per_site_calibration(ens_probs, test_site_ids, calibrators)
                     calibration_applied = True
                     calibration_sites = len(calibrators)
@@ -280,12 +253,10 @@ def _collect_per_subject(
     }
     return pd.DataFrame(records), inference_meta
 
-
 def _error_type(label: int, pred: int) -> str:
     if label == pred:
         return "TP" if label == 1 else "TN"
     return "FN" if label == 1 else "FP"
-
 
 def _ensemble_fold_aucs() -> list[float]:
     """Load fold validation AUCs from checkpoints (same weighting as evaluation)."""
@@ -297,13 +268,12 @@ def _ensemble_fold_aucs() -> list[float]:
             aucs.append(0.5)
             continue
         try:
-            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
             v = float(ckpt.get("auc", 0.5))
             aucs.append(v if np.isfinite(v) else 0.5)
         except Exception:
             aucs.append(0.5)
     return aucs if aucs else [0.5] * K_FOLDS
-
 
 def _ensemble_fold_thresholds() -> list[float]:
     """Load fold decision thresholds from checkpoints."""
@@ -315,7 +285,7 @@ def _ensemble_fold_thresholds() -> list[float]:
             thresholds.append(0.5)
             continue
         try:
-            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
             v = float(ckpt.get("threshold", 0.5))
             if not np.isfinite(v):
                 v = 0.5
@@ -323,7 +293,6 @@ def _ensemble_fold_thresholds() -> list[float]:
         except Exception:
             thresholds.append(0.5)
     return thresholds if thresholds else [0.5] * K_FOLDS
-
 
 def _load_evaluation_metadata() -> dict:
     """Load evaluation metadata for threshold/calibration policy alignment."""
@@ -337,7 +306,6 @@ def _load_evaluation_metadata() -> dict:
     except Exception as exc:
         logger.warning("Failed to load evaluation metadata from %s: %s", json_path, exc)
         return {}
-
 
 def _classification_metrics_at_threshold(
     probs: np.ndarray,
@@ -388,7 +356,6 @@ def _classification_metrics_at_threshold(
         "fn": int(fn),
     }
 
-
 def _resolve_analysis_threshold(
     fold_aucs: list[float],
     fold_thresholds: list[float],
@@ -421,7 +388,7 @@ def _resolve_analysis_threshold(
     fallback_threshold = float(np.mean(fold_thresholds)) if fold_thresholds else 0.5
 
     # For youden/f1: attempt to compute threshold from calibration data
-    calibration_graphs = _load_last_fold_val_graphs()
+    calibration_graphs = load_last_fold_val_graphs()
     fold_probs = []
     loaded_fold_ids = []
     labels_ref = None
@@ -464,7 +431,7 @@ def _resolve_analysis_threshold(
     ens_probs_effective = ens_probs_raw
     f1_threshold = float(fallback_threshold)
     if per_site_requested:
-        cal_site_ids = _site_ids_from_graphs(calibration_graphs)
+        cal_site_ids = site_ids_from_graphs(calibration_graphs)
         calibrators = fit_per_site_calibrators(ens_probs_raw, labels_ref, cal_site_ids)
         if calibrators:
             ens_probs_effective = apply_per_site_calibration(ens_probs_raw, cal_site_ids, calibrators)
@@ -497,7 +464,6 @@ def _resolve_analysis_threshold(
         return fallback_threshold
     return float(thr)
 
-
 def _format_prediction_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Format probability/confidence columns to stable CSV precision."""
     formatted = df.copy()
@@ -508,7 +474,6 @@ def _format_prediction_columns(df: pd.DataFrame) -> pd.DataFrame:
     if "decision_threshold" in formatted.columns:
         formatted["decision_threshold"] = formatted["decision_threshold"].astype(float).round(4)
     return formatted
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 1: PER-SUBJECT PREDICTIONS
@@ -580,7 +545,6 @@ def run_per_subject_analysis(
 
     return df, inference_meta, youden_metrics
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 2: MISCLASSIFICATION ANALYSIS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -645,7 +609,6 @@ def run_misclassification_analysis(
 
     return {"feature_profiles": {k: v.tolist() for k, v in profiles.items()}, "demographics": demo_summary}
 
-
 def _plot_error_feature_profiles(
     profiles: dict[str, np.ndarray], feature_names: list[str], save_path: Path
 ) -> None:
@@ -677,7 +640,6 @@ def _plot_error_feature_profiles(
         logger.info("  Misclassification plot saved → %s", save_path)
     except Exception as e:
         logger.warning("  Misclassification plot failed: %s", e)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 3: SITE EFFECTS INVESTIGATION
@@ -742,7 +704,6 @@ def run_site_effects(
 
     return {"per_site": site_stats}
 
-
 def _plot_site_auc(site_stats: list[dict], save_path: Path) -> None:
     try:
         import matplotlib.pyplot as plt
@@ -773,7 +734,7 @@ def _plot_site_auc(site_stats: list[dict], save_path: Path) -> None:
             ax.errorbar(x_labels, accs, yerr=yerrs, fmt='s', color='#1a5276',
                         capsize=5, elinewidth=1.5, markersize=7, label='Accuracy (95% CI)', zorder=3)
 
-        for bar, auc, n in zip(bars, aucs, ns, strict=False):
+        for bar, auc, _n in zip(bars, aucs, ns, strict=False):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02,
                     f"{auc:.2f}", ha="center", va="bottom", fontsize=9, fontweight="bold")
 
@@ -796,7 +757,6 @@ def _plot_site_auc(site_stats: list[dict], save_path: Path) -> None:
     except Exception as e:
         logger.warning("  Site AUC plot failed: %s", e)
 
-
 def _plot_site_bias(site_stats: list[dict], save_path: Path) -> None:
     try:
         import matplotlib.colors as mcolors
@@ -811,7 +771,7 @@ def _plot_site_bias(site_stats: list[dict], save_path: Path) -> None:
         fig_width = max(12, min(n_sites * 1.2, 20))  # Min 12, max 20 inches
         fig_height = 5 if n_sites <= 10 else 6
         fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-        
+
         norm    = mcolors.TwoSlopeNorm(vmin=0, vcenter=50, vmax=100)
         colors  = [plt.cm.RdYlGn(1 - norm(p)) for p in asd_pct]
         bars    = ax.bar(labels, asd_pct, color=colors, alpha=0.9, edgecolor="#333333", linewidth=1.2)
@@ -842,7 +802,6 @@ def _plot_site_bias(site_stats: list[dict], save_path: Path) -> None:
         logger.info("  Site bias heatmap saved → %s", save_path)
     except Exception as e:
         logger.warning("  Site bias heatmap failed: %s", e)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 4: PREDICTION CONFIDENCE & CALIBRATION
@@ -881,7 +840,6 @@ def run_calibration_analysis(df: pd.DataFrame, output_dir: Path) -> dict:
         "fraction_correct":    frac_correct,
         "brier_score": brier_score,
     }
-
 
 def _plot_calibration(
     df: pd.DataFrame,
@@ -928,7 +886,7 @@ def _plot_calibration(
 
             bars = ax3.bar(x, frac_correct, color=palette.PINK, alpha=0.8, edgecolor="#333333", linewidth=1.2)
 
-            for bar, val in zip(bars, frac_correct):
+            for bar, val in zip(bars, frac_correct, strict=False):
                 ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
                         f"{val:.2f}", ha="center", va="bottom", fontsize=9, fontweight="bold")
 
@@ -951,7 +909,6 @@ def _plot_calibration(
         logger.info("  Calibration plot saved → %s", save_path)
     except Exception as e:
         logger.warning("  Calibration plot failed: %s", e)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 5: SEVERITY CORRELATION (CONFIDENCE vs FIQ / AGE)
@@ -985,7 +942,6 @@ def run_severity_correlation(df: pd.DataFrame, output_dir: Path) -> dict:
     _plot_severity_scatter(df, output_dir / "severity_correlation.png")
     return results
 
-
 def _plot_severity_scatter(df: pd.DataFrame, save_path: Path) -> None:
     try:
         import matplotlib.pyplot as plt
@@ -1014,7 +970,6 @@ def _plot_severity_scatter(df: pd.DataFrame, save_path: Path) -> None:
         logger.info("  Severity correlation plot saved → %s", save_path)
     except Exception as e:
         logger.warning("  Severity scatter failed: %s", e)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 6: CASE STUDIES
@@ -1106,7 +1061,6 @@ def run_case_studies(df: pd.DataFrame, test_graphs: list, n_cases: int, output_d
 
     return cases
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 7: SAVE SUMMARY JSON
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1156,7 +1110,6 @@ def save_summary(
                 summary["n_subjects"], summary["overall_accuracy"], auc_log)
     logger.info("  Threshold policy: %s  |  threshold=%.4f", threshold_policy, float(threshold))
     logger.info("  Output → %s", output_dir)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN
@@ -1265,7 +1218,6 @@ def main() -> None:
         calibration_applied_in_eval=calibration_applied_in_eval,
         youden_analysis=youden_analysis,
     )
-
 
 if __name__ == "__main__":
     main()

@@ -55,7 +55,7 @@ dependencies:
 
   # Optional: for faster installs
   - pip:
-    - pytorch>2.9.0
+    # - pytorch>2.9.0  # already in conda deps above
     # torch-scatter and torch-sparse are optional C++ extensions
     # Uncomment if you want faster scatter/gather operations:
     # - torch-scatter

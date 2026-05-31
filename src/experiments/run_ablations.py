@@ -27,7 +27,6 @@ Usage:
 
 import argparse
 import logging
-import sys
 import time
 from pathlib import Path
 
@@ -35,7 +34,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     CAUSAL_GRAPHS_DIR,
     DATA_PROCESSED,
@@ -90,7 +88,6 @@ from src.models.factory import build_model
 from src.models.gnn_model import _set_global_seed
 from src.models.training_utils import make_loader, train_fold_with_onecycle
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 RESULTS_DIR = RESULTS_ABLATIONS_DIR
@@ -107,7 +104,6 @@ TEMPORAL_SLICE   = _GROUP_SLICES["temporal"]    # indices 0:8 (8 features)
 FREQUENCY_SLICE  = _GROUP_SLICES["frequency"]   # indices 8:18 (10 features)
 INTERNAL_SLICE   = _GROUP_SLICES["internal"]    # indices 18:20 (2 features)
 SPATIAL_SLICE    = _GROUP_SLICES["spatial"]     # indices 20:24 (4 features)
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DATASET WRAPPER FOR FEATURE MASKING
@@ -144,7 +140,6 @@ class MaskedDataset:
 
     def get(self, idx):
         return self[idx]
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FLAT MLP MODEL (ABLATION A)
@@ -200,7 +195,6 @@ class FlatMLP(nn.Module):
         x_flat = x.view(batch_size, self.num_nodes * x.shape[-1])
         return self.net(x_flat)
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # GRAPH REBUILD FOR ABLATION D
 # ─────────────────────────────────────────────────────────────────────────────
@@ -241,7 +235,6 @@ def build_pearson_graphs(output_dir: Path) -> bool:
     logger.info(f"  Built {success}/{success+failed} graphs in {output_dir}")
     return success > 0
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # GRAPH REBUILD FOR ABLATION D2 (Ridge Granger)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -280,7 +273,6 @@ def build_ridge_granger_graphs(output_dir: Path) -> bool:
 
     logger.info(f"  Built {success}/{success+failed} graphs in {output_dir}")
     return success > 0
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE TRAINING RUNNER
@@ -430,7 +422,6 @@ def run_kfold(
         "n_subjects": len(labels),
     }
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # INDIVIDUAL ABLATION RUNNERS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -441,7 +432,6 @@ def _gnn_factory_default(**override_kwargs):
         return build_model(device=DEVICE, **override_kwargs)
 
     return factory
-
 
 def run_ablation_a(base_ds) -> dict:
     """A — FlatMLP: no graph structure, flattened node features only."""
@@ -456,7 +446,6 @@ def run_ablation_a(base_ds) -> dict:
 
     return run_kfold(base_ds, mlp_factory, ablation_name="A (FlatMLP, no graph)")
 
-
 def run_ablation_b(base_ds) -> dict:
     """B — Spatial only: zero temporal + frequency + internal features (4 spatial features)."""
     masked_ds = MaskedDataset(base_ds, keep_groups=["spatial"])
@@ -468,7 +457,6 @@ def run_ablation_b(base_ds) -> dict:
     )
     return run_kfold(masked_ds, factory, ablation_name="B (Spatial only, 4 features)")
 
-
 def run_ablation_c(base_ds) -> dict:
     """C — Temporal+Spatial (12 features, no frequency): zero frequency+internal, keep temporal+spatial."""
     masked_ds = MaskedDataset(base_ds, keep_groups=["temporal", "spatial"])
@@ -479,7 +467,6 @@ def run_ablation_c(base_ds) -> dict:
         edge_gate=True,
     )
     return run_kfold(masked_ds, factory, ablation_name="C (Temporal+Spatial, no frequency)")
-
 
 def run_ablation_d() -> dict:
     """D — Lagged Pearson edges: rebuild graphs with 'lagged_pearson' method."""
@@ -526,7 +513,6 @@ def run_ablation_d() -> dict:
         grl_alpha_max=GNN_GRL_ALPHA_MAX,
     )
 
-
 def run_ablation_e(base_ds) -> dict:
     """E — No site embeddings, no demographics conditioning."""
     factory = _gnn_factory_default(
@@ -536,7 +522,6 @@ def run_ablation_e(base_ds) -> dict:
         edge_gate=True,
     )
     return run_kfold(base_ds, factory, ablation_name="E (No site/demographics)")
-
 
 def run_ablation_f() -> dict:
     """F — Random topology: Same node features, random edge connections (same edge count).
@@ -590,7 +575,6 @@ def run_ablation_f() -> dict:
         use_fold_specific_harmonization=True,
     )
 
-
 def run_ablation_g() -> dict:
     """G — Identity edges: fully connected graph with uniform weights.
 
@@ -640,7 +624,6 @@ def run_ablation_g() -> dict:
         use_fold_specific_harmonization=True,
     )
 
-
 def run_ablation_d2() -> dict:
     """D2 — Ridge Granger edges: rebuild graphs with 'ridge_granger' method and stronger GRL."""
     ridge_granger_dir = DATA_PROCESSED / "causal_graphs_ridge_granger"
@@ -685,7 +668,6 @@ def run_ablation_d2() -> dict:
         use_grl=True,
         grl_alpha_max=GNN_GRL_ALPHA_MAX,
     )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RESULTS SUMMARY
@@ -732,14 +714,12 @@ def print_summary(results: dict[str, dict], baseline_auc: float = 0.63) -> None:
         pd.DataFrame(rows).to_csv(out_csv, index=False)
         logger.info(f"\n  Results saved → {out_csv}")
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 
 ABLATION_MAP = {"A": "FlatMLP (no graph)", "B": "Spatial only", "C": "Temporal (no freq)",
                  "D": "Lagged Pearson", "D2": "Ridge Granger", "E": "No site/demographics"}
-
 
 def main():
     parser = argparse.ArgumentParser(description="Ablation study runner")
@@ -798,7 +778,6 @@ def main():
     #     results["G"] = run_ablation_g()
 
     print_summary(results, baseline_auc=args.baseline_auc)
-
 
 if __name__ == "__main__":
     main()

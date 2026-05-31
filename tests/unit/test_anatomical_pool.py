@@ -6,10 +6,6 @@ Tests:
 3. Pooling is differentiable (backward pass runs)
 4. Different graphs produce different pooled embeddings (non-trivial function)
 """
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import torch
 
@@ -30,7 +26,6 @@ def _make_batch_tensor(num_graphs: int, num_lobes: int = NUM_LOBES, hidden_dim: 
         torch.arange(num_graphs), num_lobes
     )
     return h, batch
-
 
 class TestAnatomicalHierarchyPool:
     def setup_method(self):
@@ -94,7 +89,7 @@ class TestAnatomicalHierarchyPool:
             f"Missing lobe-to-network assignments for: {all_lobe_ids - assigned}"
         )
         # Reverse mapping must cover the same lobes
-        covered = set(lobe for lobes in NETWORK_TO_LOBES.values() for lobe in lobes)
+        covered = {lobe for lobes in NETWORK_TO_LOBES.values() for lobe in lobes}
         assert all_lobe_ids == covered, (
             f"NETWORK_TO_LOBES missing: {all_lobe_ids - covered}"
         )

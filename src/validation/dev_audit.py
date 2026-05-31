@@ -25,7 +25,6 @@ import numpy as np
 import pandas as pd
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     CAUSAL_GRAPHS_DIR,
     CAUSALITY_METHOD,
@@ -41,7 +40,6 @@ from src.core.config import (
     SPARSITY_QUANTILE,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -62,7 +60,6 @@ _CONFIG_CONSTANTS = {
     "NUM_INTERNAL_FEATURES": len(FEATURE_GROUPS.get("internal", [])),
     "GNN_IN_CHANNELS": GNN_IN_CHANNELS,
 }
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 1: CODE AUDIT  (static analysis — no data files required)
@@ -175,7 +172,6 @@ class CodeAuditor:
         logger.info("=" * 70)
         return len(self.errors) == 0
 
-
 def run_code_audit() -> int:
     """Scan all Python files under src/ and return 0 if no errors found."""
     auditor = CodeAuditor()
@@ -185,7 +181,6 @@ def run_code_audit() -> int:
     for f in sorted(files):
         auditor.check_file(f)
     return 0 if auditor.print_report() else 1
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 2: FEATURE-PIPELINE DIAGNOSTICS  (runtime — needs data files)
@@ -203,7 +198,7 @@ def audit_feature_tensor(graph_path: Path) -> bool:
         logger.error("Graph not found: %s", graph_path)
         return False
 
-    data = torch.load(graph_path, weights_only=False)
+    data = torch.load(graph_path, weights_only=True)
     if hasattr(data, "x"):
         x = data.x
     elif isinstance(data, dict) and "x" in data:
@@ -265,7 +260,6 @@ def audit_feature_tensor(graph_path: Path) -> bool:
     logger.info("Result: %s", "✓ PASS" if ok else "✗ FAIL")
     return ok
 
-
 def _audit_adj_dict(data: dict) -> None:
     adj = data["adj"]
     logger.info("  adj shape   : %s", tuple(adj.shape))
@@ -275,7 +269,6 @@ def _audit_adj_dict(data: dict) -> None:
         intf = data["internal_features"]
         logger.info("  internal_features shape: %s, NaN: %d",
                     tuple(intf.shape), torch.isnan(intf).sum().item())
-
 
 def audit_feature_tensor_via_dataset(n_samples: int = 3) -> bool:
     """Audit assembled feature tensors through ABIDECausalDataset (authoritative path)."""
@@ -317,7 +310,6 @@ def audit_feature_tensor_via_dataset(n_samples: int = 3) -> bool:
                 "✓ ALL PASS" if all_ok else "✗ ISSUES FOUND")
     return all_ok
 
-
 def validate_granger_edges(subject_id: str | None = None, n_subjects: int = 5) -> None:
     """Print causal matrix stats for sample subjects to verify non-trivial edge weights."""
     logger.info("=" * 70)
@@ -338,7 +330,7 @@ def validate_granger_edges(subject_id: str | None = None, n_subjects: int = 5) -
         if not gp.exists():
             logger.warning("  %s: graph not found", sub_id)
             continue
-        data = torch.load(gp, weights_only=False)
+        data = torch.load(gp, weights_only=True)
         if not (isinstance(data, dict) and "adj" in data):
             logger.warning("  %s: unexpected graph format", sub_id)
             continue
@@ -366,7 +358,6 @@ def validate_granger_edges(subject_id: str | None = None, n_subjects: int = 5) -
                 neg = int((adj_vals < 0).sum().item())
                 logger.info("    signed-edge mix: positive=%d, negative=%d  ✓", pos, neg)
 
-
 def audit_edge_density(max_graphs: int = 0) -> dict[str, object]:
     """Histogram of edge counts across all .pt graph files."""
     logger.info("=" * 70)
@@ -384,7 +375,7 @@ def audit_edge_density(max_graphs: int = 0) -> dict[str, object]:
     zero_cnt = floor_cnt = 0
     for gf in graph_files:
         try:
-            data = torch.load(gf, weights_only=False)
+            data = torch.load(gf, weights_only=True)
             if isinstance(data, dict) and "adj" in data:
                 n = int((data["adj"].abs() > 0).sum().item())
             elif hasattr(data, "edge_index"):
@@ -440,7 +431,6 @@ def audit_edge_density(max_graphs: int = 0) -> dict[str, object]:
     return {"n_graphs": len(arr), "mean": float(arr.mean()), "median": float(np.median(arr)),
                 "std": float(arr.std()), "min": int(arr.min()), "max": int(arr.max()),
                 "pct_at_floor": pct_floor, "pct_zero": pct_zero}
-
 
 def audit_frequency_features() -> None:
     """Check fMRI frequency band validity against actual TR values in the manifest."""
@@ -498,7 +488,6 @@ def audit_frequency_features() -> None:
     logger.info("Functional test (0.10 Hz sine, TR=2s): peak band = '%s'  %s",
                 actual_max[0], "✓" if "alpha" in actual_max[0] else "⚠ unexpected")
 
-
 def run_feature_diagnostics(
     n_samples: int = 3,
     quick: bool = False,
@@ -514,7 +503,6 @@ def run_feature_diagnostics(
     if not quick:
         audit_edge_density(max_graphs=max_graphs)
     audit_frequency_features()
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 3: UNIFIED ENTRY POINT
@@ -555,7 +543,6 @@ def main() -> int:
     logger.info("AUDIT COMPLETE")
     logger.info("=" * 70)
     return exit_code
-
 
 if __name__ == "__main__":
     sys.exit(main())

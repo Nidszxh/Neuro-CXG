@@ -1,5 +1,4 @@
 import logging
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -9,7 +8,6 @@ import torch
 from tqdm import tqdm
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     LOBE_NAMES,
     NUM_LOBES,
@@ -28,9 +26,7 @@ except ImportError:
     CAPTUM_AVAILABLE = False
     logging.warning("Captum not installed. Install with: pip install captum")
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 
 class FeatureAttributionAnalyzer:
     """
@@ -372,7 +368,6 @@ class FeatureAttributionAnalyzer:
         plt.close()
 
         logger.info(f"Per-class heatmaps saved to {output_path}")
-
 
 if __name__ == "__main__":
     logger.info("Feature attribution module is intended to be imported.")

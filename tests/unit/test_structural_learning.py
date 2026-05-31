@@ -5,10 +5,6 @@ Tests:
 2. EdgeStructureContrastiveLoss is lower for same-graph views than cross-graph pairs
 3. Structural dropout preserves edge_index and edge_attr unchanged
 """
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import copy
 
@@ -37,7 +33,6 @@ def _make_synthetic_batch(num_graphs: int = 8, num_nodes: int = 12, num_features
         y = torch.tensor([g % 2], dtype=torch.long)
         data_list.append(Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y))
     return Batch.from_data_list(data_list)
-
 
 class TestStructuralDropout:
     def test_zeroes_approximately_correct_fraction(self):
@@ -91,7 +86,6 @@ class TestStructuralDropout:
         modified = _apply_structural_dropout(batch, dropout_prob=0.0, training=True)
         assert torch.allclose(modified.x, orig_x)
 
-
 class TestEdgeStructureContrastiveLoss:
     def setup_method(self):
         self.loss_fn = EdgeStructureContrastiveLoss(temperature=0.5)
@@ -136,7 +130,6 @@ class TestEdgeStructureContrastiveLoss:
         assert z_full.grad is not None
         assert z_edge.grad is not None
 
-
 class _ToyStructuralModel(nn.Module):
     """Small differentiable graph model exposing _forward_with_embedding for training_utils."""
 
@@ -174,7 +167,6 @@ class _ToyStructuralModel(nn.Module):
         logits, _ = self._forward_with_embedding(x, edge_index, edge_attr, batch, **kwargs)
         return logits
 
-
 def _make_structural_learning_graphs(
     num_graphs: int,
     num_nodes: int = 12,
@@ -210,7 +202,6 @@ def _make_structural_learning_graphs(
 
     return graphs
 
-
 def _train_toy_model(
     train_graphs: list[Data],
     use_structural_dropout: bool,
@@ -236,7 +227,6 @@ def _train_toy_model(
 
     return model
 
-
 def _edge_to_node_importance_ratio(model: _ToyStructuralModel, eval_batch: Batch) -> float:
     model.eval()
     eval_batch = eval_batch.to(torch.device("cpu"))
@@ -257,7 +247,6 @@ def _edge_to_node_importance_ratio(model: _ToyStructuralModel, eval_batch: Batch
     node_mean = float(x.grad.abs().mean().item())
 
     return edge_mean / (node_mean + 1e-8)
-
 
 class TestStructuralLearningBehavior:
     def test_structural_dropout_increases_edge_to_node_ratio(self):

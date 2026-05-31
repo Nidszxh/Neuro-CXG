@@ -2,7 +2,6 @@ import gc
 import json
 import logging
 import os
-import sys
 import tempfile
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -28,7 +27,6 @@ warnings.filterwarnings("ignore", message=".*CUDA initialization.*", category=Us
 warnings.filterwarnings("ignore", message="invalid value encountered in divide", category=RuntimeWarning, module="scipy")
 
 # PATHS - Import from config to ensure single source of truth
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     AAL3_VALID_ROI_RANGE,
     ALFF_SLICE_PERCENTILES,
@@ -53,10 +51,6 @@ TS_OUTPUT    = DATA_TIME_SERIES if DATA_TIME_SERIES.exists() else DATA_PROCESSED
 META_DIR     = DATA_METADATA
 MASK_S3_TEMPLATE = "data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/func_mask/{sub_id}_func_mask.nii.gz"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
 logger = logging.getLogger(__name__)
 
 _S3_CLIENT = None
@@ -105,7 +99,6 @@ def init_worker():
     _S3_CLIENT = boto3.client("s3", config=Config(signature_version=UNSIGNED))
     _MNI_MASK_TEMPLATE = load_mni152_brain_mask()
 
-
 def get_s3_client():
     if _S3_CLIENT is None:
         logger.warning(
@@ -114,7 +107,6 @@ def get_s3_client():
         )
         return boto3.client("s3", config=Config(signature_version=UNSIGNED))
     return _S3_CLIENT
-
 
 def process_subject(sub_id, tr_val):
     # 1. Skip only when the subject is fully complete (TS + ROI labels + all slices).

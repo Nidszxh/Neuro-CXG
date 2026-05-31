@@ -166,7 +166,7 @@ NETWORK_TO_LOBES = {
 # Filter network mappings for 11-lobe mode (exclude Brainstem lobe 11)
 if USE_11_LOBES:
     LOBE_TO_NETWORK = {k: v for k, v in LOBE_TO_NETWORK.items() if k < 11}
-    NETWORK_TO_LOBES = {k: [l for l in v if l < 11] for k, v in NETWORK_TO_LOBES.items()}
+    NETWORK_TO_LOBES = {k: [lb for lb in v if lb < 11] for k, v in NETWORK_TO_LOBES.items()}
 
 
 # --- HELPER FUNCTIONS FOR LOBE EXCLUSION ---

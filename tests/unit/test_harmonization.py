@@ -7,15 +7,10 @@ Guards against two high-impact regressions:
 
 Run: pytest tests/unit/test_harmonization.py -v
 """
-import sys
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
 
 # ---------------------------------------------------------------------------
 # Helper factories
@@ -43,7 +38,6 @@ def _make_manifest(n: int = 20, seed: int = 0) -> pd.DataFrame:
         )
     return pd.DataFrame(rows)
 
-
 def _make_temporal_features(manifest: pd.DataFrame, n_feat: int = None) -> pd.DataFrame:
     """Create a mock temporal features DataFrame aligned to manifest subjects."""
     rng = np.random.default_rng(42)
@@ -60,7 +54,6 @@ def _make_temporal_features(manifest: pd.DataFrame, n_feat: int = None) -> pd.Da
     df = pd.DataFrame(cols)
     df.insert(0, "subject_id", manifest["subject_id"].values)
     return df
-
 
 def _make_spatial_features(manifest: pd.DataFrame) -> pd.DataFrame:
     """Create a mock node_features_3d-style DataFrame with per-site conf_std bias."""
@@ -81,7 +74,6 @@ def _make_spatial_features(manifest: pd.DataFrame) -> pd.DataFrame:
             rec[f"{lobe}_detection_count"] = float(int(5 + rng.integers(0, 3)) * (bias > 1))
         rows.append(rec)
     return pd.DataFrame(rows)
-
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -124,7 +116,6 @@ class TestPrepareCovariateDXGroup:
         cov = _prepare_covariates(manifest, feats)
 
         assert not cov.isna().any().any(), "Covariate matrix must not contain any NaN values"
-
 
 class TestOutlierClipFoldSafe:
     """Outlier bounds must be derived from train data only."""
@@ -184,7 +175,6 @@ class TestOutlierClipFoldSafe:
         assert result[numeric_cols].to_numpy().max() < 100.0, (
             "Test-set outlier survived harmonization — train-only clipping may not be applied"
         )
-
 
 class TestSpatialHarmonization:
     """harmonize_spatial_features must reduce site-level variance in conf_std."""

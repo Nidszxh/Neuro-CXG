@@ -11,15 +11,12 @@ Pipeline: Extract centroids → Group by lobe → Compute lobe-level statistics
 
 import json
 import logging
-import sys
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
 # Setup paths and config
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     ATLAS_PATH,
     DATA_METADATA,
@@ -31,14 +28,9 @@ from src.core.config import (
 )
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 CENTROIDS_PATH = DATA_METADATA / "roi_centroids.json"
-
 
 def _compute_and_save_centroids_from_atlas() -> dict:
     """Compute ROI centroids from atlas and persist roi_centroids.json."""
@@ -88,7 +80,6 @@ def _compute_and_save_centroids_from_atlas() -> dict:
     logger.info("Generated %d ROI centroids at %s", len(centroids_list), CENTROIDS_PATH)
     return {c["roi_id"]: c for c in centroids_list}
 
-
 def load_centroids():
     """Load precomputed atlas ROI centroids."""
     if not CENTROIDS_PATH.exists():
@@ -105,7 +96,6 @@ def load_centroids():
     centroids = {c["roi_id"]: c for c in centroids_list}
     logger.info(f"Loaded {len(centroids)} ROI centroids")
     return centroids
-
 
 def compute_roi_sizes():
     """
@@ -133,7 +123,6 @@ def compute_roi_sizes():
 
     # Fallback: uniform sizes
     return dict.fromkeys(range(1, 171), 1.0)
-
 
 def extract_lobe_features(lobe_id, roi_indices, centroids, roi_sizes):
     """
@@ -167,7 +156,6 @@ def extract_lobe_features(lobe_id, roi_indices, centroids, roi_sizes):
     mean_size = float(np.mean(lobe_sizes))
 
     return [mean_x, mean_y, mean_z, mean_size]
-
 
 def extract_spatial():
     """Main extraction: compute spatial features for all subjects."""
@@ -220,7 +208,6 @@ def extract_spatial():
 
     logger.info(f"Saved spatial features to {NODE_FEATURES_3D}")
     logger.info(f"Features shape: {df.shape} ({len(df)} subjects × {len(df.columns)-1} spatial features)")
-
 
 if __name__ == "__main__":
     extract_spatial()

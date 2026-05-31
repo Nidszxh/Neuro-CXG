@@ -6,11 +6,6 @@ Tests:
 3. NUM_SPATIAL_FEATURES sentinel assertion in feature_registry holds
 4. GNN_IN_CHANNELS is consistent with registered feature groups
 """
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
 
 import numpy as np
 import pandas as pd
@@ -51,7 +46,6 @@ class TestSpatialFeatureRegistry:
         assert GNN_IN_CHANNELS == len(ALL_FEATURE_NAMES), (
             f"GNN_IN_CHANNELS={GNN_IN_CHANNELS} != len(ALL_FEATURE_NAMES)={len(ALL_FEATURE_NAMES)}"
         )
-
 
 class TestGraphFactorySpatialExtraction:
     """Test _get_subject_spatial using a minimal synthetic coords CSV."""
@@ -111,7 +105,6 @@ class TestGraphFactorySpatialExtraction:
         assert result.shape == (NUM_LOBES, 4), (
             f"Expected ({NUM_LOBES}, 4) even with confounders in CSV; got {result.shape}"
         )
-
 
 class TestAtlasSpatialExtractorCompatibility:
     """Atlas mode must emit the same 4-feature lobe schema consumed by graph_factory."""

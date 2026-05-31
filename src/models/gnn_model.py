@@ -1,6 +1,5 @@
 import logging
 import random
-import sys
 import time
 import warnings
 from pathlib import Path
@@ -18,7 +17,6 @@ warnings.filterwarnings('ignore', message='.*CUDA initialization.*', category=Us
 warnings.filterwarnings('ignore', message='.*dataclass_transform.*')
 
 # Setup paths and config
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     ALL_FEATURE_NAMES,
     CAUSAL_GRAPHS_DIR,
@@ -83,7 +81,6 @@ from src.models.training_utils import (
     train_fold_with_onecycle,
 )
 
-logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 # Analysis modules
@@ -96,7 +93,6 @@ except ImportError:
     FEATURE_ANALYSIS_AVAILABLE = False
     logger.warning("FeatureAttributionAnalyzer unavailable (requires Captum)")
 
-
 # ── LOSS IMPORTS ────────────────────────────────────────────────────────────────
 # CausalInvarianceLoss and SpatialInvarianceLoss are defined in src.models.losses
 from src.models.losses import CausalInvarianceLoss, SpatialInvarianceLoss
@@ -108,13 +104,11 @@ def evaluate(model, loader, threshold=0.5):
     """Compatibility wrapper around shared loader evaluation."""
     return evaluate_loader(model, loader, DEVICE, threshold=threshold)
 
-
 def _graph_site_id(graph_obj) -> int:
     """Extract integer site id from a graph sample."""
     if hasattr(graph_obj, 'site_id') and graph_obj.site_id is not None and graph_obj.site_id.numel() > 0:
         return int(graph_obj.site_id.view(-1)[0].item())
     return -1
-
 
 def _fit_mi_feature_selection(train_data):
     """Fit fold-internal MI feature selector on train fold only.
@@ -194,14 +188,12 @@ def _fit_mi_feature_selection(train_data):
     }
     return selected_idx.tolist(), mask, metadata
 
-
 def _apply_feature_mask(graphs, feature_mask: torch.Tensor) -> None:
     """Apply feature mask in-place without changing channel dimensionality."""
     if feature_mask is None:
         return
     for d in graphs:
         d.x = d.x * feature_mask.to(device=d.x.device, dtype=d.x.dtype).view(1, -1)
-
 
 def _fit_site_normalization_stats(train_data):
     """Fit per-site and global normalization stats on train fold only."""
@@ -224,7 +216,6 @@ def _fit_site_normalization_stats(train_data):
     global_std = global_cat.std(dim=0, keepdim=True).clamp_min(1e-6)
     return site_stats, (global_mean, global_std)
 
-
 def _apply_site_normalization(graphs, site_stats, global_stats) -> None:
     """Apply per-site normalization with fallback to global stats."""
     global_mean, global_std = global_stats
@@ -232,7 +223,6 @@ def _apply_site_normalization(graphs, site_stats, global_stats) -> None:
         sid = _graph_site_id(d)
         mean, std = site_stats.get(int(sid), (global_mean, global_std))
         d.x = (d.x - mean.to(device=d.x.device, dtype=d.x.dtype)) / std.to(device=d.x.device, dtype=d.x.dtype)
-
 
 def _site_stats_to_serializable(site_stats):
     """Convert site stats dict to checkpoint-safe lists."""
@@ -243,9 +233,7 @@ def _site_stats_to_serializable(site_stats):
         stds[str(int(sid))] = std.squeeze(0).detach().cpu().numpy().tolist()
     return means, stds
 
-
 # MAIN TRAINING FUNCTION
-
 
 def _set_global_seed(seed: int = 42) -> None:
     """Set all random seeds for full reproducibility.
@@ -265,7 +253,6 @@ def _set_global_seed(seed: int = 42) -> None:
     torch.backends.cudnn.benchmark = False
     logger.info("Global seed set to %d (cuDNN deterministic mode enabled)", seed)
 
-
 def _compute_site_auc_values(
     probs: np.ndarray,
     labels: np.ndarray,
@@ -284,7 +271,6 @@ def _compute_site_auc_values(
             continue
         site_auc_values.append(float(roc_auc_score(labels[mask], probs[mask])))
     return site_auc_values
-
 
 def _assess_graph_degeneracy(dataset) -> dict:
     """Estimate degenerate-graph rate using unified edge/dead-lobe criterion."""
@@ -321,7 +307,6 @@ def _assess_graph_degeneracy(dataset) -> dict:
         "mean_dead_lobes": float(np.mean(dead_lobe_counts)) if dead_lobe_counts else 0.0,
     }
 
-
 def _assess_multiview_quality(multiview_dir: Path, sample_size: int = 0) -> dict:
     """Measure zero-edge rates per multiview branch.
 
@@ -340,7 +325,7 @@ def _assess_multiview_quality(multiview_dir: Path, sample_size: int = 0) -> dict
 
     for fp in files:
         try:
-            payload = torch.load(fp, map_location="cpu", weights_only=False)
+            payload = torch.load(fp, map_location="cpu", weights_only=True)
         except Exception:
             continue
 
@@ -395,7 +380,6 @@ def _assess_multiview_quality(multiview_dir: Path, sample_size: int = 0) -> dict
         "fallback_rates": fallback_rates,
         "failing_views": failing,
     }
-
 
 def _run_training_once(
     *,
@@ -1079,7 +1063,6 @@ def _run_training_once(
         "site_auc_count": len(site_auc_values),
     }
 
-
 def run_training():
     """Entry point for model training with optional GRL alpha grid search."""
     if GNN_AUTO_GRL_GRID_SEARCH:
@@ -1146,7 +1129,6 @@ def run_training():
         run_post_analysis=True,
     )
 
-
 # CLI
 
 def parse_args():
@@ -1159,7 +1141,6 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Neuro-CXG GNN Training")
     parser.add_argument("--seed", type=int, default=None, help="Random seed (default: uses GNN_SEED from config)")
     return parser.parse_args()
-
 
 if __name__ == "__main__":
     args = parse_args()

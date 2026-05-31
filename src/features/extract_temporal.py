@@ -1,6 +1,5 @@
 import argparse
 import logging
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -14,7 +13,6 @@ from tqdm import tqdm
 torch.set_num_threads(min(4, torch.get_num_threads()))
 
 # Setup paths and config
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     ACTIVE_FREQ_BANDS,
     DATA_FINAL,
@@ -32,15 +30,12 @@ VALID_ROI_RANGE = (164, 170)
 MAX_ROIS = 170
 
 # Setup logging
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 _NYQUIST_NOTE_EMITTED = False
-
 
 # ============================================================================
 # FREQUENCY-DOMAIN FEATURE EXTRACTION
 # ============================================================================
-
 
 def _get_zero_features(bands: dict[str, tuple[float, float]]) -> dict[str, float]:
     """Return zeroed feature dict for edge cases."""
@@ -52,7 +47,6 @@ def _get_zero_features(bands: dict[str, tuple[float, float]]) -> dict[str, float
     features["phase_std"] = 0.0
     return features
 
-
 def _get_unreliable_bands(fs: float) -> set[str]:
     """Return bands that should be zeroed for the given sampling rate."""
     nyquist = fs / 2.0
@@ -61,7 +55,6 @@ def _get_unreliable_bands(fs: float) -> set[str]:
         if high >= nyquist:
             unreliable.add(band_name)
     return unreliable
-
 
 def extract_band_power(
     ts: np.ndarray, fs: float = 0.5, bands: dict[str, tuple[float, float]] = None
@@ -148,7 +141,7 @@ def extract_band_power(
             continue
 
         # Total power in band
-        band_power = np.trapz(psd[band_mask], freqs[band_mask])
+        band_power = np.trapezoid(psd[band_mask], freqs[band_mask])
         features[f"{band_name}_power"] = float(band_power)
 
         # Peak frequency
@@ -171,7 +164,6 @@ def extract_band_power(
         features["phase_std"] = 0.0
 
     return features
-
 
 def extract_frequency_features_batch(ts_matrix: np.ndarray, fs: float = 0.5) -> np.ndarray:
     """
@@ -206,11 +198,9 @@ def extract_frequency_features_batch(ts_matrix: np.ndarray, fs: float = 0.5) -> 
 
     return feature_matrix
 
-
 # ============================================================================
 # TIME-DOMAIN FEATURE EXTRACTION
 # ============================================================================
-
 
 def calculate_psd(ts: np.ndarray, tr: float) -> float:
     """
@@ -237,7 +227,6 @@ def calculate_psd(ts: np.ndarray, tr: float) -> float:
     # Soft-compress heavy-tailed PSD values while preserving rank information.
     return float(np.log1p(psd_mean))
 
-
 def calculate_autocorr(ts: np.ndarray, lag: int = 1) -> float:
     """Autocorrelation at specified lag (default lag=1 for temporal persistence)."""
     if len(ts) < lag + 1:
@@ -246,7 +235,6 @@ def calculate_autocorr(ts: np.ndarray, lag: int = 1) -> float:
     c0 = np.dot(ts, ts) / len(ts)
     c_lag = np.dot(ts[:-lag], ts[lag:]) / len(ts)
     return float(c_lag / c0) if c0 > 0 else 0.0
-
 
 def calculate_band_power(ts: np.ndarray, tr: float, freq_band: tuple) -> float:
     """
@@ -268,11 +256,10 @@ def calculate_band_power(ts: np.ndarray, tr: float, freq_band: tuple) -> float:
     if not np.any(band_mask):
         return 0.0
 
-    band_power = np.trapz(psd[band_mask], freqs[band_mask])
-    total_power = np.trapz(psd, freqs)
+    band_power = np.trapezoid(psd[band_mask], freqs[band_mask])
+    total_power = np.trapezoid(psd, freqs)
 
     return float(band_power / total_power) if total_power > 0 else 0.0
-
 
 def extract_single_roi_features(ts: np.ndarray, tr: float, include_frequency: bool = True):
     """
@@ -331,7 +318,6 @@ def extract_single_roi_features(ts: np.ndarray, tr: float, include_frequency: bo
         return base_features + frequency_values
 
     return base_features
-
 
 def _extract_temporal_vectorized(
     ts_data: np.ndarray,
@@ -420,7 +406,7 @@ def _extract_temporal_vectorized(
         except Exception:
             return np.zeros((n_rois, features_per_roi))
 
-        total_power = np.trapz(psd_full, freqs_full, axis=0)
+        total_power = np.trapezoid(psd_full, freqs_full, axis=0)
         total_power = np.where(total_power > 0, total_power, 1.0)
 
         ordered_bands = ["delta", "theta", "alpha", "beta", "gamma"]
@@ -431,7 +417,7 @@ def _extract_temporal_vectorized(
             if low >= high:
                 continue
             band_mask = (freqs_full >= low) & (freqs_full < high)
-            band_power = np.trapz(psd_full[band_mask, :], freqs_full[band_mask], axis=0)
+            band_power = np.trapezoid(psd_full[band_mask, :], freqs_full[band_mask], axis=0)
             freq_feature_arr[:, idx] = band_power / total_power
 
             freq_feature_arr[:, idx + n_bands] = _compute_peak_freqs_vectorized(psd_full, freqs_full, band_mask)
@@ -444,7 +430,6 @@ def _extract_temporal_vectorized(
     output_features[:, bad_rois] = 0.0
 
     return output_features
-
 
 def _compute_psd_vectorized(ts_centered: np.ndarray, tr: float) -> np.ndarray:
     """Vectorized PSD: mean power in 0.01-0.1 Hz band via FFT."""
@@ -460,7 +445,6 @@ def _compute_psd_vectorized(ts_centered: np.ndarray, tr: float) -> np.ndarray:
     psd_mean = np.where(np.isfinite(psd_mean) & (psd_mean > 0), psd_mean, 0.0)
     return psd_mean
 
-
 def _compute_autocorr_vectorized(ts: np.ndarray, lag: int = 1) -> np.ndarray:
     """Vectorized autocorrelation at lag-1 across all ROIs."""
     n_timepoints, n_rois = ts.shape
@@ -473,7 +457,6 @@ def _compute_autocorr_vectorized(ts: np.ndarray, lag: int = 1) -> np.ndarray:
 
     c0 = np.where(c0 > 0, c0, 1.0)
     return c_lag / c0
-
 
 def _compute_peak_freqs_vectorized(
     psd_full: np.ndarray,
@@ -491,7 +474,6 @@ def _compute_peak_freqs_vectorized(
     peak_freqs = np.where(np.isfinite(peak_freqs), peak_freqs, 0.0)
     return peak_freqs
 
-
 def _compute_spectral_entropy_vectorized(
     psd_full: np.ndarray,
     total_power: np.ndarray,
@@ -502,7 +484,6 @@ def _compute_spectral_entropy_vectorized(
     spectral_entropy = -np.nansum(psd_norm * np.log(psd_norm + 1e-10), axis=0)
     spectral_entropy = np.where(np.isfinite(spectral_entropy), spectral_entropy, 0.0)
     return spectral_entropy
-
 
 def _compute_phase_std_vectorized(ts: np.ndarray, bad_rois: np.ndarray) -> np.ndarray:
     """Vectorized instantaneous phase std via Hilbert transform.
@@ -520,7 +501,6 @@ def _compute_phase_std_vectorized(ts: np.ndarray, bad_rois: np.ndarray) -> np.nd
         phase_std[valid] = np.std(instantaneous_phase, axis=0)
         phase_std[valid] = np.where(np.isfinite(phase_std[valid]), phase_std[valid], 0.0)
     return phase_std
-
 
 def _process_single_subject(
     sub_id: str,
@@ -580,7 +560,6 @@ def _process_single_subject(
 
     except Exception:
         return None
-
 
 def main(add_frequency: bool = True, n_jobs: int = -1, use_gpu: bool = False) -> None:
     """Extract temporal features for all subjects.
@@ -662,7 +641,6 @@ def main(add_frequency: bool = True, n_jobs: int = -1, use_gpu: bool = False) ->
     except Exception as e:
         logger.error(f"Failed to save temporal features: {e}")
 
-
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Temporal feature extraction")
     parser.add_argument(
@@ -680,7 +658,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--n-jobs", type=int, default=-1, help="Number of parallel workers (-1=all cores)")
     parser.add_argument("--use-gpu", action="store_true", default=False, help="Use GPU acceleration if available")
     return parser.parse_args()
-
 
 if __name__ == "__main__":
     args = _parse_args()

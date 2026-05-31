@@ -2,13 +2,8 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import torch
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.models import gnn_model as gm
 
@@ -18,7 +13,6 @@ class _Sample:
         self.x = x.clone().float()
         self.y = torch.tensor([int(y)], dtype=torch.long)
         self.site_id = torch.tensor([int(site_id)], dtype=torch.long)
-
 
 def _make_train_graphs() -> list:
     rng = np.random.default_rng(42)
@@ -35,7 +29,6 @@ def _make_train_graphs() -> list:
         graphs.append(_Sample(x=x, y=label, site_id=site))
     return graphs
 
-
 def test_fit_mi_feature_selection_returns_valid_mask(monkeypatch):
     monkeypatch.setattr(gm, "GNN_IN_CHANNELS", 8)
     monkeypatch.setattr(gm, "GNN_MI_MIN_KEEP_RATIO", 0.25)
@@ -49,7 +42,6 @@ def test_fit_mi_feature_selection_returns_valid_mask(monkeypatch):
     assert mask.shape[0] == 8
     assert int(mask.sum().item()) == len(selected_idx)
     assert meta["selected_features"] == len(selected_idx)
-
 
 def test_fit_mi_feature_selection_keeps_all_when_scores_near_zero(monkeypatch):
     monkeypatch.setattr(gm, "GNN_IN_CHANNELS", 8)
@@ -69,7 +61,6 @@ def test_fit_mi_feature_selection_keeps_all_when_scores_near_zero(monkeypatch):
     assert meta["selected_features"] == 8
     assert meta["score_max"] == 0.0
 
-
 def test_fit_mi_feature_selection_keeps_all_for_single_class_fold(monkeypatch):
     monkeypatch.setattr(gm, "GNN_IN_CHANNELS", 8)
     monkeypatch.setattr(gm, "GNN_MI_MIN_KEEP_RATIO", 0.70)
@@ -86,7 +77,6 @@ def test_fit_mi_feature_selection_keeps_all_for_single_class_fold(monkeypatch):
     assert meta["selected_features"] == 8
     assert meta["candidate_k"] == 8
 
-
 def test_apply_feature_mask_zeros_unselected_channels(monkeypatch):
     monkeypatch.setattr(gm, "GNN_IN_CHANNELS", 8)
     samples = _make_train_graphs()[:2]
@@ -100,7 +90,6 @@ def test_apply_feature_mask_zeros_unselected_channels(monkeypatch):
     assert not torch.allclose(samples[0].x[:, 0], torch.zeros_like(samples[0].x[:, 0]))
     assert torch.allclose(samples[0].x[:, 0], original[:, 0])
 
-
 def test_within_site_normalization_uses_global_fallback_for_unseen_site(monkeypatch):
     monkeypatch.setattr(gm, "GNN_IN_CHANNELS", 8)
     train = _make_train_graphs()
@@ -112,7 +101,6 @@ def test_within_site_normalization_uses_global_fallback_for_unseen_site(monkeypa
     global_mean, global_std = global_stats
     expected = (torch.ones(12, 8) * 5.0 - global_mean) / global_std
     assert torch.allclose(unseen.x, expected, atol=1e-5)
-
 
 def test_site_stats_serialization_roundtrip(monkeypatch):
     monkeypatch.setattr(gm, "GNN_IN_CHANNELS", 8)

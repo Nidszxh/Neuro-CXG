@@ -73,9 +73,42 @@ flowchart TB
 | Edge Gate | MLP(sigmoid) | MLP(sigmoid) | Learnable edge weight modulation |
 | Pooling | mean + max + sum | mean + max + sum | Concatenate three strategies → 576-dim |
 | Classifier MLP | 576 → 128 → 2 | 576 → 128 → 2 | Final classification head |
+| Dropout | 0.35 | **0.33** | Optimized regularization |
+| Warmup Fraction | 0.05 | **0.20** | Longer warmup for GRL stability |
+
+### Best Model Performance (May 31, 2026)
+
+| Metric | Value | 95% CI |
+|--------|-------|--------|
+| Test AUC | **0.8819** | [0.8277, 0.9322] |
+| Test F1 | **0.8485** | [0.7953, 0.8982] |
+| Accuracy | 83.77% | [77.92%, 88.98%] |
+| Sensitivity | 88.61% | [81.01%, 94.94%] |
+| Specificity | 78.67% | [69.33%, 88.00%] |
+| CV AUC | 0.8173 ± 0.0493 | — |
 
 ## Optional Components
 
 - **Site Embedding**: 20-dim site ID → learned embedding (enabled with `use_site_embedding=True`)
 - **Demographics**: Age, sex, FIQ concatenated before classifier (enabled with `use_demographics=True`)
 - **Gradient Reversal Layer (GRL)**: Domain adversarial training for site debiasing (enabled with `use_grl=True`)
+
+## Domain Adaptation: GRL Configuration
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| GRL Alpha | **0.10** | Fixed (NOT 1.0) — changing to 1.0 drops AUC from ~0.88 to ~0.83 |
+| GRL Alpha Max | 0.10 | No annealing |
+| Site Loss Weight | 0.15 | Weight for site classification loss |
+| Use Site Embedding | True | Enable site conditioning |
+| Use Demographics | True | Enable demographic conditioning |
+
+## Pooling Strategies
+
+| Mode | Description | Output Dim |
+|------|-------------|-------------|
+| `attention` | Learnable node attention (default, stable) | 48 × 4 = 192 |
+| `mean_max_sum` | Concatenation of mean, max, sum | 48 × 3 × 4 = 576 |
+| `anatomical` | 2-level hierarchy (lobes → networks → graph) | 48 × 4 × 4 = 768 |
+
+*Note: Best model uses `anatomical` pooling for hierarchical aggregation respecting brain structure.*

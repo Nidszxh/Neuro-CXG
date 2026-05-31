@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-scripts/run_explainability.py
+src/run_explainability.py
 Phase 8 Unified Explainability Pipeline
 =========================================
 Orchestrates all four explainability sub-phases for Neuro-CXG:
@@ -16,19 +16,19 @@ A summary JSON is written at the end with key findings.
 Usage
 -----
     # Full pipeline (all phases)
-    python scripts/run_explainability.py
+    python src/run_explainability.py
 
     # Use a specific checkpoint fold
-    python scripts/run_explainability.py --fold 3
+    python src/run_explainability.py --fold 3
 
     # Run only specific phases
-    python scripts/run_explainability.py --phases node edge
+    python src/run_explainability.py --phases node edge
 
     # Custom output directory
-    python scripts/run_explainability.py --output-dir results/explain_v2
+    python src/run_explainability.py --output-dir results/explain_v2
 
     # Disable the slow edge-masking (keeps only gradient attribution)
-    python scripts/run_explainability.py --no-masking
+    python src/run_explainability.py --no-masking
 
 Outputs
 -------
@@ -55,7 +55,6 @@ results/explainability/
 import argparse
 import json
 import logging
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -63,7 +62,6 @@ import torch
 from torch_geometric.loader import DataLoader
 
 # ── project imports ────────────────────────────────────────────────────────────
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.core.config import (
     ALL_FEATURE_NAMES,
     LOBE_NAMES,
@@ -83,7 +81,6 @@ logger = logging.getLogger(__name__)
 
 REGION_LABELS: list[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 
-
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _build_test_loader(batch_size: int = 16) -> DataLoader:
@@ -93,7 +90,6 @@ def _build_test_loader(batch_size: int = 16) -> DataLoader:
     loader  = make_loader(graphs, batch_size=batch_size, shuffle=False)
     logger.info("Test loader: %d graphs, batch_size=%d", len(graphs), batch_size)
     return loader
-
 
 def _best_fold(num_folds: int = 5) -> int:
     """Select the fold with the highest saved validation AUC from training JSONs."""
@@ -113,7 +109,6 @@ def _best_fold(num_folds: int = 5) -> int:
             pass
     logger.info("Auto-selected fold %d (val AUC=%.4f)", best_fold_id, best_auc)
     return best_fold_id
-
 
 # ── phase runners ──────────────────────────────────────────────────────────────
 
@@ -145,7 +140,6 @@ def run_phase_node(model, test_loader, device, output_dir: Path) -> dict:
     logger.info("Phase 8.1 complete — figures saved to %s/node/", output_dir)
     return results
 
-
 def run_phase_edge(
     model,
     test_loader,
@@ -165,7 +159,6 @@ def run_phase_edge(
     results = analyzer.run(output_dir / "edge")
     logger.info("Phase 8.2 complete — figures saved to %s/edge/", output_dir)
     return results
-
 
 def run_phase_features(model, test_loader, device, output_dir: Path) -> dict | None:
     """Phase 8.3 — Feature Attribution (saliency maps)."""
@@ -194,8 +187,7 @@ def run_phase_features(model, test_loader, device, output_dir: Path) -> dict | N
         logger.info("Phase 8.3 complete — figures saved to %s/features/", output_dir)
 
         # Return per-region importance scores for literature validation
-        import torch as _t
-        if isinstance(attributions, _t.Tensor):
+        if isinstance(attributions, torch.Tensor):
             attr_np = attributions.detach().cpu().numpy()   # (N, 12, 28)
         else:
             attr_np = np.array(attributions)
@@ -204,7 +196,6 @@ def run_phase_features(model, test_loader, device, output_dir: Path) -> dict | N
     except Exception as exc:
         logger.error("Phase 8.3 failed: %s", exc, exc_info=True)
         return None
-
 
 def run_phase_literature(
     gradcam_scores: np.ndarray | None,
@@ -225,7 +216,6 @@ def run_phase_literature(
     )
     logger.info("Phase 8.4 complete — report saved to %s/literature/", output_dir)
     return results
-
 
 # ── main pipeline ──────────────────────────────────────────────────────────────
 
@@ -356,7 +346,6 @@ def run_explainability_pipeline(
         logger.info("Matching ASD networks  : %s", ", ".join(summary["top_networks"]))
     logger.info("=" * 65)
 
-
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -409,7 +398,6 @@ def main() -> None:
         run_masking=not args.no_masking,
         batch_size=args.batch_size,
     )
-
 
 if __name__ == "__main__":
     main()

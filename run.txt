@@ -1,0 +1,1798 @@
+cd Projects/Neuro-CXG
+❯ source ~/.ichigo/bin/activate && export PYTHONPATH="/home/nidszxh/Projects/Neuro-CXG:$PYTHONPATH" && python src/run_pipeline.py --auto
+INFO:pipeline:
+======================================================================
+INFO:pipeline:NEURO-CXG PIPELINE RUNNER
+INFO:pipeline:12-Region Causal GNN for fMRI Analysis
+INFO:pipeline:======================================================================
+INFO:pipeline:
+Stage 0: Pre-Flight Validation
+INFO:src.core.validators:VALIDATING NEURO-CXG 12-REGION ARCHITECTURE
+INFO:src.core.validators:validate_lobe_mapping ok: 12 regions, 170 ROIs, no duplicates, full coverage
+INFO:src.core.validators:Target: 12 nodes | Features: 24
+INFO:src.core.validators:Device: cuda
+INFO:pipeline:Current Config Hash: c2d1719c
+INFO:pipeline:Environment validation passed
+INFO:pipeline:Download status: split data present — treating download as complete.
+INFO:pipeline:Split status [train]: images=4949, time_series=707
+INFO:pipeline:Split status [val]: images=1078, time_series=154
+INFO:pipeline:Split status [test]: images=1078, time_series=154
+INFO:pipeline:Stage registry snapshot: 21/31 stage sentinels already present
+WARNING:pipeline:Found 3 runnable src module(s) not mapped to pipeline stages:
+WARNING:pipeline:  - src.experiments.run_learning_curve
+WARNING:pipeline:  - src.experiments.test_random_edges_on_test
+WARNING:pipeline:  - src.validation.config_snapshot
+INFO:pipeline:
+======================================================================
+INFO:pipeline:EXECUTION PLAN
+INFO:pipeline:======================================================================
+INFO:pipeline:1. ABIDE Download                           ○ SKIP          Download ABIDE fMRI data + 7-slice ALFF export (Stage 1)
+INFO:pipeline:2. Train/Val/Test Split (2D Stratified)     ○ SKIP          2D stratification by DX_GROUP + SITE_ID (Stage 2)
+INFO:pipeline:3. Generate Master Manifest                 ○ SKIP          Maps subjects to phenotypes (Stage 3)
+INFO:pipeline:4. Site-Stratified CV Fold Assignment       ○ SKIP          Regenerate cv_fold with site-stratified GroupKFold by site-cluster
+INFO:pipeline:5. Atlas Validation                         ✓ WILL RUN      Verify AAL3 atlas files exist and are valid (Stage 4)
+INFO:pipeline:6. Pipeline Validation (Comprehensive Health Check) ✓ WILL RUN      Full pipeline health check (Stage 5)
+INFO:pipeline:7. Post-Download Integrity Check            ✓ WILL RUN      Validate PNG/NPY files after download (Stage 6)
+INFO:pipeline:8. Atlas-Based Label Annotation             ○ SKIP          Generate YOLO training labels from AAL3 atlas (Stage 7)
+INFO:pipeline:9. YOLO Training (ROI Detection)            ○ SKIP          Force retrain
+INFO:pipeline:10. Spatial Feature Extraction (12-region)   ○ SKIP          YOLO inference -> 3D spatial coords aggregation (Stage 9)
+INFO:pipeline:11. Temporal Feature Extraction              ○ SKIP          20 features per ROI: 8 time-domain + 12 frequency (Stage 11)
+INFO:pipeline:12. Feature Harmonization                    ○ SKIP          Fold-safe neuroHarmonize, protects DX_GROUP (Stage 12)
+INFO:pipeline:13. Pre-GNN Integrity                        ✓ WILL RUN      Validate dataset completeness per split (Stage 13)
+INFO:pipeline:14. Causal Graph Construction (12x12)        ○ SKIP          Granger causality/lagged correlation (Stage 14)
+INFO:pipeline:15. Multi-View Causal Graph Construction     ○ SKIP          Optional multi-view causal graph construction (Stage 15)
+INFO:pipeline:16. Pipeline Diagnostics                     ✓ WILL RUN      Comprehensive health report after graphs built (Stage 16)
+INFO:pipeline:17. Quality Validation (YOLO & Graph Sparsity) ✓ WILL RUN      YOLO quality, graph sparsity, stratification (Stage 17)
+INFO:pipeline:18. GNN Training (5-Fold CV)                 ✓ WILL RUN      Main training phase — 5-fold CV with GAT+GRL (Stage 18)
+INFO:pipeline:19. Generate Visualizations                  ✓ WILL RUN      Generate comprehensive visualizations (Phase 9 Reporting)
+INFO:pipeline:20. Causal Graph Visualization               ✓ WILL RUN      Render directed ASD-vs-Control causal graph comparison
+INFO:pipeline:21. Circular Connectome Visualization        ○ SKIP          Circular Connectome Visualization
+INFO:pipeline:22. 3D Brain Visualization (Nilearn)         ○ SKIP          3D Brain Visualization (Nilearn)
+INFO:pipeline:23. Comprehensive Evaluation                 ✓ WILL RUN      Ensemble evaluation, bootstrap CI, permutation test, subgroups (Phase 9.2)
+INFO:pipeline:24. Explainability                           ✓ WILL RUN      Node/edge importance, feature attribution, literature validation (Phase 8)
+INFO:pipeline:25. Result Interpretation & Analysis         ✓ WILL RUN      Per-subject predictions, misclassification analysis, site effects (Phase 9.3)
+INFO:pipeline:26. Subject-Level Analysis                   ✓ WILL RUN      Per-subject artifact diagnostics and summary report
+INFO:pipeline:27. Post-Fix Audit Check                     ✓ WILL RUN      Strict post-fix artifact validation
+INFO:pipeline:28. Developer Code Audit                     ✓ WILL RUN      Static code audit for consistency and legacy drift
+INFO:pipeline:29. Data Quality Experiments                 ✓ WILL RUN      Cross-site, bottleneck, and atlas-baseline audits
+INFO:pipeline:30. Ablation Studies                         ✓ WILL RUN      Controlled ablations (A-E) for signal-source attribution
+INFO:pipeline:31. Generate Paper Figures                   ✓ WILL RUN      Generate Paper Figures
+INFO:pipeline:======================================================================
+
+INFO:pipeline:⏭️  Skipping: ABIDE Download
+INFO:pipeline:⏭️  Skipping: Train/Val/Test Split (2D Stratified)
+INFO:pipeline:⏭️  Skipping: Generate Master Manifest
+INFO:pipeline:⏭️  Skipping: Site-Stratified CV Fold Assignment
+INFO:pipeline:Running: Atlas Validation
+INFO:__main__:============================================================
+INFO:__main__:ATLAS SETUP
+INFO:__main__:============================================================
+INFO:__main__:Scanning atlas directory: /home/nidszxh/Projects/Neuro-CXG/data/raw/atlases
+INFO:__main__:Checking AAL3v1.nii
+INFO:__main__:✓ Valid atlas | Shape=(91, 109, 91) | ROIs=166
+INFO:__main__:✓ Found valid atlas: /home/nidszxh/Projects/Neuro-CXG/data/raw/atlases/AAL3v1.nii
+INFO:__main__:✓ Using existing atlas: AAL3v1.nii
+INFO:__main__:✓ Metadata generated: /home/nidszxh/Projects/Neuro-CXG/data/metadata/atlas_metadata.json
+INFO:__main__:Atlas ready
+INFO:pipeline:Completed: Atlas Validation
+INFO:pipeline:Running: Pipeline Validation (Comprehensive Health Check)
+INFO:__main__:Starting comprehensive pipeline validation...
+INFO:__main__:======================================================================
+INFO:__main__:STAGE 1: ENVIRONMENT VALIDATION
+INFO:__main__:======================================================================
+INFO:__main__:[Environment] Python 3.12
+INFO:__main__:[Environment] CUDA available: NVIDIA GeForce RTX 4060 Laptop GPU
+INFO:__main__:[Environment] Feature dims: GNN_IN_CHANNELS=24 (18 temporal + 4 spatial + internal)
+INFO:__main__:Checking atlas...
+INFO:__main__:[Atlas] Atlas loaded: 166 ROIs
+INFO:__main__:Checking LOBE_MAPPING...
+INFO:__main__:[Config] LOBE_MAPPING valid: 12 lobes, 170 ROIs
+INFO:__main__:
+======================================================================
+INFO:__main__:STAGE 2: DATA VALIDATION
+INFO:__main__:======================================================================
+INFO:__main__:[Data] 1015 subjects with complete data
+INFO:__main__:Checking manifest...
+INFO:__main__:[Manifest] 1015 subjects across 3 splits
+INFO:__main__:
+======================================================================
+INFO:__main__:STAGE 3: FEATURE VALIDATION
+INFO:__main__:======================================================================
+INFO:__main__:[Features] Temporal features: 1015 subjects, 0.00% NaN
+WARNING:__main__:[Features] Brainstem spatial features are constant across all subjects (global detection fallback active)
+INFO:__main__:[Features] Spatial features: 1015/1015 complete (100.0%)
+INFO:__main__:[Features] Harmonized features: 1015 subjects, clean
+INFO:__main__:
+======================================================================
+INFO:__main__:STAGE 4: GRAPH VALIDATION
+INFO:__main__:======================================================================
+INFO:__main__:[Graphs] 1015 graphs — mean edges: 48.0, median: 48
+INFO:__main__:Checking stratification...
+INFO:__main__:[Stratification] No data leakage across 3 splits
+INFO:__main__:Checking CV fold balance...
+INFO:__main__:[Stratification] CV fold balance OK (max/min=1.01; counts=0:142, 1:142, 2:141, 3:141, 4:141)
+INFO:__main__:
+======================================================================
+INFO:__main__:STAGE 5: MODEL VALIDATION
+INFO:__main__:======================================================================
+INFO:__main__:[Models] 5 trained models found (validation results reported during training)
+INFO:__main__:
+======================================================================
+INFO:__main__:VALIDATION REPORT
+INFO:__main__:======================================================================
+WARNING:__main__:
+WARNINGS (1):
+WARNING:__main__:----------------------------------------------------------------------
+WARNING:__main__:  [Features] Brainstem spatial features are constant across all subjects (global detection fallback active)
+WARNING:__main__:    -> Suggestion: Audit YOLO class-11 detections and atlas fallback behavior before publication runs
+INFO:__main__:
+PASSED CHECKS (14):
+INFO:__main__:----------------------------------------------------------------------
+INFO:__main__:  Python 3.12
+INFO:__main__:  CUDA available: NVIDIA GeForce RTX 4060 Laptop GPU
+INFO:__main__:  Feature dims: GNN_IN_CHANNELS=24 (18 temporal + 4 spatial + internal)
+INFO:__main__:  Atlas loaded: 166 ROIs
+INFO:__main__:  LOBE_MAPPING valid: 12 lobes, 170 ROIs
+INFO:__main__:  1015 subjects with complete data
+INFO:__main__:  1015 subjects across 3 splits
+INFO:__main__:  Temporal features: 1015 subjects, 0.00% NaN
+INFO:__main__:  Spatial features: 1015/1015 complete (100.0%)
+INFO:__main__:  Harmonized features: 1015 subjects, clean
+INFO:__main__:  1015 graphs — mean edges: 48.0, median: 48
+INFO:__main__:  No data leakage across 3 splits
+INFO:__main__:  CV fold balance OK (max/min=1.01; counts=0:142, 1:142, 2:141, 3:141, 4:141)
+INFO:__main__:  5 trained models found (validation results reported during training)
+INFO:__main__:
+======================================================================
+INFO:__main__:SUMMARY:
+INFO:__main__:  Passed: 14
+INFO:__main__:  Warnings: 1
+INFO:__main__:  Critical: 0
+INFO:__main__:======================================================================
+INFO:__main__:
+Pipeline functional with warnings
+INFO:pipeline:Completed: Pipeline Validation (Comprehensive Health Check)
+INFO:pipeline:Running: Post-Download Integrity Check
+INFO:src.validation.pipeline_checks:Starting post-download integrity check...
+INFO:src.validation.pipeline_checks:Scanning 7105 images for integrity...
+INFO:src.validation.pipeline_checks:Scanning 2030 time-series files...
+WARNING:src.validation.pipeline_checks: [W] Pitt_0050007_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Pitt_0050011_ts.npy: 18 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Pitt_0050017_ts.npy: 13 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Pitt_0050041_ts.npy: 13 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Pitt_0050052_ts.npy: 15 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SDSU_0050210_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] CMU_b_0050643_ts.npy: 15 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] CMU_b_0050644_ts.npy: 18 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] CMU_b_0050648_ts.npy: 17 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] CMU_b_0050652_ts.npy: 17 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] CMU_b_0050655_ts.npy: 21 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] CMU_b_0050667_ts.npy: 18 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Leuven_1_0050705_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Leuven_1_0050706_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] MaxMun_a_0051364_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Caltech_0051457_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Caltech_0051466_ts.npy: 21 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Caltech_0051468_ts.npy: 15 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Caltech_0051483_ts.npy: 12 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Caltech_0051485_ts.npy: 20 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Caltech_0051490_ts.npy: 16 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051560_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051565_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051567_ts.npy: 12 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051568_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051569_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051571_ts.npy: 12 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051572_ts.npy: 13 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051578_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051579_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051580_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051582_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051584_ts.npy: 17 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Pitt_0050032_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SDSU_0050198_ts.npy: 12 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Caltech_0051459_ts.npy: 17 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Caltech_0051473_ts.npy: 20 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Caltech_0051489_ts.npy: 18 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051566_ts.npy: 17 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051583_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Pitt_0050035_ts.npy: 17 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Pitt_0050050_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Yale_0050605_ts.npy: 15 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] CMU_b_0050657_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] CMU_b_0050669_ts.npy: 13 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] Caltech_0051458_ts.npy: 20 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051558_ts.npy: 20 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051573_ts.npy: 11 empty ROIs (whole-column NaN) — may affect feature quality
+WARNING:src.validation.pipeline_checks: [W] SBL_0051577_ts.npy: 12 empty ROIs (whole-column NaN) — may affect feature quality
+INFO:src.validation.pipeline_checks:
+========================================
+INFO:src.validation.pipeline_checks:POST-DOWNLOAD INTEGRITY REPORT
+INFO:src.validation.pipeline_checks:========================================
+INFO:src.validation.pipeline_checks:Corrupted PNGs:      0
+INFO:src.validation.pipeline_checks:Corrupted NPYs:      0
+INFO:src.validation.pipeline_checks:Incomplete Subjects: 0 (Missing slices or TS)
+INFO:src.validation.pipeline_checks:----------------------------------------
+INFO:pipeline:Completed: Post-Download Integrity Check
+INFO:pipeline:⏭️  Skipping: Atlas-Based Label Annotation
+INFO:pipeline:⏭️  Skipping: YOLO Training (ROI Detection)
+INFO:pipeline:⏭️  Skipping: Spatial Feature Extraction (12-region)
+INFO:pipeline:⏭️  Skipping: Temporal Feature Extraction
+INFO:pipeline:⏭️  Skipping: Feature Harmonization
+INFO:pipeline:Running: Pre-GNN Integrity
+INFO:src.validation.pipeline_checks:Starting pre-GNN integrity check...
+INFO:src.validation.pipeline_checks:Dataset Completeness Report (Target: 7 slices/subject)
+INFO:src.validation.pipeline_checks:
+Split: TRAIN
+INFO:src.validation.pipeline_checks:  Total Subjects: 707
+INFO:src.validation.pipeline_checks:  ✓ 7 slices: 707 subjects
+INFO:src.validation.pipeline_checks:  ✓ Image/Label count matches (4949 files)
+INFO:src.validation.pipeline_checks:
+Split: VAL
+INFO:src.validation.pipeline_checks:  Total Subjects: 154
+INFO:src.validation.pipeline_checks:  ✓ 7 slices: 154 subjects
+INFO:src.validation.pipeline_checks:  ✓ Image/Label count matches (1078 files)
+INFO:src.validation.pipeline_checks:
+Split: TEST
+INFO:src.validation.pipeline_checks:  Total Subjects: 154
+INFO:src.validation.pipeline_checks:  ✓ 7 slices: 154 subjects
+INFO:src.validation.pipeline_checks:  ✓ Image/Label count matches (1078 files)
+INFO:src.validation.pipeline_checks:
+Pre-GNN integrity check complete.
+INFO:pipeline:Completed: Pre-GNN Integrity
+INFO:pipeline:⏭️  Skipping: Causal Graph Construction (12x12)
+INFO:pipeline:⏭️  Skipping: Multi-View Causal Graph Construction
+INFO:pipeline:Running: Pipeline Diagnostics
+INFO:src.validation.pipeline_checks:Loaded metadata: 1112 records
+INFO:src.validation.pipeline_checks:Found 7105 PNG slices from 1015 subjects
+INFO:src.validation.pipeline_checks:Matched 1015 subjects to metadata
+INFO:src.validation.pipeline_checks:
+========================================
+INFO:src.validation.pipeline_checks:         DATASET HEALTH REPORT          
+INFO:src.validation.pipeline_checks:========================================
+INFO:src.validation.pipeline_checks:Unique Subjects:   1015
+INFO:src.validation.pipeline_checks:Total PNG Slices:  7105
+INFO:src.validation.pipeline_checks:Avg Slices/Sub:    7.0 (Target: 7)
+INFO:src.validation.pipeline_checks:----------------------------------------
+INFO:src.validation.pipeline_checks:CLASS BALANCE
+INFO:src.validation.pipeline_checks:  Autism (ASD):     493
+INFO:src.validation.pipeline_checks:  Controls (TC):    522
+INFO:src.validation.pipeline_checks:  Ratio (ASD/TC):   0.94
+INFO:src.validation.pipeline_checks:----------------------------------------
+INFO:src.validation.pipeline_checks:DEMOGRAPHICS
+INFO:src.validation.pipeline_checks:  Avg Age:          16.8 years
+INFO:src.validation.pipeline_checks:  Sex Ratio (M/F):  860/155
+INFO:src.validation.pipeline_checks:----------------------------------------
+INFO:src.validation.pipeline_checks:TOP SITES
+INFO:src.validation.pipeline_checks:  NYU            : 175 subjects
+INFO:src.validation.pipeline_checks:  UM_1           : 106 subjects
+INFO:src.validation.pipeline_checks:  UCLA_1         : 72 subjects
+INFO:src.validation.pipeline_checks:  USM            : 71 subjects
+INFO:src.validation.pipeline_checks:  YALE           : 56 subjects
+INFO:src.validation.pipeline_checks:----------------------------------------
+INFO:src.validation.pipeline_checks:DATA COMPLETENESS
+INFO:src.validation.pipeline_checks:  All downloaded subjects have metadata
+INFO:src.validation.pipeline_checks:  All metadata subjects have images
+INFO:src.validation.pipeline_checks:----------------------------------------
+INFO:src.validation.pipeline_checks:SLICE DISTRIBUTION
+INFO:src.validation.pipeline_checks:  Complete (7 slices): 1015/1015
+INFO:src.validation.pipeline_checks:  All subjects have complete slice sets (7/7)
+INFO:src.validation.pipeline_checks:----------------------------------------
+INFO:src.validation.pipeline_checks:TIME SERIES FILES
+INFO:src.validation.pipeline_checks:  Time series files:  1015
+INFO:src.validation.pipeline_checks:  All downloaded subjects have time series
+INFO:src.validation.pipeline_checks:----------------------------------------
+INFO:src.validation.pipeline_checks:FEATURE EXTRACTION STATUS
+INFO:src.validation.pipeline_checks:  Spatial Features         : 1015 subjects
+INFO:src.validation.pipeline_checks:  Temporal Features        : 1015 subjects
+INFO:src.validation.pipeline_checks:  Harmonized Features      : 1015 subjects
+INFO:src.validation.pipeline_checks:----------------------------------------
+INFO:src.validation.pipeline_checks:GRAPH CONSTRUCTION STATUS
+INFO:src.validation.pipeline_checks:  Graph files:        1015
+INFO:src.validation.pipeline_checks:  Status:             Graphs constructed
+INFO:src.validation.pipeline_checks:
+========================================
+INFO:src.validation.pipeline_checks:Health report complete.
+INFO:pipeline:Completed: Pipeline Diagnostics
+INFO:pipeline:Running: Quality Validation (YOLO & Graph Sparsity)
+INFO:src.validation.pipeline_checks:Starting comprehensive pipeline validation...
+INFO:src.validation.pipeline_checks:======================================================================
+INFO:src.validation.pipeline_checks:STAGE 1: ENVIRONMENT VALIDATION
+INFO:src.validation.pipeline_checks:======================================================================
+INFO:src.validation.pipeline_checks:[Environment] Python 3.12
+INFO:src.validation.pipeline_checks:[Environment] CUDA available: NVIDIA GeForce RTX 4060 Laptop GPU
+INFO:src.validation.pipeline_checks:[Environment] Feature dims: GNN_IN_CHANNELS=24 (18 temporal + 4 spatial + internal)
+INFO:src.validation.pipeline_checks:Checking atlas...
+INFO:src.validation.pipeline_checks:[Atlas] Atlas loaded: 166 ROIs
+INFO:src.validation.pipeline_checks:Checking LOBE_MAPPING...
+INFO:src.validation.pipeline_checks:[Config] LOBE_MAPPING valid: 12 lobes, 170 ROIs
+INFO:src.validation.pipeline_checks:
+======================================================================
+INFO:src.validation.pipeline_checks:STAGE 2: DATA VALIDATION
+INFO:src.validation.pipeline_checks:======================================================================
+INFO:src.validation.pipeline_checks:[Data] 1015 subjects with complete data
+INFO:src.validation.pipeline_checks:Checking manifest...
+INFO:src.validation.pipeline_checks:[Manifest] 1015 subjects across 3 splits
+INFO:src.validation.pipeline_checks:
+======================================================================
+INFO:src.validation.pipeline_checks:STAGE 3: FEATURE VALIDATION
+INFO:src.validation.pipeline_checks:======================================================================
+INFO:src.validation.pipeline_checks:[Features] Temporal features: 1015 subjects, 0.00% NaN
+WARNING:src.validation.pipeline_checks:[Features] Brainstem spatial features are constant across all subjects (global detection fallback active)
+INFO:src.validation.pipeline_checks:[Features] Spatial features: 1015/1015 complete (100.0%)
+INFO:src.validation.pipeline_checks:[Features] Harmonized features: 1015 subjects, clean
+INFO:src.validation.pipeline_checks:
+======================================================================
+INFO:src.validation.pipeline_checks:STAGE 4: GRAPH VALIDATION
+INFO:src.validation.pipeline_checks:======================================================================
+INFO:src.validation.pipeline_checks:[Graphs] 1015 graphs — mean edges: 48.0, median: 48
+INFO:src.validation.pipeline_checks:Checking stratification...
+INFO:src.validation.pipeline_checks:[Stratification] No data leakage across 3 splits
+INFO:src.validation.pipeline_checks:Checking CV fold balance...
+INFO:src.validation.pipeline_checks:[Stratification] CV fold balance OK (max/min=1.01; counts=0:142, 1:142, 2:141, 3:141, 4:141)
+INFO:src.validation.pipeline_checks:
+======================================================================
+INFO:src.validation.pipeline_checks:STAGE 5: MODEL VALIDATION
+INFO:src.validation.pipeline_checks:======================================================================
+INFO:src.validation.pipeline_checks:[Models] 5 trained models found (validation results reported during training)
+INFO:src.validation.pipeline_checks:
+======================================================================
+INFO:src.validation.pipeline_checks:VALIDATION REPORT
+INFO:src.validation.pipeline_checks:======================================================================
+WARNING:src.validation.pipeline_checks:
+WARNINGS (1):
+WARNING:src.validation.pipeline_checks:----------------------------------------------------------------------
+WARNING:src.validation.pipeline_checks:  [Features] Brainstem spatial features are constant across all subjects (global detection fallback active)
+WARNING:src.validation.pipeline_checks:    -> Suggestion: Audit YOLO class-11 detections and atlas fallback behavior before publication runs
+INFO:src.validation.pipeline_checks:
+PASSED CHECKS (14):
+INFO:src.validation.pipeline_checks:----------------------------------------------------------------------
+INFO:src.validation.pipeline_checks:  Python 3.12
+INFO:src.validation.pipeline_checks:  CUDA available: NVIDIA GeForce RTX 4060 Laptop GPU
+INFO:src.validation.pipeline_checks:  Feature dims: GNN_IN_CHANNELS=24 (18 temporal + 4 spatial + internal)
+INFO:src.validation.pipeline_checks:  Atlas loaded: 166 ROIs
+INFO:src.validation.pipeline_checks:  LOBE_MAPPING valid: 12 lobes, 170 ROIs
+INFO:src.validation.pipeline_checks:  1015 subjects with complete data
+INFO:src.validation.pipeline_checks:  1015 subjects across 3 splits
+INFO:src.validation.pipeline_checks:  Temporal features: 1015 subjects, 0.00% NaN
+INFO:src.validation.pipeline_checks:  Spatial features: 1015/1015 complete (100.0%)
+INFO:src.validation.pipeline_checks:  Harmonized features: 1015 subjects, clean
+INFO:src.validation.pipeline_checks:  1015 graphs — mean edges: 48.0, median: 48
+INFO:src.validation.pipeline_checks:  No data leakage across 3 splits
+INFO:src.validation.pipeline_checks:  CV fold balance OK (max/min=1.01; counts=0:142, 1:142, 2:141, 3:141, 4:141)
+INFO:src.validation.pipeline_checks:  5 trained models found (validation results reported during training)
+INFO:src.validation.pipeline_checks:
+======================================================================
+INFO:src.validation.pipeline_checks:SUMMARY:
+INFO:src.validation.pipeline_checks:  Passed: 14
+INFO:src.validation.pipeline_checks:  Warnings: 1
+INFO:src.validation.pipeline_checks:  Critical: 0
+INFO:src.validation.pipeline_checks:======================================================================
+INFO:src.validation.pipeline_checks:
+Pipeline functional with warnings
+INFO:pipeline:Completed: Quality Validation (YOLO & Graph Sparsity)
+INFO:src.core.validators:Validating GNN training inputs...
+INFO:src.core.validators:  Found 1015 graph files
+INFO:src.core.validators:GNN training inputs validated
+INFO:pipeline:Running: GNN Training (5-Fold CV)
+INFO:__main__:Using CLI-provided seed: 42
+INFO:__main__:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:src.features.graph_factory:  Temporal features: node_attributes_harmonized.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Excluded 20 hard-coded corrupted subjects: ['CMU_b_0050645', 'CMU_b_0050651', 'CMU_b_0050658', 'Caltech_0051460', 'Caltech_0051464', 'Caltech_0051467', 'Caltech_0051469', 'Caltech_0051471', 'Caltech_0051472', 'Caltech_0051478', 'Caltech_0051486', 'Caltech_0051491', 'Pitt_0050045', 'SBL_0051575', 'SDSU_0050184', 'SDSU_0050192', 'SDSU_0050195', 'SDSU_0050204', 'SDSU_0050209', 'SDSU_0050216']
+INFO:src.features.graph_factory:Subject alignment summary: available=1015, valid=1015, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized train dataset with 707 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:Graph quality: degenerate=0/707 (0.0%; edge<threshold or dead-lobe), threshold=12, mean_edges=48.02, mean_dead_lobes=0.00
+INFO:src.analysis.diagnostics:TrainingMonitor initialised — output: /home/nidszxh/Projects/Neuro-CXG/results/experiments/training, folds: 5
+INFO:__main__:
+======================================================================
+INFO:__main__:GNN TRAINING - 5-FOLD CROSS-VALIDATION (default)
+INFO:__main__:======================================================================
+INFO:__main__:Total subjects: 707 (curated ABIDE-I cohort)
+INFO:__main__:OneCycle max LR: 0.001
+INFO:__main__:Hidden channels: 48
+INFO:__main__:Input features: 24 (registry count=24)
+INFO:__main__:Site conditioning: True
+INFO:__main__:Demographics: True
+INFO:__main__:GRL enabled: True (alpha_max=0.10)
+INFO:__main__:Early stopping patience: 50
+INFO:__main__:Loss: FocalLoss (α=0.5, γ=1.5, class_weights=False)
+INFO:__main__:Threshold policy: youden
+INFO:__main__:Fold preprocessing mode: wave1
+INFO:__main__:Wave-1 preprocessing: MI feature selection=False (0.30-0.60), normalization=within_site
+INFO:__main__:Aux losses: structural_dropout=0.000, edge_contrastive=0.000, invariance=0.000, spatial_invariance=0.000
+INFO:__main__:======================================================================
+
+INFO:__main__:No multi-view graphs detected — training falls back to standard single-view objective.
+INFO:__main__:Detected 20 unique site IDs in training split (classifier size=20)
+INFO:__main__:
+======================================================================
+INFO:__main__:FOLD 1/5
+INFO:__main__:======================================================================
+INFO:__main__:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:src.features.graph_factory:  Temporal features: harmonized_fold_0.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Subject alignment summary: available=707, valid=707, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized train dataset with 707 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:Using fold-specific harmonized features: /home/nidszxh/Projects/Neuro-CXG/data/metadata/harmonized_folds_cv/harmonized_fold_0.csv
+INFO:__main__:Train: Control=273, ASD=292
+INFO:__main__:Val: Control=69, ASD=73
+INFO:__main__:Applied fold within-site normalization (train-fit only, 20 site profiles)
+INFO:src.models.training_utils:Early stopping triggered after 50 epochs without improvement
+INFO:src.models.training_utils:Fold 0: early stopping at epoch 85 (min_epochs=30, patience=50)
+INFO:__main__:Epoch 010 | LR: 0.000560 | Loss: 0.5530 | AUC: 0.6192 | AUPRC: 0.6425 | F1@0.48: 0.6626
+INFO:__main__:Epoch 020 | LR: 0.001000 | Loss: 0.3863 | AUC: 0.7421 | AUPRC: 0.7249 | F1@0.59: 0.7050
+INFO:__main__:Epoch 030 | LR: 0.000954 | Loss: 0.2850 | AUC: 0.7717 | AUPRC: 0.7830 | F1@0.30: 0.7722
+INFO:__main__:Epoch 040 | LR: 0.000839 | Loss: 0.4863 | AUC: 0.7739 | AUPRC: 0.7764 | F1@0.27: 0.7574
+INFO:__main__:Epoch 050 | LR: 0.000673 | Loss: 0.4590 | AUC: 0.7987 | AUPRC: 0.7969 | F1@0.78: 0.7368
+INFO:__main__:Epoch 060 | LR: 0.000480 | Loss: 0.4586 | AUC: 0.7725 | AUPRC: 0.7660 | F1@0.88: 0.6721
+INFO:__main__:Epoch 070 | LR: 0.000291 | Loss: 0.4199 | AUC: 0.7677 | AUPRC: 0.7692 | F1@0.61: 0.7222
+INFO:__main__:Epoch 080 | LR: 0.000133 | Loss: 0.4062 | AUC: 0.7703 | AUPRC: 0.7754 | F1@0.67: 0.7361
+INFO:src.models.training_utils:✓ Saved checkpoint: best_model_fold0.pt (epoch 35, auc=0.8046)
+INFO:__main__:✓ Best fold 0: AUC=0.8046, AUPRC=0.8097, F1=0.6992
+INFO:__main__:
+Fold 1 Final Results:
+INFO:__main__:  Best epoch: 35
+INFO:__main__:  Training time: 28.7s
+INFO:__main__:  AUC: 0.8046
+INFO:__main__:  F1: 0.6992 (threshold=0.590)
+INFO:__main__:  Accuracy: 0.7394
+INFO:__main__:  Confusion Matrix:
+INFO:__main__:    [[62  7]
+ [30 43]]
+INFO:__main__:
+Generating fold visualizations...
+INFO:src.analysis.diagnostics:Training curves saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_0.png
+INFO:__main__:  Training curves saved to: /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_0.png
+INFO:src.analysis.diagnostics:Training history saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/training_history_fold0.json
+INFO:__main__:  Training history saved to: /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/training_history_fold0.json
+INFO:__main__:
+======================================================================
+INFO:__main__:FOLD 2/5
+INFO:__main__:======================================================================
+INFO:__main__:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:src.features.graph_factory:  Temporal features: harmonized_fold_1.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Subject alignment summary: available=707, valid=707, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized train dataset with 707 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:Using fold-specific harmonized features: /home/nidszxh/Projects/Neuro-CXG/data/metadata/harmonized_folds_cv/harmonized_fold_1.csv
+INFO:__main__:Train: Control=272, ASD=293
+INFO:__main__:Val: Control=70, ASD=72
+INFO:__main__:Applied fold within-site normalization (train-fit only, 20 site profiles)
+INFO:src.models.training_utils:Early stopping triggered after 50 epochs without improvement
+INFO:src.models.training_utils:Fold 1: early stopping at epoch 84 (min_epochs=30, patience=50)
+INFO:__main__:Epoch 010 | LR: 0.000560 | Loss: 0.5532 | AUC: 0.6673 | AUPRC: 0.6889 | F1@0.56: 0.5000
+INFO:__main__:Epoch 020 | LR: 0.001000 | Loss: 0.4006 | AUC: 0.6933 | AUPRC: 0.6790 | F1@0.60: 0.6571
+INFO:__main__:Epoch 030 | LR: 0.000954 | Loss: 0.3186 | AUC: 0.7383 | AUPRC: 0.6844 | F1@0.43: 0.7211
+INFO:__main__:Epoch 040 | LR: 0.000839 | Loss: 0.3912 | AUC: 0.7030 | AUPRC: 0.6791 | F1@0.50: 0.6761
+INFO:__main__:Epoch 050 | LR: 0.000673 | Loss: 0.4484 | AUC: 0.6952 | AUPRC: 0.6730 | F1@0.47: 0.7073
+INFO:__main__:Epoch 060 | LR: 0.000480 | Loss: 0.4445 | AUC: 0.7268 | AUPRC: 0.7011 | F1@0.19: 0.7170
+INFO:__main__:Epoch 070 | LR: 0.000291 | Loss: 0.4242 | AUC: 0.7335 | AUPRC: 0.7055 | F1@0.26: 0.7219
+INFO:__main__:Epoch 080 | LR: 0.000133 | Loss: 0.4136 | AUC: 0.7355 | AUPRC: 0.7099 | F1@0.82: 0.6715
+INFO:src.models.training_utils:✓ Saved checkpoint: best_model_fold1.pt (epoch 34, auc=0.7450)
+INFO:__main__:✓ Best fold 1: AUC=0.7450, AUPRC=0.7096, F1=0.7222
+INFO:__main__:
+Fold 2 Final Results:
+INFO:__main__:  Best epoch: 34
+INFO:__main__:  Training time: 29.5s
+INFO:__main__:  AUC: 0.7450
+INFO:__main__:  F1: 0.7222 (threshold=0.599)
+INFO:__main__:  Accuracy: 0.7183
+INFO:__main__:  Confusion Matrix:
+INFO:__main__:    [[50 20]
+ [20 52]]
+INFO:__main__:
+Generating fold visualizations...
+INFO:src.analysis.diagnostics:Training curves saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_1.png
+INFO:__main__:  Training curves saved to: /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_1.png
+INFO:src.analysis.diagnostics:Training history saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/training_history_fold1.json
+INFO:__main__:  Training history saved to: /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/training_history_fold1.json
+INFO:__main__:
+======================================================================
+INFO:__main__:FOLD 3/5
+INFO:__main__:======================================================================
+INFO:__main__:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:src.features.graph_factory:  Temporal features: harmonized_fold_2.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Subject alignment summary: available=707, valid=707, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized train dataset with 707 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:Using fold-specific harmonized features: /home/nidszxh/Projects/Neuro-CXG/data/metadata/harmonized_folds_cv/harmonized_fold_2.csv
+INFO:__main__:Train: Control=275, ASD=291
+INFO:__main__:Val: Control=67, ASD=74
+INFO:__main__:Applied fold within-site normalization (train-fit only, 20 site profiles)
+INFO:src.models.training_utils:Early stopping triggered after 50 epochs without improvement
+INFO:src.models.training_utils:Fold 2: early stopping at epoch 92 (min_epochs=30, patience=50)
+INFO:__main__:Epoch 010 | LR: 0.000560 | Loss: 0.5504 | AUC: 0.6684 | AUPRC: 0.6494 | F1@0.53: 0.6061
+INFO:__main__:Epoch 020 | LR: 0.001000 | Loss: 0.3791 | AUC: 0.7929 | AUPRC: 0.8054 | F1@0.53: 0.7353
+INFO:__main__:Epoch 030 | LR: 0.000954 | Loss: 0.2651 | AUC: 0.8326 | AUPRC: 0.8404 | F1@0.49: 0.8070
+INFO:__main__:Epoch 040 | LR: 0.000839 | Loss: 0.4372 | AUC: 0.7745 | AUPRC: 0.8099 | F1@0.76: 0.6562
+INFO:__main__:Epoch 050 | LR: 0.000673 | Loss: 0.4512 | AUC: 0.7955 | AUPRC: 0.8140 | F1@0.54: 0.7755
+INFO:__main__:Epoch 060 | LR: 0.000480 | Loss: 0.4435 | AUC: 0.7955 | AUPRC: 0.7692 | F1@0.66: 0.7778
+INFO:__main__:Epoch 070 | LR: 0.000291 | Loss: 0.4267 | AUC: 0.7791 | AUPRC: 0.7475 | F1@0.47: 0.7671
+INFO:__main__:Epoch 080 | LR: 0.000133 | Loss: 0.4214 | AUC: 0.7814 | AUPRC: 0.7640 | F1@0.38: 0.7651
+INFO:__main__:Epoch 090 | LR: 0.000031 | Loss: 0.4186 | AUC: 0.7854 | AUPRC: 0.7782 | F1@0.38: 0.7712
+INFO:src.models.training_utils:✓ Saved checkpoint: best_model_fold2.pt (epoch 42, auc=0.8524)
+INFO:__main__:✓ Best fold 2: AUC=0.8524, AUPRC=0.8698, F1=0.8052
+INFO:__main__:
+Fold 3 Final Results:
+INFO:__main__:  Best epoch: 42
+INFO:__main__:  Training time: 33.2s
+INFO:__main__:  AUC: 0.8524
+INFO:__main__:  F1: 0.8129 (threshold=0.288)
+INFO:__main__:  Accuracy: 0.7943
+INFO:__main__:  Confusion Matrix:
+INFO:__main__:    [[49 18]
+ [11 63]]
+INFO:__main__:
+Generating fold visualizations...
+INFO:src.analysis.diagnostics:Training curves saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_2.png
+INFO:__main__:  Training curves saved to: /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_2.png
+INFO:src.analysis.diagnostics:Training history saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/training_history_fold2.json
+INFO:__main__:  Training history saved to: /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/training_history_fold2.json
+INFO:__main__:
+======================================================================
+INFO:__main__:FOLD 4/5
+INFO:__main__:======================================================================
+INFO:__main__:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:src.features.graph_factory:  Temporal features: harmonized_fold_3.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Subject alignment summary: available=707, valid=707, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized train dataset with 707 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:Using fold-specific harmonized features: /home/nidszxh/Projects/Neuro-CXG/data/metadata/harmonized_folds_cv/harmonized_fold_3.csv
+INFO:__main__:Train: Control=274, ASD=292
+INFO:__main__:Val: Control=68, ASD=73
+INFO:__main__:Applied fold within-site normalization (train-fit only, 20 site profiles)
+INFO:src.models.training_utils:Early stopping triggered after 50 epochs without improvement
+INFO:src.models.training_utils:Fold 3: early stopping at epoch 84 (min_epochs=30, patience=50)
+INFO:__main__:Epoch 010 | LR: 0.000560 | Loss: 0.5463 | AUC: 0.6203 | AUPRC: 0.6536 | F1@0.51: 0.6301
+INFO:__main__:Epoch 020 | LR: 0.001000 | Loss: 0.3630 | AUC: 0.7617 | AUPRC: 0.7915 | F1@0.54: 0.7092
+INFO:__main__:Epoch 030 | LR: 0.000954 | Loss: 0.2932 | AUC: 0.7556 | AUPRC: 0.7869 | F1@0.56: 0.7451
+INFO:__main__:Epoch 040 | LR: 0.000839 | Loss: 0.3842 | AUC: 0.7573 | AUPRC: 0.7676 | F1@0.51: 0.7285
+INFO:__main__:Epoch 050 | LR: 0.000673 | Loss: 0.4979 | AUC: 0.7575 | AUPRC: 0.7589 | F1@0.64: 0.6667
+INFO:__main__:Epoch 060 | LR: 0.000480 | Loss: 0.4441 | AUC: 0.7466 | AUPRC: 0.7547 | F1@0.26: 0.7237
+INFO:__main__:Epoch 070 | LR: 0.000291 | Loss: 0.4242 | AUC: 0.7454 | AUPRC: 0.7467 | F1@0.81: 0.6667
+INFO:__main__:Epoch 080 | LR: 0.000133 | Loss: 0.4142 | AUC: 0.7367 | AUPRC: 0.7313 | F1@0.24: 0.7172
+INFO:src.models.training_utils:✓ Saved checkpoint: best_model_fold3.pt (epoch 34, auc=0.7959)
+INFO:__main__:✓ Best fold 3: AUC=0.7959, AUPRC=0.8210, F1=0.7432
+INFO:__main__:
+Fold 4 Final Results:
+INFO:__main__:  Best epoch: 34
+INFO:__main__:  Training time: 30.4s
+INFO:__main__:  AUC: 0.7959
+INFO:__main__:  F1: 0.7432 (threshold=0.508)
+INFO:__main__:  Accuracy: 0.7305
+INFO:__main__:  Confusion Matrix:
+INFO:__main__:    [[48 20]
+ [18 55]]
+INFO:__main__:
+Generating fold visualizations...
+INFO:src.analysis.diagnostics:Training curves saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_3.png
+INFO:__main__:  Training curves saved to: /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_3.png
+INFO:src.analysis.diagnostics:Training history saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/training_history_fold3.json
+INFO:__main__:  Training history saved to: /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/training_history_fold3.json
+INFO:__main__:
+======================================================================
+INFO:__main__:FOLD 5/5
+INFO:__main__:======================================================================
+INFO:__main__:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:src.features.graph_factory:  Temporal features: harmonized_fold_4.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Subject alignment summary: available=707, valid=707, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized train dataset with 707 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:Using fold-specific harmonized features: /home/nidszxh/Projects/Neuro-CXG/data/metadata/harmonized_folds_cv/harmonized_fold_4.csv
+INFO:__main__:Train: Control=274, ASD=292
+INFO:__main__:Val: Control=68, ASD=73
+INFO:__main__:Applied fold within-site normalization (train-fit only, 20 site profiles)
+INFO:src.models.training_utils:Early stopping triggered after 50 epochs without improvement
+INFO:src.models.training_utils:Fold 4: early stopping at epoch 90 (min_epochs=30, patience=50)
+INFO:__main__:Epoch 010 | LR: 0.000560 | Loss: 0.5467 | AUC: 0.7154 | AUPRC: 0.7486 | F1@0.49: 0.7170
+INFO:__main__:Epoch 020 | LR: 0.001000 | Loss: 0.3407 | AUC: 0.8060 | AUPRC: 0.8265 | F1@0.58: 0.7234
+INFO:__main__:Epoch 030 | LR: 0.000954 | Loss: 0.2555 | AUC: 0.8576 | AUPRC: 0.8540 | F1@0.66: 0.7737
+INFO:__main__:Epoch 040 | LR: 0.000839 | Loss: 0.4469 | AUC: 0.8886 | AUPRC: 0.8884 | F1@0.48: 0.8366
+INFO:__main__:Epoch 050 | LR: 0.000673 | Loss: 0.4720 | AUC: 0.8699 | AUPRC: 0.8746 | F1@0.14: 0.8333
+INFO:__main__:Epoch 060 | LR: 0.000480 | Loss: 0.4267 | AUC: 0.8826 | AUPRC: 0.8809 | F1@0.14: 0.8280
+INFO:__main__:Epoch 070 | LR: 0.000291 | Loss: 0.4224 | AUC: 0.8646 | AUPRC: 0.8660 | F1@0.24: 0.8000
+INFO:__main__:Epoch 080 | LR: 0.000133 | Loss: 0.4027 | AUC: 0.8678 | AUPRC: 0.8708 | F1@0.23: 0.8182
+INFO:__main__:Epoch 090 | LR: 0.000031 | Loss: 0.3968 | AUC: 0.8680 | AUPRC: 0.8739 | F1@0.45: 0.8028
+INFO:src.models.training_utils:✓ Saved checkpoint: best_model_fold4.pt (epoch 40, auc=0.8886)
+INFO:__main__:✓ Best fold 4: AUC=0.8886, AUPRC=0.8884, F1=0.8366
+INFO:__main__:
+Fold 5 Final Results:
+INFO:__main__:  Best epoch: 40
+INFO:__main__:  Training time: 32.6s
+INFO:__main__:  AUC: 0.8886
+INFO:__main__:  F1: 0.8366 (threshold=0.477)
+INFO:__main__:  Accuracy: 0.8227
+INFO:__main__:  Confusion Matrix:
+INFO:__main__:    [[52 16]
+ [ 9 64]]
+INFO:__main__:
+Generating fold visualizations...
+INFO:src.analysis.diagnostics:Training curves saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_4.png
+INFO:__main__:  Training curves saved to: /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_4.png
+INFO:src.analysis.diagnostics:Training history saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/training_history_fold4.json
+INFO:__main__:  Training history saved to: /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/training_history_fold4.json
+INFO:src.models.training_utils:
+======================================================================
+INFO:src.models.training_utils:FINAL CROSS-VALIDATION RESULTS
+INFO:src.models.training_utils:======================================================================
+INFO:src.models.training_utils:Mean AUC: 0.8173 ± 0.0493
+INFO:src.models.training_utils:Mean F1: 0.7628 ± 0.0530
+INFO:src.models.training_utils:Mean Accuracy: 0.7611 ± 0.0403
+INFO:src.models.training_utils:Mean Threshold: 0.492
+INFO:src.models.training_utils:Mean Best Epoch: 37.0
+INFO:src.models.training_utils:
+Per-fold AUCs: ['0.8046', '0.7450', '0.8524', '0.7959', '0.8886']
+INFO:src.models.training_utils:Per-fold F1s: ['0.6992', '0.7222', '0.8129', '0.7432', '0.8366']
+INFO:src.models.training_utils:Per-fold Best Epochs: [35, 34, 42, 34, 40]
+INFO:src.models.training_utils:======================================================================
+
+INFO:__main__:Per-site validation AUC variance (default): 0.015388 from 19 site-level AUC values
+INFO:__main__:
+======================================================================
+INFO:__main__:POST-TRAINING ANALYSIS
+INFO:__main__:======================================================================
+
+INFO:__main__:Running feature attribution analysis...
+INFO:src.features.graph_factory:  Temporal features: node_attributes_harmonized.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Subject alignment summary: available=1015, valid=1015, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized test dataset with 154 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:src.models.training_utils:Loaded fold preprocessing metadata from best_model_fold0.pt
+INFO:src.models.training_utils:Loaded checkpoint: best_model_fold0.pt (epoch 35)
+INFO:src.analysis.feature_attribution:FeatureAttributionAnalyzer initialized
+INFO:src.analysis.feature_attribution:  Device: cuda
+INFO:src.analysis.feature_attribution:  Features: 24
+INFO:src.analysis.feature_attribution:Computing feature attributions...
+INFO:src.analysis.feature_attribution:  Method: Gradient-based Saliency
+Computing attributions: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 5/5 [00:00<00:00, 23.34it/s]
+INFO:src.analysis.feature_attribution:Successfully computed 5 batch attributions, 0 failed
+INFO:src.analysis.feature_attribution:Computed attributions for 154 samples
+INFO:src.analysis.feature_attribution:Creating feature importance heatmap...
+INFO:src.analysis.feature_attribution:Heatmap saved to /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/features/feature_importance.png
+INFO:__main__:  Feature importance plot saved to: /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/features/feature_importance.png
+INFO:__main__:
+Running causal graph analysis...
+INFO:src.analysis.diagnostics:CausalGraphAnalyzer initialised — dir: /home/nidszxh/Projects/Neuro-CXG/data/processed/causal_graphs, subjects: 1015
+INFO:src.analysis.diagnostics:Computing properties for 1015 graphs…
+Graph properties: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 1015/1015 [00:01<00:00, 658.38it/s]
+INFO:src.analysis.diagnostics:Computed properties for 1015 graphs
+INFO:src.analysis.diagnostics:Comparing ASD vs Control graph topology…
+INFO:src.analysis.diagnostics:  ASD: 522, Control: 493
+
+======================================================================
+GRAPH TOPOLOGY COMPARISON (ASD vs CONTROL)
+======================================================================
+
+Num Edges:
+  ASD:     48.1303 ± 2.7817
+  Control: 47.9351 ± 2.7653
+  Mann-Whitney U=133531.50, p=0.2947, d=0.070
+
+Density:
+  ASD:     0.3646 ± 0.0211
+  Control: 0.3631 ± 0.0209
+  Mann-Whitney U=133531.50, p=0.2947, d=0.070
+
+Avg Clustering:
+  ASD:     0.5389 ± 0.0731
+  Control: 0.5390 ± 0.0724
+  Mann-Whitney U=129792.50, p=0.8105, d=-0.002
+
+Frontal Superior In Degree:
+  ASD:     4.3084 ± 1.2467
+  Control: 4.2718 ± 1.2363
+  Mann-Whitney U=130958.00, p=0.6111, d=0.029
+
+Frontal Superior Out Degree:
+  ASD:     4.4904 ± 1.3621
+  Control: 4.4828 ± 1.3594
+  Mann-Whitney U=129065.50, p=0.9310, d=0.006
+
+Frontal Orbital In Degree:
+  ASD:     4.0709 ± 1.1715
+  Control: 3.9939 ± 1.2160
+  Mann-Whitney U=135565.50, p=0.1179, d=0.064
+
+Frontal Orbital Out Degree:
+  ASD:     3.9502 ± 1.1062
+  Control: 3.9574 ± 1.1269
+  Mann-Whitney U=128519.00, p=0.9721, d=-0.006
+
+Motor Premotor In Degree:
+  ASD:     4.5326 ± 1.4087
+  Control: 4.4037 ± 1.3381
+  Mann-Whitney U=135029.00, p=0.1603, d=0.094
+
+Motor Premotor Out Degree:
+  ASD:     4.2893 ± 1.3053
+  Control: 4.1826 ± 1.1671
+  Mann-Whitney U=132599.00, p=0.3812, d=0.086
+
+Insula In Degree:
+  ASD:     4.1226 ± 1.1664
+  Control: 4.1440 ± 1.2633
+  Mann-Whitney U=129654.50, p=0.8256, d=-0.018
+
+Insula Out Degree:
+  ASD:     4.2241 ± 1.1864
+  Control: 4.1075 ± 1.1459
+  Mann-Whitney U=136098.00, p=0.0966, d=0.100
+
+Cingulate In Degree:
+  ASD:     3.9004 ± 1.0512
+  Control: 3.8803 ± 1.0368
+  Mann-Whitney U=130038.00, p=0.7543, d=0.019
+
+Cingulate Out Degree:
+  ASD:     3.9962 ± 1.1055
+  Control: 3.9270 ± 1.1118
+  Mann-Whitney U=134272.00, p=0.2014, d=0.062
+
+Limbic In Degree:
+  ASD:     4.0651 ± 1.2684
+  Control: 4.0791 ± 1.1726
+  Mann-Whitney U=124805.00, p=0.3818, d=-0.011
+
+Limbic Out Degree:
+  ASD:     3.9061 ± 1.1450
+  Control: 3.9959 ± 1.1465
+  Mann-Whitney U=122125.00, p=0.1336, d=-0.078
+
+Occipital In Degree:
+  ASD:     3.7337 ± 0.9748
+  Control: 3.7890 ± 1.0031
+  Mann-Whitney U=125382.00, p=0.4394, d=-0.056
+
+Occipital Out Degree:
+  ASD:     3.8276 ± 1.0903
+  Control: 3.7992 ± 1.1170
+  Mann-Whitney U=132705.00, p=0.3449, d=0.026
+
+Parietal In Degree:
+  ASD:     4.2682 ± 1.2884
+  Control: 4.1663 ± 1.2370
+  Mann-Whitney U=134068.50, p=0.2280, d=0.081
+
+Parietal Out Degree:
+  ASD:     4.3467 ± 1.3162
+  Control: 4.3124 ± 1.3037
+  Mann-Whitney U=130711.00, p=0.6507, d=0.026
+
+Temporal In Degree:
+  ASD:     3.9253 ± 1.0917
+  Control: 4.0122 ± 1.1674
+  Mann-Whitney U=123691.50, p=0.2560, d=-0.077
+
+Temporal Out Degree:
+  ASD:     4.0326 ± 1.1926
+  Control: 4.0304 ± 1.2173
+  Mann-Whitney U=128622.00, p=0.9908, d=0.002
+
+Subcortical In Degree:
+  ASD:     3.8027 ± 1.0419
+  Control: 3.7465 ± 1.0613
+  Mann-Whitney U=134076.00, p=0.2027, d=0.053
+
+Subcortical Out Degree:
+  ASD:     3.7893 ± 1.0457
+  Control: 3.8519 ± 1.0848
+  Mann-Whitney U=124839.00, p=0.3716, d=-0.059
+
+Cerebellum In Degree:
+  ASD:     3.9885 ± 1.1379
+  Control: 4.0365 ± 1.2378
+  Mann-Whitney U=127781.50, p=0.8395, d=-0.040
+
+Cerebellum Out Degree:
+  ASD:     3.8927 ± 1.0845
+  Control: 3.9331 ± 1.1768
+  Mann-Whitney U=128592.00, p=0.9852, d=-0.036
+
+Brainstem In Degree:
+  ASD:     3.4119 ± 0.7408
+  Control: 3.4118 ± 0.7609
+  Mann-Whitney U=129427.00, p=0.8402, d=0.000
+
+Brainstem Out Degree:
+  ASD:     3.3851 ± 0.7970
+  Control: 3.3550 ± 0.6873
+  Mann-Whitney U=128233.50, p=0.9023, d=0.040
+======================================================================
+
+INFO:src.analysis.diagnostics:Topology comparison saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/graphs/topology_comparison.png
+INFO:__main__:  Graph analysis plots saved to: /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/graphs
+INFO:__main__:
+======================================================================
+INFO:__main__:TRAINING AND ANALYSIS COMPLETE
+INFO:__main__:======================================================================
+
+INFO:pipeline:Completed: GNN Training (5-Fold CV)
+INFO:pipeline:Running: Generate Visualizations
+INFO:__main__:============================================================
+INFO:__main__:NEURO-CXG VISUALIZATION PIPELINE
+INFO:__main__:============================================================
+INFO:__main__:Output directory: /home/nidszxh/Projects/Neuro-CXG/results/visualizations
+INFO:__main__:Running advanced feature importance analysis...
+INFO:src.features.graph_factory:  Temporal features: node_attributes_harmonized.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Excluded 20 hard-coded corrupted subjects: ['CMU_b_0050645', 'CMU_b_0050651', 'CMU_b_0050658', 'Caltech_0051460', 'Caltech_0051464', 'Caltech_0051467', 'Caltech_0051469', 'Caltech_0051471', 'Caltech_0051472', 'Caltech_0051478', 'Caltech_0051486', 'Caltech_0051491', 'Pitt_0050045', 'SBL_0051575', 'SDSU_0050184', 'SDSU_0050192', 'SDSU_0050195', 'SDSU_0050204', 'SDSU_0050209', 'SDSU_0050216']
+INFO:src.features.graph_factory:Subject alignment summary: available=1015, valid=1015, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized test dataset with 154 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:src.analysis.feature_attribution:FeatureAttributionAnalyzer initialized
+INFO:src.analysis.feature_attribution:  Device: cuda
+INFO:src.analysis.feature_attribution:  Features: 24
+INFO:src.analysis.feature_attribution:Computing feature attributions...
+INFO:src.analysis.feature_attribution:  Method: Gradient-based Saliency
+Computing attributions: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 5/5 [00:00<00:00, 11.60it/s]
+INFO:src.analysis.feature_attribution:Successfully computed 5 batch attributions, 0 failed
+INFO:src.analysis.feature_attribution:Computed attributions for 154 samples
+INFO:src.analysis.feature_attribution:Creating feature importance heatmap...
+INFO:src.analysis.feature_attribution:Heatmap saved to /home/nidszxh/Projects/Neuro-CXG/results/visualizations/feature_importance_ig.png
+INFO:src.analysis.feature_attribution:Per-class heatmaps saved to /home/nidszxh/Projects/Neuro-CXG/results/visualizations/feature_importance_per_class.png
+INFO:__main__:Advanced feature importance completed
+INFO:__main__:Generating training history visualizations...
+INFO:src.analysis.diagnostics:TrainingMonitor initialised — output: /home/nidszxh/Projects/Neuro-CXG/results/experiments/training, folds: 5
+INFO:src.analysis.diagnostics:Training curves saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_0.png
+INFO:src.analysis.diagnostics:Training curves saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_1.png
+INFO:src.analysis.diagnostics:Training curves saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_2.png
+INFO:src.analysis.diagnostics:Training curves saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_3.png
+INFO:src.analysis.diagnostics:Training curves saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_plots/training_curves_fold_4.png
+INFO:src.analysis.diagnostics:Fold comparison saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/fold_comparison.png
+INFO:src.analysis.diagnostics:Confusion evolution saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/confusion_evolution_fold_0.png
+INFO:src.analysis.diagnostics:Confusion evolution saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/confusion_evolution_fold_1.png
+INFO:src.analysis.diagnostics:Confusion evolution saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/confusion_evolution_fold_2.png
+INFO:src.analysis.diagnostics:Confusion evolution saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/confusion_evolution_fold_3.png
+INFO:src.analysis.diagnostics:Confusion evolution saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/training/confusion_evolution_fold_4.png
+INFO:__main__:Training history visualizations completed
+INFO:__main__:Running graph topology analysis...
+INFO:src.analysis.diagnostics:CausalGraphAnalyzer initialised — dir: /home/nidszxh/Projects/Neuro-CXG/data/processed/causal_graphs, subjects: 1015
+INFO:src.analysis.diagnostics:Computing properties for 500 graphs…
+Graph properties: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 500/500 [00:00<00:00, 683.49it/s]
+INFO:src.analysis.diagnostics:Computed properties for 500 graphs
+INFO:src.analysis.diagnostics:Average causal graph saved → /home/nidszxh/Projects/Neuro-CXG/results/visualizations/average_causal_graph.png
+INFO:__main__:Graph analysis completed
+INFO:__main__:============================================================
+INFO:__main__:VISUALIZATION PIPELINE COMPLETE
+INFO:__main__:All visualizations saved to: /home/nidszxh/Projects/Neuro-CXG/results/visualizations
+INFO:__main__:============================================================
+INFO:pipeline:Completed: Generate Visualizations
+INFO:pipeline:Running: Causal Graph Visualization
+/home/nidszxh/Projects/Neuro-CXG/src/analysis/visualize_causal_graph.py:326: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+  fig.tight_layout()
+INFO:__main__:Saved comparison plot to /home/nidszxh/Projects/Neuro-CXG/results/visualizations/causal_graph_comparison.png
+INFO:pipeline:Completed: Causal Graph Visualization
+INFO:pipeline:⏭️  Skipping: Circular Connectome Visualization
+INFO:pipeline:⏭️  Skipping: 3D Brain Visualization (Nilearn)
+INFO:pipeline:Running: Comprehensive Evaluation
+INFO:__main__:Device       : cuda
+INFO:__main__:Output dir   : /home/nidszxh/Projects/Neuro-CXG/results/evaluation
+INFO:src.validation.config_snapshot:Config snapshot saved to /home/nidszxh/Projects/Neuro-CXG/results/evaluation/config_snapshot.json
+INFO:__main__:Loading datasets…
+INFO:src.features.graph_factory:  Temporal features: node_attributes_harmonized.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Excluded 20 hard-coded corrupted subjects: ['CMU_b_0050645', 'CMU_b_0050651', 'CMU_b_0050658', 'Caltech_0051460', 'Caltech_0051464', 'Caltech_0051467', 'Caltech_0051469', 'Caltech_0051471', 'Caltech_0051472', 'Caltech_0051478', 'Caltech_0051486', 'Caltech_0051491', 'Pitt_0050045', 'SBL_0051575', 'SDSU_0050184', 'SDSU_0050192', 'SDSU_0050195', 'SDSU_0050204', 'SDSU_0050209', 'SDSU_0050216']
+INFO:src.features.graph_factory:Subject alignment summary: available=1015, valid=1015, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized test dataset with 154 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:src.features.graph_factory:  Temporal features: node_attributes_harmonized.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Subject alignment summary: available=1015, valid=1015, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized train dataset with 707 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:  Test: 154  Train: 707
+INFO:__main__:============================================================
+INFO:__main__:SECTION 1 — ENSEMBLE TEST-SET EVALUATION
+INFO:__main__:============================================================
+INFO:__main__:  Fold 0  val-AUC=0.8046  threshold=0.5896  (n=154)
+INFO:__main__:  Fold 1  val-AUC=0.7450  threshold=0.5988  (n=154)
+INFO:__main__:  Fold 2  val-AUC=0.8524  threshold=0.2877  (n=154)
+INFO:__main__:  Fold 3  val-AUC=0.7959  threshold=0.5077  (n=154)
+INFO:__main__:  Fold 4  val-AUC=0.8886  threshold=0.4771  (n=154)
+INFO:__main__:  Youden threshold: 0.4524  →  Sens=0.8861  Spec=0.7867  F1=0.8485
+INFO:__main__:  Selected threshold policy: youden (threshold=0.4524)
+INFO:__main__:
+─────────────────────────────────────────────
+INFO:__main__:Metric            Value                95% CI
+INFO:__main__:─────────────────────────────────────────────
+INFO:__main__:  Auc            0.8819   [0.8277, 0.9322]
+INFO:__main__:  Auprc          0.8752   [0.8186, 0.9321]
+INFO:__main__:  F1             0.8485   [0.7953, 0.8982]
+INFO:__main__:  Accuracy       0.8377   [0.7792, 0.8898]
+INFO:__main__:  Sensitivity    0.8861   [0.8101, 0.9494]
+INFO:__main__:  Specificity    0.7867   [0.6933, 0.8800]
+INFO:__main__:─────────────────────────────────────────────
+INFO:__main__:  n_total=154  n_asd=79  n_control=75
+INFO:__main__:  Selected threshold: 0.4524
+INFO:__main__:
+  Per-fold AUC on test set:
+INFO:__main__:    Fold 0  AUC=0.8332  F1=0.7200  Acc=0.7273
+INFO:__main__:    Fold 1  AUC=0.8663  F1=0.7613  Acc=0.7597
+INFO:__main__:    Fold 2  AUC=0.8319  F1=0.7750  Acc=0.7662
+INFO:__main__:    Fold 3  AUC=0.8462  F1=0.8263  Acc=0.8117
+INFO:__main__:    Fold 4  AUC=0.8677  F1=0.8221  Acc=0.8117
+INFO:__main__:============================================================
+INFO:__main__:SECTION 1B — PAIRED T-TEST (Val AUC vs Test AUC)
+INFO:__main__:============================================================
+INFO:__main__:  Fold-level validation AUCs: ['0.8046', '0.7450', '0.8524', '0.7959', '0.8886']
+INFO:__main__:  Fold-level test AUCs:       ['0.8332', '0.8663', '0.8319', '0.8462', '0.8677']
+INFO:__main__:  Mean val AUC: 0.8173  ± 0.0493
+INFO:__main__:  Mean test AUC: 0.8491  ± 0.0155
+INFO:__main__:  Paired t-test: t=-1.206, p=0.2942
+INFO:__main__:  Interpretation: No significant difference (p≥0.05)
+INFO:__main__:============================================================
+INFO:__main__:SECTION 2 — PERMUTATION SIGNIFICANCE TEST  (n=1000)
+INFO:__main__:============================================================
+INFO:__main__:  Observed AUC : 0.8819
+INFO:__main__:  Null AUC     : 0.5002 ± 0.0471  (mean ± std)
+INFO:__main__:  p-value      : 0.0010  (✓ significant)
+INFO:__main__:  Plot saved → /home/nidszxh/Projects/Neuro-CXG/results/evaluation/permutation_test_global.png
+INFO:__main__:============================================================
+INFO:__main__:SECTION 2 — PERMUTATION SIGNIFICANCE TEST  (n=1000)
+INFO:__main__:============================================================
+INFO:__main__:  Using within-site permutation (20 sites)
+INFO:__main__:  Observed AUC : 0.8819
+INFO:__main__:  Null AUC     : 0.5196 ± 0.0463  (mean ± std)
+INFO:__main__:  p-value      : 0.0010  (✓ significant)
+INFO:__main__:  Plot saved → /home/nidszxh/Projects/Neuro-CXG/results/evaluation/permutation_test_within_site.png
+INFO:__main__:============================================================
+INFO:__main__:SECTION 3 — SUBGROUP ANALYSIS
+INFO:__main__:============================================================
+INFO:__main__:  Sex Male      n=124   n_asd=59   AUC=0.8558
+INFO:__main__:  Sex Female    n=30    n_asd=20   AUC=0.9850
+INFO:__main__:  Age<15              n=86    n_asd=46   AUC=0.9489
+INFO:__main__:  Age>=15             n=68    n_asd=33   AUC=0.8182
+INFO:__main__:  Site 6             n=27    n_asd=15   AUC=0.9111
+INFO:__main__:  Site 16            n=16    n_asd=8    AUC=1.0000
+INFO:__main__:  Site 14            n=11    n_asd=5    AUC=0.7333
+INFO:__main__:  Site 18            n=11    n_asd=4    AUC=0.7143
+INFO:__main__:  Site 9             n=9     n_asd=4    AUC=0.7000
+INFO:__main__:  Subgroup plot saved → /home/nidszxh/Projects/Neuro-CXG/results/evaluation/subgroup_analysis.png
+INFO:__main__:
+  Multiple comparison correction (Bonferroni):
+INFO:__main__:    Original alpha: 0.05
+INFO:__main__:    Number of tests: 9
+INFO:__main__:    Corrected alpha: 0.0056
+INFO:__main__:============================================================
+INFO:__main__:SECTION 4 — BASELINE COMPARISON
+INFO:__main__:============================================================
+INFO:__main__:  Train: 707  Test: 154  Features: 288
+INFO:__main__:  Training SVM (RBF kernel)…
+INFO:__main__:  SVM AUC=0.6748  (0.1s)
+INFO:__main__:  Training Random Forest (200 trees)…
+INFO:__main__:  RF AUC=0.7310  (0.3s)
+INFO:__main__:  Training Flat MLP (336-dim → 128 → 64 → 2)…
+INFO:__main__:  MLP AUC=0.6435  (1.4s)
+INFO:__main__:
+  Baseline Comparison:
+INFO:__main__:  ----------------------------------------
+INFO:__main__:    GNN (Ours)                AUC: 0.8819 *
+INFO:__main__:    Random Forest             AUC: 0.7310
+INFO:__main__:    Heinsfeld et al. 2018     AUC: 0.7000
+INFO:__main__:    Ktena et al. 2018         AUC: 0.6900
+INFO:__main__:    SVM (RBF)                 AUC: 0.6748
+INFO:__main__:    Flat MLP                  AUC: 0.6435
+INFO:__main__:  ----------------------------------------
+INFO:__main__:  Plot saved → /home/nidszxh/Projects/Neuro-CXG/results/evaluation/baseline_comparison.png
+INFO:__main__:
+  DeLong Tests (GNN vs baselines):
+INFO:__main__:  GNN vs SVM (RBF): z=4.60, p=0.0000 (Bonf: 0.0000), ΔAUC=+0.2071 *
+INFO:__main__:  GNN vs Random Forest: z=4.14, p=0.0000 (Bonf: 0.0001), ΔAUC=+0.1509 *
+INFO:__main__:  GNN vs Flat MLP: z=5.97, p=0.0000 (Bonf: 0.0000), ΔAUC=+0.2383 *
+INFO:__main__:  GNN AUC 95% CI: [0.8277, 0.9322]
+INFO:__main__:============================================================
+INFO:__main__:SECTION 5 — COMPREHENSIVE RESULTS TABLE
+INFO:__main__:============================================================
+INFO:__main__:  CSV saved → /home/nidszxh/Projects/Neuro-CXG/results/evaluation/comprehensive_results.csv
+INFO:__main__:  JSON saved → /home/nidszxh/Projects/Neuro-CXG/results/evaluation/comprehensive_results.json
+INFO:__main__:
+═════════════════════════════════════════════════════════════════
+INFO:__main__:FINAL RESULTS SUMMARY
+INFO:__main__:═════════════════════════════════════════════════════════════════
+INFO:__main__:  Ensemble AUC : 0.8819 [0.8277, 0.9322]
+INFO:__main__:  Ensemble F1  : 0.8485 [0.7953, 0.8982]
+INFO:__main__:  Accuracy     : 0.8377 [0.7792, 0.8898]
+INFO:__main__:  Sensitivity  : 0.8861 [0.8101, 0.9494]
+INFO:__main__:  Specificity  : 0.7867 [0.6933, 0.8800]
+INFO:__main__:  AUPRC        : 0.8752
+INFO:__main__:  p-value      : 0.0010  (✓ significant)
+INFO:__main__:  p-value(global / within-site): 0.0010 / 0.0010
+INFO:__main__:═════════════════════════════════════════════════════════════════
+INFO:pipeline:Completed: Comprehensive Evaluation
+INFO:pipeline:Running: Explainability
+INFO:__main__:Auto-selected fold 4 (val AUC=0.8886)
+INFO:__main__:Device: cuda
+INFO:src.features.graph_factory:  Temporal features: node_attributes_harmonized.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Excluded 20 hard-coded corrupted subjects: ['CMU_b_0050645', 'CMU_b_0050651', 'CMU_b_0050658', 'Caltech_0051460', 'Caltech_0051464', 'Caltech_0051467', 'Caltech_0051469', 'Caltech_0051471', 'Caltech_0051472', 'Caltech_0051478', 'Caltech_0051486', 'Caltech_0051491', 'Pitt_0050045', 'SBL_0051575', 'SDSU_0050184', 'SDSU_0050192', 'SDSU_0050195', 'SDSU_0050204', 'SDSU_0050209', 'SDSU_0050216']
+INFO:src.features.graph_factory:Subject alignment summary: available=1015, valid=1015, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized test dataset with 154 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:Test loader: 154 graphs, batch_size=16
+INFO:__main__:=======================================================
+INFO:__main__:PHASE 8.1  NODE IMPORTANCE ANALYSIS
+INFO:__main__:=======================================================
+INFO:src.analysis.node_importance:NodeImportanceAnalyzer: starting analysis → /home/nidszxh/Projects/Neuro-CXG/results/explainability/node
+INFO:src.analysis.node_importance:GradCAM: collected 79 ASD, 75 Control graphs
+INFO:src.analysis.node_importance:GradCAM plot saved → /home/nidszxh/Projects/Neuro-CXG/results/explainability/node/node_importance_gradcam.png
+INFO:src.analysis.node_importance:Attention heatmap saved → /home/nidszxh/Projects/Neuro-CXG/results/explainability/node/attention_weights_by_layer.png
+INFO:src.analysis.node_importance:Top differentially-important regions (ASD - Control):
+INFO:src.analysis.node_importance:  1. Frontal_Orbital  Δ=0.0091
+INFO:src.analysis.node_importance:  2. Motor_Premotor  Δ=0.0086
+INFO:src.analysis.node_importance:  3. Cerebellum  Δ=0.0080
+INFO:src.analysis.node_importance:  4. Insula  Δ=0.0069
+INFO:src.analysis.node_importance:  5. Temporal  Δ=0.0068
+INFO:src.analysis.node_importance:Differential importance plot saved → /home/nidszxh/Projects/Neuro-CXG/results/explainability/node/node_importance_asd_vs_control.png
+INFO:src.analysis.node_importance:Network-level GradCAM (ASD - Control):
+INFO:src.analysis.node_importance:  DMN: Δ=0.0069 (ASD=0.0121, Ctrl=0.0051)
+INFO:src.analysis.node_importance:  Salience: Δ=0.0072 (ASD=0.0115, Ctrl=0.0044)
+INFO:src.analysis.node_importance:  Visual_Cerebellar: Δ=0.0070 (ASD=0.0117, Ctrl=0.0047)
+INFO:src.analysis.node_importance:  Limbic: Δ=0.0028 (ASD=0.0052, Ctrl=0.0024)
+INFO:src.analysis.node_importance:Network-level importance plot saved → /home/nidszxh/Projects/Neuro-CXG/results/explainability/node/node_importance_network_level.png
+INFO:__main__:Phase 8.1 complete — figures saved to /home/nidszxh/Projects/Neuro-CXG/results/explainability/node/
+INFO:__main__:=======================================================
+INFO:__main__:PHASE 8.2  EDGE IMPORTANCE ANALYSIS
+INFO:__main__:=======================================================
+INFO:src.analysis.edge_importance:EdgeImportanceAnalyzer: starting analysis → /home/nidszxh/Projects/Neuro-CXG/results/explainability/edge
+INFO:src.analysis.edge_importance:Gradient attribution: 79 ASD, 75 Control graphs
+INFO:src.analysis.edge_importance:Edge masking: 18 ASD, 22 Control graphs (capped at 40)
+INFO:src.analysis.edge_importance:Edge matrix plot saved → /home/nidszxh/Projects/Neuro-CXG/results/explainability/edge/edge_importance_gradient.png
+INFO:src.analysis.edge_importance:Edge matrix plot saved → /home/nidszxh/Projects/Neuro-CXG/results/explainability/edge/edge_importance_masking.png
+INFO:src.analysis.edge_importance:Top edge 1: Motor_Premotor → Occipital  Δ=0.0028
+INFO:src.analysis.edge_importance:Top edge 2: Insula → Motor_Premotor  Δ=0.0027
+INFO:src.analysis.edge_importance:Top edge 3: Brainstem → Motor_Premotor  Δ=0.0023
+INFO:src.analysis.edge_importance:Top edge 4: Frontal_Orbital → Frontal_Superior  Δ=0.0018
+INFO:src.analysis.edge_importance:Top edge 5: Motor_Premotor → Frontal_Orbital  Δ=0.0016
+INFO:src.analysis.edge_importance:Differential connectivity plot saved → /home/nidszxh/Projects/Neuro-CXG/results/explainability/edge/edge_differential_connectivity.png
+INFO:__main__:Phase 8.2 complete — figures saved to /home/nidszxh/Projects/Neuro-CXG/results/explainability/edge/
+INFO:__main__:=======================================================
+INFO:__main__:PHASE 8.3  FEATURE ATTRIBUTION (SALIENCY MAPS)
+INFO:__main__:=======================================================
+INFO:src.analysis.feature_attribution:FeatureAttributionAnalyzer initialized
+INFO:src.analysis.feature_attribution:  Device: cuda
+INFO:src.analysis.feature_attribution:  Features: 24
+INFO:src.analysis.feature_attribution:Computing feature attributions...
+INFO:src.analysis.feature_attribution:  Method: Gradient-based Saliency
+Computing attributions: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:00<00:00, 62.13it/s]
+INFO:src.analysis.feature_attribution:Successfully computed 10 batch attributions, 0 failed
+INFO:src.analysis.feature_attribution:Computed attributions for 154 samples
+INFO:src.analysis.feature_attribution:Creating feature importance heatmap...
+INFO:src.analysis.feature_attribution:Heatmap saved to /home/nidszxh/Projects/Neuro-CXG/results/explainability/features/feature_importance_ig.png
+INFO:src.analysis.feature_attribution:Per-class heatmaps saved to /home/nidszxh/Projects/Neuro-CXG/results/explainability/features/feature_importance_per_class.png
+INFO:__main__:Phase 8.3 complete — figures saved to /home/nidszxh/Projects/Neuro-CXG/results/explainability/features/
+INFO:__main__:=======================================================
+INFO:__main__:PHASE 8.4  CLINICAL / LITERATURE VALIDATION
+INFO:__main__:=======================================================
+INFO:src.analysis.literature_validation:Top-6 important regions: Insula, Motor_Premotor, Frontal_Orbital, Cerebellum, Occipital, Temporal.
+These overlap with 7/7 known ASD-relevant networks: DMN, Social, Salience, Sensorimotor, Visual, Subcortical, FPC.
+INFO:src.analysis.literature_validation:JSON report saved → /home/nidszxh/Projects/Neuro-CXG/results/explainability/literature/literature_validation.json
+INFO:src.analysis.literature_validation:Text report saved → /home/nidszxh/Projects/Neuro-CXG/results/explainability/literature/literature_validation.txt
+========================================================================
+NEURO-CXG  –  PHASE 8.4 CLINICAL VALIDATION REPORT
+========================================================================
+
+Top-6 important regions: Insula, Motor_Premotor, Frontal_Orbital, Cerebellum, Occipital, Temporal.
+These overlap with 7/7 known ASD-relevant networks: DMN, Social, Salience, Sensorimotor, Visual, Subcortical, FPC.
+
+------------------------------------------------------------------------
+TOP-6 REGIONS RANKED BY MODEL IMPORTANCE
+------------------------------------------------------------------------
+  1. Insula                     (networks: Social, Salience)
+  2. Motor_Premotor             (networks: Salience, Sensorimotor, FPC)
+  3. Frontal_Orbital            (networks: DMN, Social)
+  4. Cerebellum                 (networks: Subcortical)
+  5. Occipital                  (networks: Visual)
+  6. Temporal                   (networks: DMN, Social)
+
+------------------------------------------------------------------------
+NETWORK COVERAGE ANALYSIS
+------------------------------------------------------------------------
+
+✓  Default Mode Network (DMN)
+   Jaccard similarity : 0.2222
+   Network regions    : Frontal_Superior, Frontal_Orbital, Cingulate, Parietal, Temporal
+   Matched by model   : Frontal_Orbital, Temporal
+   ASD finding        : Hypo-connectivity within DMN; reduced anti-correlation with task-
+     positive networks; persistent DMN activation during task
+     performance.
+   Key refs           : Kennedy & Courchesne (2008), Biol Psychiatry; Monk et al. (2009), NeuroImage; Assaf et al. (2010), NeuroImage
+
+✓  Social Brain Network
+   Jaccard similarity : 0.4286
+   Network regions    : Frontal_Orbital, Insula, Limbic, Temporal
+   Matched by model   : Frontal_Orbital, Insula, Temporal
+   ASD finding        : Reduced activity and connectivity during social cognition, theory-of-
+     mind tasks, and face perception; atypical amygdala-temporal
+     coupling.
+   Key refs           : Dichter et al. (2012), JAMA Psychiatry; Pelphrey et al. (2011), Trends Cogn Sci; Schultz et al. (2000), Nature
+
+✓  Salience Network
+   Jaccard similarity : 0.2500
+   Network regions    : Motor_Premotor, Insula, Cingulate, Subcortical
+   Matched by model   : Motor_Premotor, Insula
+   ASD finding        : Reduced salience network connectivity; impaired interoceptive
+     awareness via anterior insula; hypo-connectivity between insula
+     and ACC.
+   Key refs           : Uddin et al. (2013), JAMA Psychiatry; Paulus & Stein (2006), Trends Cogn Sci; Sridharan et al. (2008), PNAS
+
+✓  Sensorimotor Network
+   Jaccard similarity : 0.1429
+   Network regions    : Motor_Premotor, Parietal
+   Matched by model   : Motor_Premotor
+   ASD finding        : Atypical motor cortex organisation; reduced parietal involvement in
+     action observation; mirror neuron system differences.
+   Key refs           : Mostofsky et al. (2009), Cortex; Dinstein et al. (2010), Neuron
+
+✓  Visual Network
+   Jaccard similarity : 0.1429
+   Network regions    : Occipital, Parietal
+   Matched by model   : Occipital
+   ASD finding        : Enhanced low-level visual processing with reduced top-down modulation;
+     altered V1 surround suppression; local processing bias.
+   Key refs           : Simmons et al. (2009), NeuroImage; Dakin & Frith (2005), Neuron
+
+✓  Subcortical / Thalamo-Cortical
+   Jaccard similarity : 0.1250
+   Network regions    : Subcortical, Cerebellum, Brainstem
+   Matched by model   : Cerebellum
+   ASD finding        : Thalamic hypo-connectivity to frontal and parietal regions; cerebellar
+     differences in timing and prediction; enlarged amygdala in young
+     children.
+   Key refs           : Belmonte et al. (2004), J Neurosci; Allen et al. (2004), Trends Neuropsci; Courchesne et al. (2001), Neurology
+
+✓  Frontoparietal Control Network
+   Jaccard similarity : 0.1250
+   Network regions    : Frontal_Superior, Motor_Premotor, Parietal
+   Matched by model   : Motor_Premotor
+   ASD finding        : Reduced cognitive control network efficiency; weaker fronto-parietal
+     coupling during executive function tasks.
+   Key refs           : Solomon et al. (2009), NeuroImage; Just et al. (2004), Brain
+   ========================================================================
+END OF REPORT
+========================================================================
+INFO:src.analysis.literature_validation:Validation figure saved → /home/nidszxh/Projects/Neuro-CXG/results/explainability/literature/literature_validation_heatmap.png
+INFO:__main__:Phase 8.4 complete — report saved to /home/nidszxh/Projects/Neuro-CXG/results/explainability/literature/
+INFO:__main__:Summary JSON saved → /home/nidszxh/Projects/Neuro-CXG/results/explainability/summary.json
+INFO:__main__:
+=================================================================
+INFO:__main__:PHASE 8 EXPLAINABILITY PIPELINE COMPLETE
+INFO:__main__:=================================================================
+INFO:__main__:Output directory : /home/nidszxh/Projects/Neuro-CXG/results/explainability
+INFO:__main__:Phases run       : node, edge, features, literature
+INFO:__main__:
+Top-5 Differentially-Important Regions (GradCAM, ASD−Control):
+INFO:__main__:  1. Frontal_Orbital           Δ=0.0091
+INFO:__main__:  2. Motor_Premotor            Δ=0.0086
+INFO:__main__:  3. Cerebellum                Δ=0.0080
+INFO:__main__:  4. Insula                    Δ=0.0069
+INFO:__main__:  5. Temporal                  Δ=0.0068
+INFO:__main__:
+Top-5 Differentially-Important Edges (gradient, ASD−Control):
+INFO:__main__:  1. Motor_Premotor         → Occipital              Δ=0.0028
+INFO:__main__:  2. Insula                 → Motor_Premotor         Δ=0.0027
+INFO:__main__:  3. Brainstem              → Motor_Premotor         Δ=0.0023
+INFO:__main__:  4. Frontal_Orbital        → Frontal_Superior       Δ=0.0018
+INFO:__main__:  5. Motor_Premotor         → Frontal_Orbital        Δ=0.0016
+INFO:__main__:
+Top regions (literature validation): Insula, Motor_Premotor, Frontal_Orbital, Cerebellum, Occipital, Temporal
+INFO:__main__:Matching ASD networks  : DMN, Social, Salience, Sensorimotor, Visual, Subcortical, FPC
+INFO:__main__:=================================================================
+INFO:pipeline:Completed: Explainability
+INFO:pipeline:Running: Result Interpretation & Analysis
+INFO:__main__:Device     : cuda
+INFO:__main__:Output dir : /home/nidszxh/Projects/Neuro-CXG/results/analysis
+INFO:__main__:Loading test dataset…
+INFO:src.features.graph_factory:  Temporal features: node_attributes_harmonized.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Excluded 20 hard-coded corrupted subjects: ['CMU_b_0050645', 'CMU_b_0050651', 'CMU_b_0050658', 'Caltech_0051460', 'Caltech_0051464', 'Caltech_0051467', 'Caltech_0051469', 'Caltech_0051471', 'Caltech_0051472', 'Caltech_0051478', 'Caltech_0051486', 'Caltech_0051491', 'Pitt_0050045', 'SBL_0051575', 'SDSU_0050184', 'SDSU_0050192', 'SDSU_0050195', 'SDSU_0050204', 'SDSU_0050209', 'SDSU_0050216']
+INFO:src.features.graph_factory:Subject alignment summary: available=1015, valid=1015, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized test dataset with 154 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:  Test subjects: 154
+INFO:__main__:Loaded evaluation metadata from results/evaluation/comprehensive_results.json
+INFO:__main__:  Using evaluation threshold from comprehensive_results.json: 0.4524
+INFO:__main__:Using threshold policy 'youden' with threshold=0.4524
+INFO:__main__:============================================================
+INFO:__main__:SECTION 1 — PER-SUBJECT PREDICTIONS
+INFO:__main__:============================================================
+INFO:__main__:  Analysis uses threshold=0.4524; per-site calibration requested=False
+INFO:__main__:  Inference operating point: threshold=0.4524, per-site calibration=off
+INFO:__main__:  Subjects: 154  Accuracy: 0.838  AUC: 0.8819
+INFO:__main__:  Decision threshold: 0.4524
+INFO:__main__:  False Positives: 16  False Negatives: 9
+INFO:__main__:  Predicted ASD rate: 55.8%
+INFO:__main__:  Youden analysis threshold: 0.4524 -> Sens=0.8861 Spec=0.7867 F1=0.8485
+INFO:__main__:  Saved → /home/nidszxh/Projects/Neuro-CXG/results/analysis/per_subject_predictions.csv
+INFO:__main__:  Effective per-site calibration: requested=False applied=False (sites=0)
+INFO:__main__:============================================================
+INFO:__main__:SECTION 2 — MISCLASSIFICATION ANALYSIS
+INFO:__main__:============================================================
+INFO:__main__:  TP=70  TN=59  FP=16  FN=9
+INFO:__main__:  Misclassification plot saved → /home/nidszxh/Projects/Neuro-CXG/results/analysis/misclassification_analysis.png
+INFO:__main__:  FP (n=16): age=21.8  pct_male=94%  FIQ=113.3  conf=0.651
+INFO:__main__:  FN (n=9): age=14.9  pct_male=89%  FIQ=106.4  conf=0.699
+INFO:__main__:  TP (n=70): age=15.8  pct_male=73%  FIQ=110.3  conf=0.719
+INFO:__main__:  TN (n=59): age=16.0  pct_male=85%  FIQ=101.7  conf=0.798
+INFO:__main__:============================================================
+INFO:__main__:SECTION 3 — SITE EFFECTS INVESTIGATION
+INFO:__main__:============================================================
+INFO:__main__:  Site 0    n=5     ASD=3    Ctrl=2    AUC=0.8333  Acc=0.800  (ok)
+INFO:__main__:  Site 1    n=4     ASD=2    Ctrl=2    AUC=N/A  Acc=0.750  (too_few_samples)
+INFO:__main__:  Site 2    n=7     ASD=4    Ctrl=3    AUC=1.0000  Acc=0.857  (ok)
+INFO:__main__:  Site 3    n=4     ASD=2    Ctrl=2    AUC=N/A  Acc=1.000  (too_few_samples)
+INFO:__main__:  Site 4    n=5     ASD=3    Ctrl=2    AUC=1.0000  Acc=1.000  (ok)
+INFO:__main__:  Site 5    n=7     ASD=4    Ctrl=3    AUC=0.7500  Acc=0.857  (ok)
+INFO:__main__:  Site 6    n=27    ASD=15   Ctrl=12   AUC=0.9111  Acc=0.889  (ok)
+INFO:__main__:  Site 7    n=4     ASD=2    Ctrl=2    AUC=N/A  Acc=1.000  (too_few_samples)
+INFO:__main__:  Site 8    n=5     ASD=2    Ctrl=3    AUC=1.0000  Acc=1.000  (ok)
+INFO:__main__:  Site 9    n=9     ASD=4    Ctrl=5    AUC=0.7000  Acc=0.778  (ok)
+INFO:__main__:  Site 10   n=5     ASD=2    Ctrl=3    AUC=1.0000  Acc=0.800  (ok)
+INFO:__main__:  Site 11   n=4     ASD=3    Ctrl=1    AUC=N/A  Acc=1.000  (too_few_samples)
+INFO:__main__:  Site 12   n=6     ASD=3    Ctrl=3    AUC=1.0000  Acc=1.000  (ok)
+INFO:__main__:  Site 13   n=7     ASD=4    Ctrl=3    AUC=0.9167  Acc=0.714  (ok)
+INFO:__main__:  Site 14   n=11    ASD=5    Ctrl=6    AUC=0.7333  Acc=0.636  (ok)
+INFO:__main__:  Site 15   n=4     ASD=2    Ctrl=2    AUC=N/A  Acc=0.750  (too_few_samples)
+INFO:__main__:  Site 16   n=16    ASD=8    Ctrl=8    AUC=1.0000  Acc=0.938  (ok)
+INFO:__main__:  Site 17   n=5     ASD=3    Ctrl=2    AUC=0.1667  Acc=0.600  (ok)
+INFO:__main__:  Site 18   n=11    ASD=4    Ctrl=7    AUC=0.7143  Acc=0.727  (ok)
+INFO:__main__:  Site 19   n=8     ASD=4    Ctrl=4    AUC=0.8750  Acc=0.750  (ok)
+INFO:__main__:  Site AUC plot saved → /home/nidszxh/Projects/Neuro-CXG/results/analysis/site_effects.png
+INFO:__main__:  Site bias heatmap saved → /home/nidszxh/Projects/Neuro-CXG/results/analysis/site_bias_heatmap.png
+INFO:__main__:============================================================
+INFO:__main__:SECTION 4 — PREDICTION CONFIDENCE & CALIBRATION
+INFO:__main__:============================================================
+INFO:__main__:  Mean confidence: 0.741  Pct high-conf (≥0.75): 46.8%
+INFO:__main__:  Brier Score: 0.1429 (random baseline: 0.2500)
+INFO:__main__:  Calibration plot saved → /home/nidszxh/Projects/Neuro-CXG/results/analysis/calibration.png
+INFO:__main__:============================================================
+INFO:__main__:SECTION 5 — SEVERITY CORRELATION (CONFIDENCE vs FIQ / AGE)
+INFO:__main__:============================================================
+INFO:__main__:  FIQ vs confidence (ASD): r=0.045  p=0.6969 
+INFO:__main__:  FIQ vs confidence (All): r=-0.098  p=0.2249 
+INFO:__main__:  Age vs confidence (ASD): r=0.016  p=0.8868 
+INFO:__main__:  Age vs confidence (All): r=-0.009  p=0.9135 
+INFO:__main__:  Severity correlation plot saved → /home/nidszxh/Projects/Neuro-CXG/results/analysis/severity_correlation.png
+INFO:__main__:============================================================
+INFO:__main__:SECTION 6 — CASE STUDIES (n=5 per group)
+INFO:__main__:============================================================
+INFO:__main__:  [HIGH_CONF_CORRECT] Yale_0050626  true=Control  pred=Control  conf=0.973  age=11  sex=M  FIQ=61
+INFO:__main__:  [HIGH_CONF_CORRECT] SBL_0051573  true=Control  pred=Control  conf=0.965  age=30  sex=M  FIQ=100
+INFO:__main__:  [HIGH_CONF_CORRECT] Leuven_1_0050690  true=Control  pred=Control  conf=0.965  age=22  sex=M  FIQ=101
+INFO:__main__:  [HIGH_CONF_CORRECT] NYU_0051000  true=Control  pred=Control  conf=0.963  age=13  sex=M  FIQ=78
+INFO:__main__:  [HIGH_CONF_CORRECT] Pitt_0050013  true=Control  pred=Control  conf=0.958  age=9  sex=M  FIQ=86
+INFO:__main__:  [HIGH_CONF_WRONG] SBL_0051557  true=ASD  pred=Control  conf=0.867  age=26  sex=M  FIQ=100
+INFO:__main__:  [HIGH_CONF_WRONG] Pitt_0050008  true=Control  pred=ASD  conf=0.849  age=32  sex=M  FIQ=123
+INFO:__main__:  [HIGH_CONF_WRONG] NYU_0051021  true=Control  pred=ASD  conf=0.837  age=24  sex=M  FIQ=112
+INFO:__main__:  [HIGH_CONF_WRONG] USM_0050434  true=ASD  pred=Control  conf=0.833  age=18  sex=M  FIQ=93
+INFO:__main__:  [HIGH_CONF_WRONG] Pitt_0050025  true=Control  pred=ASD  conf=0.773  age=32  sex=M  FIQ=131
+INFO:__main__:  [AMBIGUOUS] UM_2_0050390  true=ASD  pred=ASD  conf=0.503  age=14  sex=M  FIQ=104
+INFO:__main__:  [AMBIGUOUS] KKI_0050825  true=Control  pred=ASD  conf=0.505  age=8  sex=M  FIQ=89
+INFO:__main__:  [AMBIGUOUS] UM_1_0050342  true=ASD  pred=ASD  conf=0.506  age=13  sex=M  FIQ=104
+INFO:__main__:  [AMBIGUOUS] Trinity_0051142  true=ASD  pred=ASD  conf=0.509  age=15  sex=M  FIQ=104
+INFO:__main__:  [AMBIGUOUS] SBL_0051558  true=ASD  pred=ASD  conf=0.520  age=27  sex=M  FIQ=100
+INFO:__main__:  Case studies saved → /home/nidszxh/Projects/Neuro-CXG/results/analysis/case_studies.csv and /home/nidszxh/Projects/Neuro-CXG/results/analysis/case_studies.txt
+INFO:__main__:Summary JSON saved → /home/nidszxh/Projects/Neuro-CXG/results/analysis/result_analysis_summary.json
+INFO:__main__:
+════════════════════════════════════════════════════════════
+INFO:__main__:RESULT ANALYSIS COMPLETE
+INFO:__main__:════════════════════════════════════════════════════════════
+INFO:__main__:  Subjects: 154  |  Accuracy: 0.838  |  AUC: 0.8819
+INFO:__main__:  Threshold policy: youden  |  threshold=0.4524
+INFO:__main__:  Output → /home/nidszxh/Projects/Neuro-CXG/results/analysis
+INFO:pipeline:Completed: Result Interpretation & Analysis
+INFO:pipeline:Running: Subject-Level Analysis
+INFO:__main__:Loading manifest from /home/nidszxh/Projects/Neuro-CXG/data/metadata/master_manifest.csv
+INFO:__main__:Building time-series index
+INFO:__main__:Found 1015 time-series files
+INFO:__main__:Loading harmonized features from /home/nidszxh/Projects/Neuro-CXG/data/metadata/node_attributes_harmonized.csv
+INFO:__main__:Found 1015 harmonized feature rows
+INFO:__main__:Indexing graph files from /home/nidszxh/Projects/Neuro-CXG/data/processed/causal_graphs
+INFO:__main__:Found 1015 graph files
+INFO:__main__:Running diagnostics for 1015 subjects
+INFO:__main__:Progress: 1/1015
+INFO:__main__:Progress: 102/1015
+INFO:__main__:Progress: 203/1015
+INFO:__main__:Progress: 304/1015
+INFO:__main__:Progress: 405/1015
+INFO:__main__:Progress: 506/1015
+INFO:__main__:Progress: 607/1015
+INFO:__main__:Progress: 708/1015
+INFO:__main__:Progress: 809/1015
+INFO:__main__:Progress: 910/1015
+INFO:__main__:Progress: 1011/1015
+INFO:__main__:Saved per-subject CSV to /home/nidszxh/Projects/Neuro-CXG/results/subject_analysis/subject_analysis_20260628_204354.csv
+INFO:__main__:Saved summary report to /home/nidszxh/Projects/Neuro-CXG/results/subject_analysis/subject_analysis_20260628_204354.txt
+==============================================================================
+NEURO-CXG SUBJECT ANALYSIS REPORT
+Generated: 2026-06-28 20:43:54
+==============================================================================
+Total subjects scanned: 1015
+In manifest: 1015 (100.0%)
+Split counts:
+  train: 707
+  val: 154
+  test: 154
+Diagnosis counts:
+  ASD: 522
+  Control: 493
+
+Artifact availability:
+  Time-series present: 1015 (100.0%)
+  Graph present:       1015 (100.0%)
+  Harmonized present:  1015 (100.0%)
+  Degenerate graphs:   0 (0.0% of existing) [criterion: edge_count < MIN_EDGES_PER_GRAPH OR dead lobe present]
+
+Top flagged subjects:
+  CMU_b_0050655
+  Caltech_0051466
+==============================================================================
+INFO:pipeline:Completed: Subject-Level Analysis
+INFO:pipeline:Running: Post-Fix Audit Check
+INFO:__main__:======================================================================
+INFO:__main__:NEURO-CXG POST-FIX AUDIT VALIDATION
+INFO:__main__:======================================================================
+INFO:__main__:
+1. Checking subject counts...
+INFO:__main__:✓ Spatial features: 1015 subjects
+INFO:__main__:✓ Temporal features: 1015 subjects
+INFO:__main__:✓ Harmonized features: 1015 subjects
+INFO:__main__:✓ Master manifest: 1015 subjects
+INFO:__main__:
+2. Checking YOLO detection completeness...
+INFO:__main__:✓ All 12 region size columns present
+INFO:__main__:✓ All 48 modern spatial columns present
+WARNING:__main__:⚠ All subjects have all 12 regions populated: 1015 subjects have at least one zero-size lobe (will be generated during pipeline run)
+INFO:__main__:✓ Subjects meet min populated regions (>= 9)
+INFO:__main__:
+3. Checking harmonized features integrity...
+INFO:__main__:✓ No NaN values in harmonized features
+INFO:__main__:✓ No Inf values in harmonized features
+INFO:__main__:
+4. Checking feature dimensions...
+INFO:__main__:✓ Temporal features shape: (1015, 3061)
+INFO:__main__:✓ Harmonized features shape: (1015, 217)
+INFO:__main__:
+5. Checking causal graph files...
+INFO:__main__:✓ Causal graph files: 1015
+INFO:__main__:
+6. Validating random graph samples...
+INFO:__main__:✓ Graph Trinity_0050270_graph.pt: adj.shape == (12, 12)
+INFO:__main__:✓ Graph Trinity_0050270_graph.pt: internal_features.shape == (12, 2)
+INFO:__main__:✓ Graph UCLA_2_0051317_graph.pt: adj.shape == (12, 12)
+INFO:__main__:✓ Graph UCLA_2_0051317_graph.pt: internal_features.shape == (12, 2)
+INFO:__main__:✓ Graph NYU_0051000_graph.pt: adj.shape == (12, 12)
+INFO:__main__:✓ Graph NYU_0051000_graph.pt: internal_features.shape == (12, 2)
+INFO:__main__:✓ Graph NYU_0051128_graph.pt: adj.shape == (12, 12)
+INFO:__main__:✓ Graph NYU_0051128_graph.pt: internal_features.shape == (12, 2)
+INFO:__main__:✓ Graph USM_0050519_graph.pt: adj.shape == (12, 12)
+INFO:__main__:✓ Graph USM_0050519_graph.pt: internal_features.shape == (12, 2)
+INFO:__main__:
+7. Checking dataset loader...
+INFO:src.features.graph_factory:  Temporal features: node_attributes_harmonized.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Excluded 20 hard-coded corrupted subjects: ['CMU_b_0050645', 'CMU_b_0050651', 'CMU_b_0050658', 'Caltech_0051460', 'Caltech_0051464', 'Caltech_0051467', 'Caltech_0051469', 'Caltech_0051471', 'Caltech_0051472', 'Caltech_0051478', 'Caltech_0051486', 'Caltech_0051491', 'Pitt_0050045', 'SBL_0051575', 'SDSU_0050184', 'SDSU_0050192', 'SDSU_0050195', 'SDSU_0050204', 'SDSU_0050209', 'SDSU_0050216']
+INFO:src.features.graph_factory:Subject alignment summary: available=1015, valid=1015, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized train dataset with 707 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:✓ ABIDECausalDataset loads successfully
+INFO:__main__:✓ Train dataset has subjects: 707
+INFO:__main__:✓ All checked train graphs valid (707 samples)
+INFO:__main__:
+======================================================================
+INFO:__main__:AUDIT VALIDATION SUMMARY
+INFO:__main__:======================================================================
+INFO:__main__:✓ Checks Passed: 25
+INFO:__main__:✗ Checks Failed: 0
+INFO:__main__:
+✅ ALL CHECKS PASSED - Pipeline is ready!
+INFO:pipeline:Completed: Post-Fix Audit Check
+INFO:pipeline:Running: Developer Code Audit
+INFO:__main__:Code-auditing 61 Python files…
+INFO:__main__:======================================================================
+INFO:__main__:CODE AUDIT REPORT  (61 files scanned)
+INFO:__main__:======================================================================
+INFO:__main__:  ERRORS: none
+INFO:__main__:  WARNINGS: none
+INFO:__main__:======================================================================
+INFO:__main__:======================================================================
+INFO:__main__:AUDIT COMPLETE
+INFO:__main__:======================================================================
+INFO:pipeline:Completed: Developer Code Audit
+INFO:pipeline:Running: Data Quality Experiments
+INFO:__main__:
+======================================================================
+INFO:__main__:NEURO-CXG: DATA QUALITY EXPERIMENTS
+INFO:__main__:======================================================================
+INFO:__main__:
+======================================================================
+INFO:__main__:EXPERIMENT 1: CROSS-SITE GENERALISATION (TEST SET)
+INFO:__main__:======================================================================
+INFO:src.features.graph_factory:  Temporal features: node_attributes_harmonized.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Excluded 20 hard-coded corrupted subjects: ['CMU_b_0050645', 'CMU_b_0050651', 'CMU_b_0050658', 'Caltech_0051460', 'Caltech_0051464', 'Caltech_0051467', 'Caltech_0051469', 'Caltech_0051471', 'Caltech_0051472', 'Caltech_0051478', 'Caltech_0051486', 'Caltech_0051491', 'Pitt_0050045', 'SBL_0051575', 'SDSU_0050184', 'SDSU_0050192', 'SDSU_0050195', 'SDSU_0050204', 'SDSU_0050209', 'SDSU_0050216']
+INFO:src.features.graph_factory:Subject alignment summary: available=1015, valid=1015, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized test dataset with 154 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:
+  Overall test AUC  : 0.8332  (n=154)
+INFO:__main__:  Overall test F1   : 0.7200  (threshold=0.590)
+INFO:__main__:
+  Site                          N  Ctrl   ASD     AUC  Notes
+INFO:__main__:  --------------------------------------------------------------
+INFO:__main__:  CALTECH                       5     2     3  0.8333  ✓ strong signal
+INFO:__main__:  CMU                           4     2     2       —  📌 too few / single class
+INFO:__main__:  KKI                           7     3     4  1.0000  ✓ strong signal
+INFO:__main__:  LEUVEN_1                      4     2     2       —  📌 too few / single class
+INFO:__main__:  LEUVEN_2                      5     2     3  1.0000  ✓ strong signal
+INFO:__main__:  MAX_MUN                       7     3     4  0.4167  ⚠  site-driven failure
+INFO:__main__:  NYU                          27    12    15  0.9222  ✓ strong signal
+INFO:__main__:  OHSU                          4     2     2       —  📌 too few / single class
+INFO:__main__:  OLIN                          5     3     2  1.0000  ✓ strong signal
+INFO:__main__:  PITT                          9     5     4  0.7500  ✓ strong signal
+INFO:__main__:  SBL                           5     3     2  1.0000  ✓ strong signal
+INFO:__main__:  SDSU                          4     1     3       —  📌 too few / single class
+INFO:__main__:  STANFORD                      6     3     3  1.0000  ✓ strong signal
+INFO:__main__:  TRINITY                       7     3     4  0.7500  ✓ strong signal
+INFO:__main__:  UCLA_1                       11     6     5  0.7333  ✓ strong signal
+INFO:__main__:  UCLA_2                        4     2     2       —  📌 too few / single class
+INFO:__main__:  UM_1                         16     8     8  0.8906  ✓ strong signal
+INFO:__main__:  UM_2                          5     2     3  0.1667  ⚠  site-driven failure
+INFO:__main__:  USM                          11     7     4  0.6071  
+INFO:__main__:  YALE                          8     4     4  0.8125  ✓ strong signal
+INFO:__main__:
+  Saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/data_quality/cross_site_auc.csv
+WARNING:__main__:
+  ⚠ 2 sites with AUC < 0.55: ['MAX_MUN', 'UM_2']
+  → Investigate site-specific scanner parameters or demographics.
+INFO:__main__:Site robustness gate: evaluable_sites=15, weak_sites=2 (AUC < 0.55), weak_fraction=0.13, threshold=0.40
+INFO:__main__:Site robustness gate passed
+INFO:__main__:
+======================================================================
+INFO:__main__:EXPERIMENT 2: SUBJECT COUNT AUDIT (PIPELINE BOTTLENECK)
+INFO:__main__:======================================================================
+INFO:src.features.graph_factory:  Temporal features: node_attributes_harmonized.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Subject alignment summary: available=1015, valid=1015, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized train dataset with 707 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:
+  Stage                                 Count     Drop    Loss%
+INFO:__main__:  ------------------------------------------------------------
+INFO:__main__:  0_phenotype_csv                        1112        0     0.0%
+INFO:__main__:  1_png_downloaded                       1015       97     8.7%
+INFO:__main__:  2_all12_detected                       1015        0     0.0%
+INFO:__main__:  3_time_series_npy                      1015        0     0.0%
+INFO:__main__:  4_temporal_features                    1015        0     0.0%
+INFO:__main__:  5_harmonized                           1015        0     0.0%
+INFO:__main__:  6_causal_graphs                        1015        0     0.0%
+INFO:__main__:  7_train_dataset                         707      308    30.3%  ←  ⚠ BOTTLENECK
+INFO:__main__:
+  Saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/data_quality/subject_count_audit.csv
+WARNING:__main__:
+  Largest drop: Stage '7_train_dataset' loses 308 subjects (30.3%)
+INFO:__main__:
+======================================================================
+INFO:__main__:EXPERIMENT 3: ATLAS-CENTROID SPATIAL BASELINE
+INFO:__main__:======================================================================
+INFO:__main__:  Using ROI centroids from /home/nidszxh/Projects/Neuro-CXG/data/metadata/roi_centroids.json
+INFO:src.features.graph_factory:  Temporal features: node_attributes_harmonized.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Subject alignment summary: available=1015, valid=1015, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized train dataset with 707 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:  AtlasCentroidDataset: spatial features replaced with atlas centroids
+INFO:__main__:  Centroid range: x=[-0.8, 1.2]  y=[-1.0, 1.0]  z=[-0.9, 1.1]
+INFO:__main__:  Total subjects: 707
+INFO:__main__:  Fold 1: AUC=0.8509  (elapsed 34s)
+INFO:__main__:  Fold 2: AUC=0.8376  (elapsed 58s)
+INFO:__main__:  Fold 3: AUC=0.8209  (elapsed 34s)
+INFO:__main__:  Fold 4: AUC=0.8324  (elapsed 29s)
+INFO:__main__:  Fold 5: AUC=0.8278  (elapsed 29s)
+INFO:__main__:
+  Atlas-centroid AUC: 0.8339 ± 0.0101
+INFO:__main__:  Baseline (YOLO)   : 0.6300  (reference)
+WARNING:__main__:  ⚠ Atlas centroids improve AUC by +0.2039  → YOLO spatial noise is hurting performance. Consider using fixed atlas coordinates as spatial features.
+INFO:__main__:
+======================================================================
+INFO:__main__:DATA QUALITY EXPERIMENTS COMPLETE
+INFO:__main__:Results saved to: /home/nidszxh/Projects/Neuro-CXG/results/experiments/data_quality
+INFO:__main__:======================================================================
+INFO:pipeline:Completed: Data Quality Experiments
+INFO:pipeline:Running: Ablation Studies
+INFO:__main__:
+======================================================================
+INFO:__main__:NEURO-CXG: ABLATION STUDIES
+INFO:__main__:======================================================================
+INFO:__main__:  Running ablations : ['A', 'B', 'C', 'D', 'D2', 'E']
+INFO:__main__:  Baseline AUC      : 0.63
+INFO:__main__:  Device            : cuda
+INFO:__main__:
+Loading base training dataset...
+INFO:src.features.graph_factory:  Temporal features: node_attributes_harmonized.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Excluded 20 hard-coded corrupted subjects: ['CMU_b_0050645', 'CMU_b_0050651', 'CMU_b_0050658', 'Caltech_0051460', 'Caltech_0051464', 'Caltech_0051467', 'Caltech_0051469', 'Caltech_0051471', 'Caltech_0051472', 'Caltech_0051478', 'Caltech_0051486', 'Caltech_0051491', 'Pitt_0050045', 'SBL_0051575', 'SDSU_0050184', 'SDSU_0050192', 'SDSU_0050195', 'SDSU_0050204', 'SDSU_0050209', 'SDSU_0050216']
+INFO:src.features.graph_factory:Subject alignment summary: available=1015, valid=1015, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized train dataset with 707 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:  Loaded 707 training subjects
+INFO:__main__:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO:__main__:ABLATION A (FlatMLP, no graph): 5-Fold CV
+INFO:__main__:━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO:__main__:  Total subjects: 707  (Control=342, ASD=365)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 1/5: AUC=0.7371  F1=0.7143  (elapsed 17s, best epoch=54)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 2/5: AUC=0.7448  F1=0.7114  (elapsed 17s, best epoch=66)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 3/5: AUC=0.7182  F1=0.7515  (elapsed 18s, best epoch=55)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:src.models.training_utils:Early stopping triggered after 50 epochs without improvement
+INFO:src.models.training_utils:Fold 3: early stopping at epoch 81 (min_epochs=30, patience=50)
+INFO:__main__:  Fold 4/5: AUC=0.6984  F1=0.7089  (elapsed 17s, best epoch=31)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:src.models.training_utils:Early stopping triggered after 50 epochs without improvement
+INFO:src.models.training_utils:Fold 4: early stopping at epoch 79 (min_epochs=30, patience=50)
+INFO:__main__:  Fold 5/5: AUC=0.7301  F1=0.7143  (elapsed 17s, best epoch=29)
+INFO:__main__:
+  ╔══ RESULT: AUC = 0.7257 ± 0.0162  |  F1 = 0.7201 ══╗
+INFO:__main__:  Per-fold AUCs: [0.7371, 0.7448, 0.7182, 0.6984, 0.7301]
+INFO:__main__:  MaskedDataset: keep=['spatial'], zero=['temporal', 'frequency', 'internal']
+INFO:__main__:  Active features: 4 / 24
+INFO:__main__:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO:__main__:ABLATION B (Spatial only, 4 features): 5-Fold CV
+INFO:__main__:━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO:__main__:  Total subjects: 707  (Control=342, ASD=365)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:src.models.training_utils:Early stopping triggered after 50 epochs without improvement
+INFO:src.models.training_utils:Fold 0: early stopping at epoch 60 (min_epochs=30, patience=50)
+INFO:__main__:  Fold 1/5: AUC=0.5219  F1=0.4696  (elapsed 20s, best epoch=10)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:src.models.training_utils:Early stopping triggered after 50 epochs without improvement
+INFO:src.models.training_utils:Fold 1: early stopping at epoch 86 (min_epochs=30, patience=50)
+INFO:__main__:  Fold 2/5: AUC=0.5411  F1=0.5714  (elapsed 28s, best epoch=36)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 3/5: AUC=0.5621  F1=0.5672  (elapsed 33s, best epoch=51)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:src.models.training_utils:Early stopping triggered after 50 epochs without improvement
+INFO:src.models.training_utils:Fold 3: early stopping at epoch 72 (min_epochs=30, patience=50)
+INFO:__main__:  Fold 4/5: AUC=0.5775  F1=0.6548  (elapsed 25s, best epoch=22)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:src.models.training_utils:Early stopping triggered after 50 epochs without improvement
+INFO:src.models.training_utils:Fold 4: early stopping at epoch 77 (min_epochs=30, patience=50)
+INFO:__main__:  Fold 5/5: AUC=0.5549  F1=0.6739  (elapsed 27s, best epoch=27)
+INFO:__main__:
+  ╔══ RESULT: AUC = 0.5515 ± 0.0189  |  F1 = 0.5874 ══╗
+INFO:__main__:  Per-fold AUCs: [0.5219, 0.5411, 0.5621, 0.5775, 0.5549]
+INFO:__main__:  MaskedDataset: keep=['temporal', 'spatial'], zero=['frequency', 'internal']
+INFO:__main__:  Active features: 12 / 24
+INFO:__main__:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO:__main__:ABLATION C (Temporal+Spatial, no frequency): 5-Fold CV
+INFO:__main__:━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO:__main__:  Total subjects: 707  (Control=342, ASD=365)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 1/5: AUC=0.6877  F1=0.5455  (elapsed 32s, best epoch=80)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 2/5: AUC=0.7448  F1=0.6457  (elapsed 29s, best epoch=83)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 3/5: AUC=0.7570  F1=0.6614  (elapsed 29s, best epoch=60)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 4/5: AUC=0.6996  F1=0.5614  (elapsed 28s, best epoch=72)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 5/5: AUC=0.7458  F1=0.6719  (elapsed 28s, best epoch=61)
+INFO:__main__:
+  ╔══ RESULT: AUC = 0.7270 ± 0.0278  |  F1 = 0.6172 ══╗
+INFO:__main__:  Per-fold AUCs: [0.6877, 0.7448, 0.757, 0.6996, 0.7458]
+INFO:__main__:  Reusing 1015 existing lagged-Pearson graphs in /home/nidszxh/Projects/Neuro-CXG/data/processed/causal_graphs_pearson
+INFO:src.features.graph_factory:  Temporal features: node_attributes_harmonized.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Subject alignment summary: available=1015, valid=1015, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized train dataset with 707 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO:__main__:ABLATION D (Lagged Pearson edges): 5-Fold CV
+INFO:__main__:━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO:__main__:  Total subjects: 707  (Control=342, ASD=365)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 1/5: AUC=0.8446  F1=0.8205  (elapsed 51s, best epoch=83)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 2/5: AUC=0.8599  F1=0.8243  (elapsed 48s, best epoch=84)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 3/5: AUC=0.8372  F1=0.8028  (elapsed 55s, best epoch=96)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 4/5: AUC=0.7659  F1=0.7248  (elapsed 30s, best epoch=80)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 5/5: AUC=0.8640  F1=0.8082  (elapsed 29s, best epoch=83)
+INFO:__main__:
+  ╔══ RESULT: AUC = 0.8343 ± 0.0356  |  F1 = 0.7961 ══╗
+INFO:__main__:  Per-fold AUCs: [0.8446, 0.8599, 0.8372, 0.7659, 0.864]
+INFO:__main__:  Reusing 1015 existing ridge-granger graphs in /home/nidszxh/Projects/Neuro-CXG/data/processed/causal_graphs_ridge_granger
+INFO:src.features.graph_factory:  Temporal features: node_attributes_harmonized.csv
+INFO:src.features.graph_factory:  Spatial features: node_features_3d_harmonized.csv
+INFO:src.features.graph_factory:  Spatial missing-mask columns detected and will be merged into zero_lobe_mask
+INFO:src.features.graph_factory:Subject alignment summary: available=1015, valid=1015, dropped=0 (0.0%)
+INFO:src.features.graph_factory:✓ Feature dimensions validated
+INFO:src.features.graph_factory:Initialized train dataset with 707 subjects
+INFO:src.features.graph_factory:  Node features: 24 (18 temporal+internal + 4 spatial)
+INFO:__main__:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO:__main__:ABLATION D2 (Ridge Granger edges): 5-Fold CV
+INFO:__main__:━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO:__main__:  Total subjects: 707  (Control=342, ASD=365)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 1/5: AUC=0.8509  F1=0.8105  (elapsed 29s, best epoch=92)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 2/5: AUC=0.8950  F1=0.8322  (elapsed 28s, best epoch=84)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 3/5: AUC=0.8146  F1=0.7733  (elapsed 28s, best epoch=65)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 4/5: AUC=0.7333  F1=0.7532  (elapsed 29s, best epoch=93)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:src.models.training_utils:Early stopping triggered after 50 epochs without improvement
+INFO:src.models.training_utils:Fold 4: early stopping at epoch 96 (min_epochs=30, patience=50)
+INFO:__main__:  Fold 5/5: AUC=0.8568  F1=0.8088  (elapsed 27s, best epoch=46)
+INFO:__main__:
+  ╔══ RESULT: AUC = 0.8301 ± 0.0547  |  F1 = 0.7956 ══╗
+INFO:__main__:  Per-fold AUCs: [0.8509, 0.895, 0.8146, 0.7333, 0.8568]
+INFO:__main__:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO:__main__:ABLATION E (No site/demographics): 5-Fold CV
+INFO:__main__:━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO:__main__:  Total subjects: 707  (Control=342, ASD=365)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 1/5: AUC=0.6980  F1=0.5421  (elapsed 27s, best epoch=84)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 2/5: AUC=0.7385  F1=0.7123  (elapsed 28s, best epoch=73)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 3/5: AUC=0.7608  F1=0.6866  (elapsed 27s, best epoch=53)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 4/5: AUC=0.6976  F1=0.6619  (elapsed 27s, best epoch=66)
+INFO:src.models.gnn_model:Global seed set to 42 (cuDNN deterministic mode enabled)
+INFO:__main__:  Fold 5/5: AUC=0.7641  F1=0.7421  (elapsed 27s, best epoch=61)
+INFO:__main__:
+  ╔══ RESULT: AUC = 0.7318 ± 0.0291  |  F1 = 0.6690 ══╗
+INFO:__main__:  Per-fold AUCs: [0.698, 0.7385, 0.7608, 0.6976, 0.7641]
+INFO:__main__:
+======================================================================
+INFO:__main__:ABLATION SUMMARY
+INFO:__main__:======================================================================
+INFO:__main__:Ablation                                           AUC ± std  vs baseline
+INFO:__main__:------------------------------------------------------------------------
+INFO:__main__:  A (FlatMLP, no graph)                       0.7257±0.0162 ++0.0957
+INFO:__main__:  B (Spatial only, 4 features)                0.5515±0.0189 -0.0785
+INFO:__main__:  C (Temporal+Spatial, no frequency)          0.7270±0.0278 ++0.0970
+INFO:__main__:  D (Lagged Pearson edges)                    0.8343±0.0356 ++0.2043
+INFO:__main__:  D2 (Ridge Granger edges)                    0.8301±0.0547 ++0.2001
+INFO:__main__:  E (No site/demographics)                    0.7318±0.0291 ++0.1018
+INFO:__main__:------------------------------------------------------------------------
+INFO:__main__:  Baseline GNN (full)                         0.6300  (reference)
+INFO:__main__:======================================================================
+INFO:__main__:
+  Results saved → /home/nidszxh/Projects/Neuro-CXG/results/experiments/ablations/ablation_results.csv
+INFO:pipeline:Completed: Ablation Studies
+INFO:pipeline:Running: Generate Paper Figures
+  Loaded matplotlib style from /home/nidszxh/Projects/Neuro-CXG/configs/matplotlib.rc
+Generating paper figures in /home/nidszxh/Projects/Neuro-CXG/results/paper_figures...
+============================================================
+Generating ROC curves...
+  Saved ROC curve to roc_curves/
+Generating ablation figure...
+  Saved ablation figure to /home/nidszxh/Projects/Neuro-CXG/results/paper_figures
+Generating training curves...
+  Saved training curves to training_curves/
+Generating attention heatmap...
+  Saved attention heatmap to attention/
+Generating causal graph visualizations...
+Generating calibration plot...
+  Saved calibration plot to calibration/
+Generating per-site AUC chart...
+  Saved per-site AUC chart to per_site_auc.{png,pdf}
+Generating Bootstrap CI figure...
+  Saved Bootstrap CI figure to bootstrap_ci.{png,pdf}
+Generating dataflow diagram...
+/home/nidszxh/Projects/Neuro-CXG/src/analysis/generate_paper_figures.py:402: UserWarning: The figure layout has changed to tight
+  plt.tight_layout()
+  Saved dataflow_diagram.png
+Generating feature extraction diagram...
+/home/nidszxh/Projects/Neuro-CXG/src/analysis/generate_paper_figures.py:482: UserWarning: The figure layout has changed to tight
+  plt.tight_layout()
+  Saved feature_extraction.png
+Generating GNN architecture diagram...
+/home/nidszxh/Projects/Neuro-CXG/src/analysis/generate_paper_figures.py:546: UserWarning: The figure layout has changed to tight
+  plt.tight_layout()
+  Saved gnn_architecture.png
+============================================================
+All figures saved to /home/nidszxh/Projects/Neuro-CXG/results/paper_figures
+
+Figure checklist:
+  [1] ROC curves (all models) - roc_curves/
+  [2] Ablation bar chart - ablations/
+  [3] Training curves - training_curves/
+  [4] Attention heatmap - attention/
+  [5] Causal graphs - causal_graphs/
+  [6] Calibration plot - calibration/
+  [7] Per-site AUC chart - per_site_auc.{png,pdf}
+  [8] Bootstrap CI figure - bootstrap_ci.{png,pdf}
+  [9] Dataflow diagram - dataflow_diagram.png
+  [10] Feature extraction - feature_extraction.png
+  [11] GNN architecture - gnn_architecture.png
+  [9] Architecture diagram - architecture_diagram.{png,svg}
+INFO:pipeline:Completed: Generate Paper Figures
+INFO:pipeline:
+======================================================================
+INFO:pipeline:NEURO-CXG PIPELINE EXECUTION COMPLETE
+INFO:pipeline:======================================================================
+INFO:pipeline:📁 Checkpoints: /home/nidszxh/Projects/Neuro-CXG/models/checkpoints
+INFO:pipeline:📁 Causal graphs: /home/nidszxh/Projects/Neuro-CXG/data/processed/causal_graphs
+INFO:pipeline:📁 Features: /home/nidszxh/Projects/Neuro-CXG/data/metadata
+INFO:pipeline:📁 Visualizations: /home/nidszxh/Projects/Neuro-CXG/results/visualizations
+INFO:pipeline:📁 Evaluation results: /home/nidszxh/Projects/Neuro-CXG/results/evaluation
+INFO:pipeline:📁 Explainability: /home/nidszxh/Projects/Neuro-CXG/results/explainability
+INFO:pipeline:📁 Result analysis: /home/nidszxh/Projects/Neuro-CXG/results/analysis
+INFO:pipeline:📁 Subject analysis: /home/nidszxh/Projects/Neuro-CXG/results/subject_analysis
+INFO:pipeline:📁 Ablation studies: /home/nidszxh/Projects/Neuro-CXG/results/experiments/ablations
+INFO:pipeline:📁 Data quality experiments: /home/nidszxh/Projects/Neuro-CXG/results/experiments/data_quality
+INFO:pipeline:======================================================================
+INFO:pipeline:
+✨ Post-Training Analysis Commands:
+INFO:pipeline:   python src/run_pipeline.py --visualizations-only
+INFO:pipeline:   python src/run_pipeline.py --analysis-only
+INFO:pipeline:   python -m src.analysis.visualize_causal_graph --auto-pair
+INFO:pipeline:   python -m src.analysis.subject_analysis
+INFO:pipeline:   python -m src.validation.dev_audit --features --quick
+INFO:pipeline:   python -m src.validation.audit_check
+INFO:pipeline:   python -m src.validation.dev_audit --all
+INFO:pipeline:   python -m src.validation.pipeline_checks
+INFO:pipeline:   python -m src.experiments.data_quality
+INFO:pipeline:   python -m src.experiments.run_ablations
+INFO:pipeline:   python src/run_evaluation.py
+INFO:pipeline:   python src/run_explainability.py
+INFO:pipeline:   python src/run_result_analysis.py
+INFO:pipeline:======================================================================

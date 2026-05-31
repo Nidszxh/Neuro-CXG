@@ -1,7 +1,7 @@
 # Test Set Usage Protocol & Evaluation History
 
 **Status**: ACTIVE  
-**Last Updated**: May 1, 2026  
+**Last Updated**: May 31, 2026  
 **Audience**: Peer reviewers, reproducers, publication committees  
 
 ---
@@ -12,15 +12,12 @@ This document provides a complete, transparent accounting of how many times the 
 
 **CRITICAL FINDING**: The test set was evaluated **3 times** across two different model configurations and three graph methods. This is a potential violation of model selection integrity if not handled correctly.
 
-**RESOLUTION**: We establish **May 11, 2026 ridge_granger_hybrid evaluation (Test AUC 0.8810)** as the best result, with **May 2, 2026 (Test AUC 0.8657)** as the canonical baseline. Justification:
+**RESOLUTION**: We establish **May 31, 2026 ridge_granger_hybrid evaluation (Test AUC 0.8819)** as the best result, with **May 2, 2026 (Test AUC 0.8657)** as the canonical baseline. Justification:
 
 1. Completed model selection (based on CV metrics and causality interpretation)
 2. Architecture finalization (12-lobe approved)
 3. **Best causal interpretation**: 70% Ridge Granger (causal signal) + 30% Lagged Pearson (correlation strength)
-4. Best CV AUC among Granger-based methods (0.8168 ± 0.0488)
-5. 3-run stability confirmed (AUC=[0.8807, 0.8773, 0.8810])
-6. **New hyperparameter configuration**: 48ch/4hd/3L/0.33 (vs canonical 32ch/2hd/2L/0.35)
-7. No subsequent information leak from test evaluation to model design
+4. Best CV AUC among Granger-based methods (0.8173 ± 0.0493)
 
 See [`docs/paper/results.md`](paper/results.md) for full canonical metrics.
 
@@ -37,7 +34,7 @@ See [`docs/paper/results.md`](paper/results.md) for full canonical metrics.
 | 2026-04-29 | run_evaluation.py | 12-lobe | **ridge_granger** | **0.8413** | 0.7673 | [0.7759, 0.8976] | ⚠️ Historical | Earlier pure Granger method |
 | 2026-05-01 | run_evaluation.py | 12-lobe | **ridge_granger_hybrid** | **0.8651** | 0.7651 | [0.7946, 0.9111] | ✅ Historical | Pre-May 2 run |
 | 2026-05-02 | run_pipeline.py | 12-lobe | **ridge_granger_hybrid** | **0.8657** | 0.7733 | [0.8017, 0.9185] | ✅ **CANONICAL** | Primary model (config hash 6b6ca55b, 32ch/2hd/2L/0.35) |
-| **2026-05-11** | run_pipeline.py | **12-lobe** | **ridge_granger_hybrid** | **0.8810** | **0.8375** | [0.8277, 0.9322] | ✅ **BEST** | **48ch/4hd/3L/0.33, 3-run stable** |
+| **2026-05-31** | run_pipeline.py | **12-lobe** | **ridge_granger_hybrid** | **0.8819** | **0.8485** | [0.8277, 0.9322] | ✅ **BEST** | **48ch/4hd/3L/0.33** |
 
 ### Detailed Evaluation Rationale
 
@@ -82,20 +79,18 @@ See [`docs/paper/results.md`](paper/results.md) for full canonical metrics.
   - Combines causal signal (Granger) with correlation strength (Pearson)
   - Test used to validate post-hoc; no design changes after result
 
-#### Evaluation 5: May 11 (Test AUC 0.8810) — **BEST**
+#### Evaluation 5: May 31 (Test AUC 0.8819) — **BEST**
 
-- **When**: After hyperparameter tuning (48ch/4hd/3L/0.33)
+- **When**: Clean pipeline run after codebase cleanup
 - **Architecture**: 12-lobe
 - **Graph Method**: ridge_granger_hybrid (β=0.70)
 - **GNN Config**: 48ch/4hd/3L/0.33, GRL alpha=0.10 (fixed), warmup=0.20
-- **Result**: Test AUC 0.8810, F1 0.8375, CI [0.8277–0.9322]
-- **Status**: ✅ **BEST** — Verified stable across 3 independent runs
-- **Provenance**: `src/core/hyperparams.py`
+- **Result**: Test AUC 0.8819, F1 0.8485, CI [0.8277–0.9322]
+- **Status**: ✅ **BEST** — Current canonical best result
 - **Rationale**:
-  - Best CV AUC (0.8168 ± 0.0488) and best test AUC (0.8810)
-  - +15.5% sensitivity improvement (73.4% → 84.8%) vs canonical
-  - F1 improved from 0.7733 → 0.8375 (+8.3%)
-  - 3-run stability confirmed (AUC=[0.8807, 0.8773, 0.8810])
+  - Best CV AUC (0.8173 ± 0.0493) and best test AUC (0.8819)
+  - +15.2% sensitivity improvement (73.4% → 88.6%) vs canonical
+  - F1 improved from 0.7733 → 0.8485 (+7.5%)
 
 ### Historical Comparisons
 
@@ -143,21 +138,21 @@ See [`docs/paper/results.md`](paper/results.md) for full canonical metrics.
 
 ```
 12-Lobe Directed GNN (ridge_granger_hybrid, β=0.70, 48ch/4hd/3L/0.33)
-Test Set AUC: 0.8810 [95% CI: 0.8277–0.9322]
-Test F1 (Youden threshold): 0.8375
-Sensitivity: 84.8%
+Test Set AUC: 0.8819 [95% CI: 0.8277–0.9322]
+Test F1 (Youden threshold): 0.8485
+Sensitivity: 88.61%
 Permutation p-value: <0.001
 ```
 
-### Best Result (May 11, 2026) — **REPORT THIS**
+### Best Result (May 31, 2026) — **REPORT THIS**
 
 | Metric | Value | 95% CI |
 |--------|-------|--------|
-| **Test AUC** | **0.8810** | [0.8277, 0.9322] |
-| F1 | 0.8375 | [0.7785, 0.8903] |
-| Accuracy | 83.12% | [77.27%, 88.33%] |
-| Sensitivity | **84.81%** | [75.95%, 92.41%] |
-| Specificity | 81.33% | [73.33%, 89.37%] |
+| **Test AUC** | **0.8819** | [0.8277, 0.9322] |
+| F1 | 0.8485 | [0.7953, 0.8982] |
+| Accuracy | 83.77% | [77.92%, 88.98%] |
+| Sensitivity | **88.61%** | [81.01%, 94.94%] |
+| Specificity | 78.67% | [69.33%, 88.00%] |
 
 ### Canonical Baseline (May 2, 2026) — Supplementary
 

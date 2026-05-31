@@ -38,17 +38,17 @@ This model card documents model architecture, training configuration, performanc
 
 ## Performance Metrics
 
-### Primary Model: May 11, 2026 (Best)
-Provenance: `src/core/hyperparams.py` (48ch/4hd/3L/0.33), 3-run stable
+### Primary Model: May 31, 2026 (Best)
+Provenance: `docs/paper/results.md` (48ch/4hd/3L/0.33)
 
 | Metric | Value | 95% CI | Notes |
 |--------|-------|--------|-------|
-| **CV AUC** | 0.8168 ± 0.0488 | — | 5-fold cross-validation |
-| **Test AUC** | **0.8810** | [0.8277, 0.9322] | Ensemble on held-out test set |
-| **Test F1** | **0.8375** | [0.7785, 0.8903] | Threshold-optimized (Youden) |
-| **Test Accuracy** | 83.12% | [77.27%, 88.33%] | |
-| **Sensitivity** | 84.81% | [75.95%, 92.41%] | True positive rate (ASD) |
-| **Specificity** | 81.33% | [73.33%, 89.37%] | True negative rate (Control) |
+| **CV AUC** | 0.8173 ± 0.0493 | — | 5-fold cross-validation |
+| **Test AUC** | **0.8819** | [0.8277, 0.9322] | Ensemble on held-out test set |
+| **Test F1** | **0.8485** | [0.7953, 0.8982] | Threshold-optimized (Youden) |
+| **Test Accuracy** | 83.77% | [77.92%, 88.98%] | |
+| **Sensitivity** | 88.61% | [81.01%, 94.94%] | True positive rate (ASD) |
+| **Specificity** | 78.67% | [69.33%, 88.00%] | True negative rate (Control) |
 
 ### Canonical Baseline: May 2, 2026
 Provenance: Config hash 6b6ca55b
@@ -60,16 +60,16 @@ Provenance: Config hash 6b6ca55b
 
 ### Performance Improvement
 
-| Metric | May 2 (Baseline) | May 11 (Best) | Delta |
+| Metric | May 2 (Baseline) | May 31 (Best) | Delta |
 |--------|------------------|---------------|-------|
-| Test AUC | 0.8657 | **0.8810** | **+1.53%** |
-| Test F1 | 0.7651 | **0.8375** | **+9.5%** |
-| Accuracy | 78.57% | **83.12%** | **+4.6%** |
-| Sensitivity | 73.42% | **84.81%** | **+15.5%** |
+| Test AUC | 0.8657 | **0.8819** | **+1.62%** |
+| Test F1 | 0.7651 | **0.8485** | **+8.34%** |
+| Accuracy | 78.57% | **83.77%** | **+5.2%** |
+| Sensitivity | 73.42% | **88.61%** | **+15.19%** |
 
 ### Configuration Comparison
 
-| Parameter | Canonical | Best (May 2026) |
+| Parameter | Canonical | Best (Jun 2026) |
 |-----------|-----------|------------------|
 | GNN_HIDDEN_CHANNELS | 32 | **48** |
 | GNN_NUM_HEADS | 2 | **4** |
@@ -125,7 +125,7 @@ All evaluable subgroups significant after Bonferroni correction (α=0.0056).
 
 ## Hyperparameters
 
-### Best Model (May 2026): 48ch/4hd/3L/0.33
+### Best Model (Jun 2026): 48ch/4hd/3L/0.33
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
@@ -156,11 +156,11 @@ All evaluable subgroups significant after Bonferroni correction (α=0.0056).
 | Model checkpoints | `models/checkpoints/best_model_fold*.pt` |
 | Causal graphs | `data/processed/causal_graphs/` |
 | Configuration | `src/core/hyperparams.py` |
-| Validation | `docs/evaluation.md` |
+| Validation | `docs/paper/results.md` |
 | Decision log | `docs/decisions.md` |
 
 ---
 
 *This model card follows the template from Mitchell et al. (2019) "Model Cards for Model Reporting".*
 
-*Last updated: May 2, 2026*
+*Last updated: May 31, 2026*

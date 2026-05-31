@@ -194,16 +194,16 @@ Use the smallest rebuild that restores consistency:
 
 ### Artifact-Backed Model Performance Snapshot
 
-**Best Model (May 11, 2026 — 48ch/4hd/3L/0.33):**
+**Best Model (May 31, 2026 — 48ch/4hd/3L/0.33):**
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| **CV AUC** | 0.8168 ± 0.0488 | 5-fold, 3-run stable |
-| **Test AUC** | **0.8810** | Ensemble, 95% CI [0.8277, 0.9322] |
-| **Test F1** | **0.8375** | Youden threshold (0.4752) |
-| **Test Accuracy** | **0.8312** | |
-| **Test Sensitivity** | 0.8481 | |
-| **Test Specificity** | 0.8133 | |
+| **CV AUC** | 0.8173 ± 0.0493 | 5-fold |
+| **Test AUC** | **0.8819** | Ensemble, 95% CI [0.8277, 0.9322] |
+| **Test F1** | **0.8485** | Youden threshold (0.4914) |
+| **Test Accuracy** | **0.8377** | |
+| **Test Sensitivity** | 0.8861 | |
+| **Test Specificity** | 0.7867 | |
 | **Permutation p** | 0.001 | |
 
 **Method:** ridge_granger_hybrid (β=0.70)
@@ -228,7 +228,7 @@ CAUSALITY_METHOD = "ridge_granger_hybrid"
 | lagged_pearson + GRL=0.10 | 0.8004 ± 0.0293 | 0.8753 | 0.8121 | Method switch |
 | 12-Lobe Final | 0.7997 ± 0.0294 | 0.8694 | 0.8000 | 12-lobe approved |
 | Canonical (32ch/2hd/2L) | 0.8102 ± 0.0273 | 0.8657 | 0.7733 | May 2 |
-| **Best (48ch/4hd/3L/0.33)** | **0.8168 ± 0.0488** | **0.8810** | **0.8375** | **May 11** |
+| **Best (48ch/4hd/3L/0.33)** | **0.8173 ± 0.0493** | **0.8819** | **0.8485** | **May 31** |
 
 ### Metric Disagreement Guidance
 

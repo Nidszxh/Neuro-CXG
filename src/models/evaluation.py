@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import torch
@@ -243,6 +246,31 @@ def resolve_threshold(
     else:
         # Default fallback is F1 maximization
         return optimal_threshold(probs, labels)
+
+
+def site_ids_from_graphs(graphs: list) -> np.ndarray:
+    """Extract integer site_id vector aligned to graph order."""
+    return np.array([
+        int(g.site_id.item())
+        if hasattr(g, "site_id") and g.site_id is not None and g.site_id.numel() > 0
+        else -1
+        for g in graphs
+    ])
+
+
+def load_last_fold_val_graphs() -> list:
+    """Use last fold validation partition from train split as calibration set."""
+    from src.features.graph_factory import ABIDECausalDataset
+    train_dataset = ABIDECausalDataset(split="train")
+    train_dataset.augment_graphs = False
+    if "cv_fold" not in train_dataset.manifest.columns:
+        logger.warning("Manifest has no cv_fold column; skipping per-site calibration")
+        return []
+
+    from src.core.config import K_FOLDS
+    fold_id = K_FOLDS - 1
+    val_indices = np.where(train_dataset.manifest["cv_fold"].values == fold_id)[0]
+    return [train_dataset[i] for i in val_indices if train_dataset[i] is not None]
 
 
 def _json_safe(value):

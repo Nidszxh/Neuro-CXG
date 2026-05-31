@@ -14,16 +14,12 @@ Run:
 
 Note: no GPU / real ABIDE data required.
 """
-import sys
-from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 import pytest
 import torch
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.core.config import (
     FEATURE_GROUPS,
@@ -40,7 +36,6 @@ DX_GROUP = 2         # ASD
 SITE_ID = "MOCK_SITE"
 N_EDGES_MIN = 12     # must match construct_causal MIN_EDGES_PER_GRAPH
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_manifest(subject_id: str, split: str, dx_group: int = DX_GROUP) -> pd.DataFrame:
@@ -54,7 +49,6 @@ def _make_manifest(subject_id: str, split: str, dx_group: int = DX_GROUP) -> pd.
         'FIQ': 105,
     }])
 
-
 def _make_temporal_features(subject_id: str) -> pd.DataFrame:
     """Build a harmonized temporal feature row with current temporal+frequency schema."""
     feature_cols = {}
@@ -65,7 +59,6 @@ def _make_temporal_features(subject_id: str) -> pd.DataFrame:
             feature_cols[f"{lobe_name}_{feat}"] = np.random.rand()
     row = {"subject_id": subject_id, **feature_cols}
     return pd.DataFrame([row])
-
 
 def _make_spatial_features(
     subject_id: str,
@@ -85,7 +78,6 @@ def _make_spatial_features(
         spatial_cols[f"{name}_spatial_missing"] = int(lobe_id in global_missing_lobes)
     return pd.DataFrame([spatial_cols])
 
-
 def _make_sparse_adj(num_lobes: int, min_edges: int = 20) -> torch.Tensor:
     """
     Create a sparse directed adjacency matrix with at least *min_edges* non-zero entries.
@@ -102,7 +94,6 @@ def _make_sparse_adj(num_lobes: int, min_edges: int = 20) -> torch.Tensor:
             adj[i, j] = float(rng.uniform(0.5, 5.0))
             edges_placed += 1
     return adj
-
 
 # ── Session-scoped fixture: build temp data directory ─────────────────────────
 
@@ -146,7 +137,6 @@ def mock_data_dir(tmp_path_factory):
 
     return root, meta_dir, graphs_dir
 
-
 # ── Dataset fixture ───────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
@@ -177,7 +167,6 @@ def dataset(mock_data_dir):
         ds = ABIDECausalDataset(split=SPLIT)
 
     return ds
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tests
@@ -291,7 +280,6 @@ class TestABIDECausalDataset:
                 f"{attr} dtype expected float32, got {val.dtype}"
             )
 
-
 # ── Control label-encoding fixture + test ─────────────────────────────────────
 
 @pytest.fixture(scope="module")
@@ -323,7 +311,6 @@ def mock_data_dir_control(tmp_path_factory):
     )
     return root, meta_dir, graphs_dir
 
-
 @pytest.fixture(scope="module")
 def dataset_control(mock_data_dir_control):
     """ABIDECausalDataset built from Control (DX_GROUP=1) mock data."""
@@ -338,7 +325,6 @@ def dataset_control(mock_data_dir_control):
         ds = ABIDECausalDataset(split="train")
     return ds
 
-
 def test_label_encoding_control(dataset_control):
     """DX_GROUP=1 (ABIDE Control) must map to y=0 (GNN Control class)."""
     sample = dataset_control.get(0)
@@ -346,7 +332,6 @@ def test_label_encoding_control(dataset_control):
     assert sample.y.item() == 0, (
         f"DX_GROUP=1 (Control) should encode as y=0, got y={sample.y.item()}"
     )
-
 
 @pytest.fixture(scope="module")
 def mock_data_dir_spatial_missing(tmp_path_factory):
@@ -383,7 +368,6 @@ def mock_data_dir_spatial_missing(tmp_path_factory):
     )
     return root, meta_dir, graphs_dir
 
-
 @pytest.fixture(scope="module")
 def dataset_spatial_missing(mock_data_dir_spatial_missing):
     """ABIDECausalDataset built from mock data with spatial_missing columns."""
@@ -400,7 +384,6 @@ def dataset_spatial_missing(mock_data_dir_spatial_missing):
 
         ds = ABIDECausalDataset(split="train")
     return ds
-
 
 def test_zero_lobe_mask_merges_spatial_missing(dataset_spatial_missing):
     """Spatial missing-mask columns should propagate into graph zero_lobe_mask."""

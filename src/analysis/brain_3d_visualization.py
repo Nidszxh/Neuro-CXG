@@ -12,18 +12,13 @@ Usage:
 """
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
 from src.core.config import (
     LOBE_NAMES,
-    LOBE_TO_NETWORK,
-    NETWORK_NAMES,
     NUM_LOBES,
     RESULTS_DIR,
 )
@@ -45,7 +40,6 @@ def get_lobe_centroids() -> dict[str, tuple[float, float, float]]:
         "Cerebellum": (5, -60, -25),
         "Brainstem": (0, -30, -40),
     }
-
 
 def create_importance_brain_map(
     importance_scores: np.ndarray,
@@ -82,9 +76,9 @@ def create_importance_brain_map(
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
     views = [(0, 1, "Sagittal (X-Y)"), (0, 2, "Coronal (X-Z)"), (1, 2, "Axial (Y-Z)")]
-    colors = plt.cm.plasma(norm_values)
+    plt.cm.plasma(norm_values)
 
-    for ax, (i, j, view_name) in zip(axes, views):
+    for ax, (i, j, view_name) in zip(axes, views, strict=False):
         scatter = ax.scatter(
             coords[:, i], coords[:, j],
             s=norm_values * 500 + 50,
@@ -95,7 +89,7 @@ def create_importance_brain_map(
             linewidths=1.5,
         )
 
-        for k, (x, y) in enumerate(zip(coords[:, i], coords[:, j])):
+        for k, (x, y) in enumerate(zip(coords[:, i], coords[:, j], strict=False)):
             ax.annotate(labels[k], (x, y), fontsize=7, ha="center", va="bottom",
                        xytext=(0, 5), textcoords="offset points")
 
@@ -116,7 +110,6 @@ def create_importance_brain_map(
     plt.close()
     print(f"Saved: {output_path}")
     return output_path
-
 
 def create_connectivity_3d_plot(
     adjacency_matrix: np.ndarray,
@@ -167,7 +160,6 @@ def create_connectivity_3d_plot(
         print(f"Connectivity plot failed: {e}")
         return None
 
-
 def create_glass_brain_plot(
     importance_scores: np.ndarray,
     output_dir: Path,
@@ -200,15 +192,15 @@ def create_glass_brain_plot(
     fig, ax = plt.subplots(1, 1, figsize=(12, 10))
 
     norm_values = values / values.max() if values.max() > 0 else values
-    colors = plt.cm.plasma(norm_values)
+    plt.cm.plasma(norm_values)
 
     ax.scatter(coords[:, 0], coords[:, 1], s=norm_values * 800 + 100,
                c=values, cmap="plasma", alpha=0.7, edgecolors="black", linewidths=2)
 
-    for i, (x, y, label) in enumerate(zip(coords[:, 0], coords[:, 1], labels)):
+    for _, (x, y, label) in enumerate(zip(coords[:, 0], coords[:, 1], labels, strict=False)):
         ax.annotate(label, (x, y), fontsize=9, ha="center", va="bottom",
                    xytext=(0, 8), textcoords="offset points",
-                   bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.8))
+                   bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.8})
 
     ax.set_xlabel("X (mm) - Left ↔ Right", fontsize=12)
     ax.set_ylabel("Y (mm) - Posterior ↔ Anterior", fontsize=12)
@@ -226,7 +218,6 @@ def create_glass_brain_plot(
     plt.close()
     print(f"Saved: {output_path}")
     return output_path
-
 
 def main():
     parser = argparse.ArgumentParser(description="Generate 3D brain visualizations")
@@ -285,7 +276,6 @@ def main():
 
     print("\n✓ 3D brain visualizations complete!")
     print(f"   Output: {output_dir}")
-
 
 if __name__ == "__main__":
     main()

@@ -9,9 +9,11 @@ Usage:
     python src/analysis/circular_connectome.py --output results/paper_figures/
 """
 import argparse
-import sys
+import logging
 import warnings
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import matplotlib
 import numpy as np
@@ -25,8 +27,6 @@ from matplotlib.colors import Normalize
 warnings.filterwarnings("ignore", ".*Colorbar layout.*")
 
 # Add project to path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
 import pandas as pd
 import torch
 
@@ -37,6 +37,7 @@ from src.core.config import (
     MASTER_MANIFEST,
     NETWORK_NAMES,
     NUM_LOBES,
+    RESULTS_DIR,
 )
 
 # Network membership for each lobe - sync with LOBE_TO_NETWORK from config
@@ -52,12 +53,10 @@ NETWORK_COLORS = {
     "Limbic": "#d62728",       # Red
 }
 
-
 def get_network_color(lobe_idx):
     """Get network color for a lobe index."""
     network = NETWORK_MEMBERSHIP.get(lobe_idx, "Other")
     return NETWORK_COLORS.get(network, "#7f7f7f")
-
 
 def compute_group_average_causal(subject_ids, graphs_dir):
     """Compute average causal adjacency matrix for a group."""
@@ -67,7 +66,7 @@ def compute_group_average_causal(subject_ids, graphs_dir):
         if not graph_path.exists():
             continue
         try:
-            data = torch.load(graph_path, weights_only=False)
+            data = torch.load(graph_path, weights_only=True)
             if "adj" in data:
                 matrices.append(data["adj"].detach().cpu().numpy())
         except Exception:
@@ -75,7 +74,6 @@ def compute_group_average_causal(subject_ids, graphs_dir):
     if not matrices:
         return None
     return np.mean(np.stack(matrices), axis=0)
-
 
 def create_circular_connectome(adj_matrix, output_path, title="Causal Connectivity",
                                top_edges=20):
@@ -216,12 +214,11 @@ def create_circular_connectome(adj_matrix, output_path, title="Causal Connectivi
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"  Saved: {output_path} ({len(edges)} edges)")
-
+    logger.info("Saved: %s (%d edges)", output_path, len(edges))
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--output', type=str, default='results/paper_figures/causal_graphs/')
+    parser.add_argument('--output', type=str, default=str(RESULTS_DIR / 'paper_figures' / 'causal_graphs'))
     parser.add_argument('--top-edges', type=int, default=30,
                        help='Number of strongest edges to show per plot (default: 30)')
     args = parser.parse_args()
@@ -231,8 +228,8 @@ def main():
 
     # Load manifest
     if not MASTER_MANIFEST.exists():
-        print(f"Error: {MASTER_MANIFEST} not found")
-        print("Run: python src/run_pipeline.py --auto --skip-download --skip-split")
+        logger.error("%s not found", MASTER_MANIFEST)
+        logger.error("Run: python src/run_pipeline.py --auto --skip-download --skip-split")
         return
 
     manifest = pd.read_csv(MASTER_MANIFEST)
@@ -243,22 +240,22 @@ def main():
     if not control_subjects:
         control_subjects = manifest[manifest['DX_GROUP'] == 0]['subject_id'].astype(str).tolist()
 
-    print(f"Found {len(asd_subjects)} ASD subjects, {len(control_subjects)} Control subjects")
+    logger.info("Found %d ASD subjects, %d Control subjects", len(asd_subjects), len(control_subjects))
 
     # Compute average causal matrices
-    print("Computing ASD average causal matrix...")
+    logger.info("Computing ASD average causal matrix...")
     asd_avg = compute_group_average_causal(asd_subjects, CAUSAL_GRAPHS_DIR)
 
-    print("Computing Control average causal matrix...")
+    logger.info("Computing Control average causal matrix...")
     control_avg = compute_group_average_causal(control_subjects, CAUSAL_GRAPHS_DIR)
 
     if asd_avg is None or control_avg is None:
-        print("Error: Could not compute average causal matrices")
-        print(f"Check that graphs exist in: {CAUSAL_GRAPHS_DIR}")
+        logger.error("Could not compute average causal matrices")
+        logger.error("Check that graphs exist in: %s", CAUSAL_GRAPHS_DIR)
         return
 
     # Generate circular connectome plots
-    print(f"\nGenerating circular connectome plots (top {args.top_edges} edges)...")
+    logger.info("Generating circular connectome plots (top %d edges)...", args.top_edges)
     create_circular_connectome(
         asd_avg,
         output_dir / 'circular_connectome_ASD.png',
@@ -281,8 +278,7 @@ def main():
         top_edges=args.top_edges
     )
 
-    print(f"\nAll figures saved to: {output_dir}")
-
+    logger.info("All figures saved to: %s", output_dir)
 
 if __name__ == '__main__':
     main()

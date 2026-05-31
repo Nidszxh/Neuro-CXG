@@ -72,7 +72,7 @@ GNN_GRL_ALPHA = 0.10
 
 **Results:**
 - CV AUC: 0.8168 ± 0.0488 (+0.64% vs canonical)
-- Test AUC: **0.8810** (+1.53% vs canonical 0.8657)
+- Test AUC: **0.8819** (+1.62% vs canonical 0.8657)
 
 **Best Configuration:**
 ```
@@ -95,7 +95,7 @@ GNN_GRL_ALPHA = 0.10           # Fixed
 
 **Summary**:
 - Comprehensive end-to-end evaluation complete
-- Full analysis in `docs/deprecated/FINAL_ARCHITECTURE_ANALYSIS.md`
+- Full analysis in `docs/architecture.md` and `docs/decisions.md`
 
 **Metrics Comparison:**
 

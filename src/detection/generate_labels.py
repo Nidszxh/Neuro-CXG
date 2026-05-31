@@ -1,8 +1,6 @@
 import logging
 import os
-import sys
 from collections import defaultdict
-from pathlib import Path
 
 import nibabel as nib
 import numpy as np
@@ -10,7 +8,6 @@ from PIL import Image
 from tqdm import tqdm
 
 # Setup paths from config
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     ALFF_SLICE_PERCENTILES,
     ATLAS_PATH,
@@ -21,15 +18,10 @@ from src.core.config import (
 )
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
 IMG_SIZE = (YOLO_IMGSZ, YOLO_IMGSZ)
-
 
 def calculate_yolo_bbox(mask, size):
     rows, cols = np.where(mask)
@@ -42,7 +34,6 @@ def calculate_yolo_bbox(mask, size):
     x_center = (x_min + w / 2.0) / size[0]
     y_center = (y_min + h / 2.0) / size[1]
     return f"{x_center:.6f} {y_center:.6f} {(w / size[0]):.6f} {(h / size[1]):.6f}"
-
 
 def generate_atlas_labels_for_percentiles():
     """
@@ -89,7 +80,6 @@ def generate_atlas_labels_for_percentiles():
             logger.debug(f"Percentile {p} (idx={idx}, z={z}): {len(bboxes)} boxes")
 
     return atlas_labels
-
 
 def main():
     if not DATA_FINAL.exists():
@@ -149,7 +139,7 @@ def main():
                 continue
 
             # Map each slice to its corresponding percentile index (0-6)
-            for percentile_idx, (z_idx, img_name) in enumerate(slice_list_sorted):
+            for percentile_idx, (_, img_name) in enumerate(slice_list_sorted):
                 if percentile_idx in atlas_anno:
                     label_path = lbl_dir / img_name.replace(".png", ".txt")
                     with open(label_path, "w") as f:
@@ -162,7 +152,6 @@ def main():
 
     logger.info(f"Annotation complete. Created {total_labels} labels for {total_images} images across all splits.")
     logger.info(f"Coverage: {100 * total_labels / total_images:.1f}%" if total_images > 0 else "No images found")
-
 
 if __name__ == "__main__":
     main()

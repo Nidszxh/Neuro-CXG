@@ -23,7 +23,6 @@ import numpy as np
 import pandas as pd
 from neuroHarmonize import harmonizationApply, harmonizationLearn
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     FEATURE_GROUPS,
     HARMONIZATION_UNSEEN_SITE_POLICY,
@@ -39,12 +38,7 @@ from src.core.config import (
     NUM_LOBES,
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
-
 
 # ── constants ─────────────────────────────────────────────────────────────────
 FEATURE_TYPES = FEATURE_GROUPS["temporal"] + FEATURE_GROUPS["frequency"]
@@ -57,7 +51,6 @@ VARIANCE_RETENTION_HIGH = 1.3    # flag features gaining  >30 % of original vari
 COMBAT_MIN_VARIANCE = 1e-8       # treat near-constant channels as constant for ComBat stability
 QUALITY_MIN_REFERENCE_VARIANCE = 1e-8  # avoid unstable retention ratios from tiny denominators
 
-
 @dataclass
 class HarmonizationFold:
     """Container for harmonization results of a single CV fold."""
@@ -68,13 +61,11 @@ class HarmonizationFold:
     val_idx: np.ndarray
     model: object | None
 
-
 # ── feature-column helpers ────────────────────────────────────────────────────
 
 def _feat_cols(df: pd.DataFrame) -> list[str]:
     """Return all columns except subject_id."""
     return [c for c in df.columns if c != "subject_id"]
-
 
 # ── 1. Validation ───────────────────────────────────────────────────────────────────
 
@@ -94,7 +85,6 @@ def validate_features(df: pd.DataFrame) -> None:
         "NaN: %d (%.1f%%) | Inf: %d | Subjects with NaN: %d | Features with NaN: %d",
         len(df), len(cols), nan_total, nan_pct, inf_total, subj_nan, feat_nan,
     )
-
 
 # ── 2. Repair ─────────────────────────────────────────────────────────────────────
 
@@ -162,7 +152,6 @@ def repair_features(df: pd.DataFrame, *, impute_nans: bool = True, clip_outliers
     logger.info("Repair complete: %d subjects remaining (removed %d)", len(df), removed)
     return df
 
-
 # ── 3. ROI → Lobe aggregation ─────────────────────────────────────────────
 
 def aggregate_to_lobes(df: pd.DataFrame) -> pd.DataFrame:
@@ -190,9 +179,7 @@ def aggregate_to_lobes(df: pd.DataFrame) -> pd.DataFrame:
     )
     return out
 
-
 # ── 4. Harmonization helpers ──────────────────────────────────────────────
-
 
 def _outlier_clip_fit(
     df: pd.DataFrame,
@@ -211,7 +198,6 @@ def _outlier_clip_fit(
     clipped[cols] = clipped[cols].clip(lower=lower, upper=upper, axis=1)
     return clipped, {"lower": lower, "upper": upper}
 
-
 def _outlier_clip_apply(
     df: pd.DataFrame,
     clip_bounds: dict[str, "pd.Series"],
@@ -223,7 +209,6 @@ def _outlier_clip_apply(
     clipped = df.copy()
     clipped[cols] = clipped[cols].clip(lower=lower, upper=upper, axis=1)
     return clipped
-
 
 def _clip_outliers(df: pd.DataFrame, percentile_range: float = 0.05) -> pd.DataFrame:
     """Clip extreme values based on percentile range to prevent outlier explosion.
@@ -264,7 +249,6 @@ def _prepare_covariates(manifest: pd.DataFrame, features_df: pd.DataFrame) -> pd
     cov["DX_GROUP"] = pd.to_numeric(cov["DX_GROUP"], errors="coerce").fillna(1).astype(int)
     return cov.drop(columns=["subject_id"])
 
-
 def _remove_constant_features(
     features: pd.DataFrame,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
@@ -280,7 +264,6 @@ def _remove_constant_features(
             COMBAT_MIN_VARIANCE,
         )
     return features[kept_cols], kept_cols, constant_cols
-
 
 def _restore_constant_features(
     harmonized: pd.DataFrame,
@@ -300,7 +283,6 @@ def _restore_constant_features(
 
     all_cols = [c for c in original.columns if c != "subject_id"]
     return df[[c for c in all_cols if c in df.columns]]
-
 
 def _safe_harmonization_apply(
     apply_features: pd.DataFrame,
@@ -357,7 +339,6 @@ def _safe_harmonization_apply(
             )
 
     return harmonized
-
 
 def _harmonize_fold(
     train_features: pd.DataFrame,
@@ -423,7 +404,6 @@ def _harmonize_fold(
             "Harmonization failed (%s); using unharmonized features for this fold", exc
         )
         return None, train_features, val_features
-
 
 def _harmonize_train_apply_pair(
     train_data: pd.DataFrame,
@@ -503,7 +483,6 @@ def _harmonize_train_apply_pair(
 
     return model, train_lobes, apply_lobes
 
-
 def _write_ordered_subject_csv(df: pd.DataFrame, subject_order: list[str], output_path: Path) -> None:
     """Write CSV ordered by subject_id according to subject_order."""
     if df.empty:
@@ -517,7 +496,6 @@ def _write_ordered_subject_csv(df: pd.DataFrame, subject_order: list[str], outpu
     output_path.parent.mkdir(parents=True, exist_ok=True)
     ordered.to_csv(output_path, index=False)
     logger.info("Saved harmonized features -> %s (%d subjects)", output_path, len(ordered))
-
 
 # ── 5. Quality verification ───────────────────────────────────────────────
 
@@ -676,7 +654,6 @@ def _check_harmonization_quality(
         },
         "quality": "good" if is_ok else "check_warnings",
     }
-
 
 def harmonize_cv_safe_fold(
     features_df: pd.DataFrame,
@@ -893,7 +870,6 @@ def harmonize_cv_safe_fold(
 
     return harmonized_folds
 
-
 # ── 6. Spatial feature harmonization (conf_std / detection_count) ────────────
 
 # These two features encode scanner quality rather than anatomy:
@@ -906,7 +882,6 @@ _SPATIAL_SITE_COLS = (
     [f"{name}_conf_std" for name in LOBE_NAMES.values()]
     + [f"{name}_detection_count" for name in LOBE_NAMES.values()]
 )
-
 
 def harmonize_spatial_features(
     spatial_df: pd.DataFrame,
@@ -1039,7 +1014,6 @@ def harmonize_spatial_features(
 
     return result
 
-
 def main():
     """Main execution function."""
     if not NODE_ATTRIBUTES_TEMPORAL.exists():
@@ -1075,7 +1049,6 @@ def main():
         spatial_df = pd.read_csv(NODE_FEATURES_3D)
         spatial_df.to_csv(NODE_FEATURES_3D_HARMONIZED, index=False)
         logger.info("Spatial features copied without harmonization (legacy columns removed)")
-
 
 if __name__ == "__main__":
     main()

@@ -7,7 +7,7 @@ Last Updated: March 1, 2026
 
 Orchestrates the complete Neuro-CXG pipeline from data download to analysis:
 
-Core Pipeline (16 stages):
+Core Pipeline (17 stages):
   1. ABIDE Download - fMRI data + 7-slice ALFF export
   2. Train/Val/Test Split - 2D stratification (DX_GROUP + SITE_ID)
   3. Master Manifest - Subject-phenotype mapping
@@ -18,33 +18,34 @@ Core Pipeline (16 stages):
   8. YOLO Training - 12-region ROI detection (YOLO26n)
   9. Spatial Features - 3D coordinate aggregation
      (Stage 10 "Filter to 1,000" is handled within spatial features extraction)
- 11. Temporal Features - 20 features/ROI (8 time + 12 frequency)
- 12. Harmonization - Fold-safe neuroHarmonize (protects DX_GROUP)
- 13. Pre-GNN Integrity - Validate dataset completeness
- 14. Causal Graphs - Granger causality/lagged correlation (12×12)
- 15. Diagnostics - Comprehensive health report
- 16. Quality Validation - YOLO quality, graph sparsity checks
+  11. Temporal Features - 20 features/ROI (8 time + 12 frequency)
+  12. Harmonization - Fold-safe neuroHarmonize (protects DX_GROUP)
+  13. Pre-GNN Integrity - Validate dataset completeness
+  14. Causal Graphs - Granger causality/lagged correlation (12×12)
+  15. Multiview Graphs - Optional multi-view causal graph construction
+  16. Diagnostics - Comprehensive health report
+  17. Quality Validation - YOLO quality, graph sparsity checks
 
 Main Training (Phase 3):
- 17. GNN Training - 5-fold CV with GAT+GRL
+  18. GNN Training - 5-fold CV with GAT+GRL
 
 Post-Training Analysis (Phases 8 & 9):
- 18. Visualizations - Comprehensive plots and figures
- 19. Causal Graph Visualization - Render representative directed graphs
- 20. Evaluation - Bootstrap CI, permutation test, subgroups
- 21. Explainability - Node/edge importance, feature attribution
- 22. Result Analysis - Per-subject predictions, misclassification
- 23. Subject Analysis - Per-subject artifact integrity diagnostics
+  19. Visualizations - Comprehensive plots and figures
+  20. Causal Graph Visualization - Render representative directed graphs
+  21. Evaluation - Bootstrap CI, permutation test, subgroups
+  22. Explainability - Node/edge importance, feature attribution
+  23. Result Analysis - Per-subject predictions, misclassification
+  24. Subject Analysis - Per-subject artifact integrity diagnostics
 
 Diagnostics Snapshot:
- 24. Dead-Lobe Diagnosis - Quick lobe-signal sanity check on one subject
+  25. Dead-Lobe Diagnosis - Quick lobe-signal sanity check on one subject
 
 Optional Extended Stages:
- 25. Post-Fix Audit Check - Strict artifact validation
- 26. Dev Audit - Static consistency checks
- 27. Feature Diagnostics - Feature/group and graph edge diagnostics
- 28. Data Quality Experiments - Site generalization and bottleneck analysis
- 29. Ablation Studies - Controlled model ablations (A-E)
+  26. Post-Fix Audit Check - Strict artifact validation
+  27. Dev Audit - Static consistency checks
+  28. Feature Diagnostics - Feature/group and graph edge diagnostics
+  29. Data Quality Experiments - Site generalization and bottleneck analysis
+  30. Ablation Studies - Controlled model ablations (A-E)
 
 Usage:
   # Interactive mode (default)
@@ -266,7 +267,7 @@ def prompt_user(message, default=True):
         elif response in ["n", "no"]:
             return False
         else:
-            print("Please enter 'y' or 'n'")
+            logger.info("Please enter 'y' or 'n'")
 
 def clear_old_state():
     """
@@ -428,13 +429,13 @@ def check_split_status():
 
 def show_execution_plan(stages):
     """Display what will be executed."""
-    print("\n" + "="*70)
-    print("EXECUTION PLAN")
-    print("="*70)
+    logger.info("\n" + "="*70)
+    logger.info("EXECUTION PLAN")
+    logger.info("="*70)
     for i, (stage_name, will_run, reason) in enumerate(stages, 1):
         status = "✓ WILL RUN" if will_run else "○ SKIP"
-        print(f"{i}. {stage_name:40} {status:15} {reason}")
-    print("="*70 + "\n")
+        logger.info("%d. %-40s %-15s %s", i, stage_name, status, reason)
+    logger.info("="*70 + "\n")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -497,6 +498,8 @@ Examples:
                         help="Use YOLO-derived spatial features (default).")
     parser.add_argument("--use-atlas-spatial", action="store_true",
                         help=argparse.SUPPRESS)
+    parser.add_argument("--skip-spatial", action="store_true",
+                        help="Skip spatial feature extraction (use existing features)")
     parser.add_argument("--multiview", action="store_true",
                         help="Run optional multi-view causal graph construction stage after causal_graphs")
     parser.add_argument("--site-stratified-cv", action="store_true",
@@ -605,10 +608,10 @@ Examples:
     if args.auto:
         os.environ["NEURO_CXG_NONINTERACTIVE"] = "1"
 
-    print("\n" + "="*70)
-    print("NEURO-CXG PIPELINE RUNNER")
-    print("12-Region Causal GNN for fMRI Analysis")
-    print("="*70)
+    logger.info("\n" + "="*70)
+    logger.info("NEURO-CXG PIPELINE RUNNER")
+    logger.info("12-Region Causal GNN for fMRI Analysis")
+    logger.info("="*70)
 
     # STAGE 0: PRE-FLIGHT VALIDATION
     logger.info("\nStage 0: Pre-Flight Validation")
@@ -662,7 +665,7 @@ Examples:
         and not args.skip_yolo
         and args.use_yolo_spatial
     )
-    spatial_will_run = not existing_spatial or args.force_reset or args.regenerate_features
+    spatial_will_run = not args.skip_spatial and (not existing_spatial or args.force_reset or args.regenerate_features)
     temporal_will_run = not existing_temporal or args.force_reset or args.regenerate_features
     harmonization_will_run = not existing_harmonized or args.force_reset or args.regenerate_features
     graphs_will_run = not existing_graphs or args.force_reset or args.regenerate_features
@@ -730,11 +733,11 @@ Examples:
         "harmonization": "Fold-safe neuroHarmonize, protects DX_GROUP (Stage 12)",
         "pre_gnn_integrity": "Validate dataset completeness per split (Stage 13)",
         "causal_graphs": "Granger causality/lagged correlation (Stage 14)",
-        "multiview_graphs": "Optional multi-view causal graph construction for invariance training",
+        "multiview_graphs": "Optional multi-view causal graph construction (Stage 15)",
         "dead_lobe_diagnosis": "Quick sanity check for lobe aggregation and causality readiness",
-        "diagnostics": "Comprehensive health report after graphs built (Stage 15)",
-        "quality_validation": "YOLO quality, graph sparsity, stratification (Stage 16)",
-        "gnn_training": "Main training phase (Phase 3)",
+        "diagnostics": "Comprehensive health report after graphs built (Stage 16)",
+        "quality_validation": "YOLO quality, graph sparsity, stratification (Stage 17)",
+        "gnn_training": "Main training phase — 5-fold CV with GAT+GRL (Stage 18)",
         "visualizations": "Generate comprehensive visualizations (Phase 9 Reporting)",
         "graph_visualization": "Render directed ASD-vs-Control causal graph comparison",
         "evaluation": "Ensemble evaluation, bootstrap CI, permutation test, subgroups (Phase 9.2)",

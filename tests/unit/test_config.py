@@ -4,13 +4,10 @@ Unit tests for src/core/config.py — validate_lobe_mapping().
 Run:
     pytest tests/unit/test_config.py -v
 """
-import sys
-from pathlib import Path
 
 import pytest
 
 # Ensure project root is on the path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     LOBE_MAPPING,
     NUM_LOBES,
@@ -69,7 +66,6 @@ class TestValidateLobeMappingHappyPath:
     def test_lobe_ids_are_consecutive_from_zero(self):
         """Lobe IDs should be 0, 1, ..., NUM_LOBES-1 (no gaps)."""
         assert set(LOBE_MAPPING.keys()) == set(range(NUM_LOBES))
-
 
 # ── Error-path tests ───────────────────────────────────────────────────────────
 

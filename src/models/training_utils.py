@@ -99,7 +99,7 @@ def attach_feature_scaler_from_checkpoint(
         try:
             model._selected_feature_idx = [int(i) for i in selected_idx]
         except Exception:
-            pass
+            logger.warning("Ignoring malformed checkpoint selected_feature_idx metadata")
 
     preprocessing_mode = checkpoint.get("preprocessing_mode")
     if isinstance(preprocessing_mode, str) and preprocessing_mode.strip():
@@ -457,7 +457,7 @@ class CheckpointManager:
         if not filepath.exists():
             raise FileNotFoundError(f"Checkpoint not found: {filepath}")
 
-        checkpoint = torch.load(filepath, weights_only=False)
+        checkpoint = torch.load(filepath, weights_only=True)
 
         saved_auc = checkpoint.get('auc')
         if saved_auc is None:
@@ -669,7 +669,7 @@ def _load_multiview_package(file_path: Path, cache: _MultiviewCache | None = Non
         return cached
 
     try:
-        payload = torch.load(file_path, map_location="cpu", weights_only=False)
+        payload = torch.load(file_path, map_location="cpu", weights_only=True)
     except Exception:
         return None
 

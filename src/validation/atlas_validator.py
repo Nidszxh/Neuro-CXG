@@ -7,13 +7,11 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Atlas sources
 AAL3_DOWNLOAD_URL = "https://www.gin.cnrs.fr/wp-content/uploads/aal3_for_SPM12.tar.gz"
 BACKUP_AAL2_URL = "https://www.gin.cnrs.fr/wp-content/uploads/aal2.nii.gz"
-
 
 def download_file(url: str, output_path: Path) -> bool:
 
@@ -57,7 +55,6 @@ def download_file(url: str, output_path: Path) -> bool:
     logger.error("All download methods failed")
     return False
 
-
 # VALIDATION
 
 def validate_atlas(atlas_path: Path) -> bool:
@@ -98,7 +95,6 @@ def validate_atlas(atlas_path: Path) -> bool:
         logger.error(f"Atlas validation error: {e}")
         return False
 
-
 # ATLAS DISCOVERY & DOWNLOAD
 
 def find_existing_atlas(atlas_dir: Path) -> Path | None:
@@ -116,7 +112,6 @@ def find_existing_atlas(atlas_dir: Path) -> Path | None:
             return atlas
 
     return None
-
 
 def download_aal3_atlas(output_dir: Path) -> Path:
 
@@ -155,7 +150,6 @@ def download_aal3_atlas(output_dir: Path) -> Path:
 
     return final_path
 
-
 def download_aal2_fallback(output_dir: Path) -> Path:
 
     gz_path = output_dir / "AAL2.nii.gz"
@@ -170,7 +164,6 @@ def download_aal2_fallback(output_dir: Path) -> Path:
 
     gz_path.unlink()
     return atlas_path
-
 
 # MAIN ENTRY POINT
 def ensure_atlas(atlas_path: Path, auto_download: bool = True) -> bool:
@@ -211,7 +204,6 @@ def ensure_atlas(atlas_path: Path, auto_download: bool = True) -> bool:
 
     return False
 
-
 # METADATA GENERATION
 def generate_atlas_metadata(atlas_path: Path, output_path: Path):
 
@@ -244,25 +236,20 @@ def generate_atlas_metadata(atlas_path: Path, output_path: Path):
 
     logger.info(f"✓ Metadata generated: {output_path}")
 
-
 if __name__ == "__main__":
     import sys
-
-    # Add project root to path
-    project_root = Path(__file__).resolve().parents[2]
-    sys.path.insert(0, str(project_root))
 
     try:
         from src.core.config import ATLAS_METADATA, ATLAS_PATH
 
         if ensure_atlas(ATLAS_PATH, auto_download=True):
             generate_atlas_metadata(ATLAS_PATH, ATLAS_METADATA)
-            print("✅ Atlas ready")
+            logger.info("Atlas ready")
         else:
-            print("❌ Atlas setup failed")
+            logger.error("Atlas setup failed")
             sys.exit(1)
 
     except ImportError as e:
-        print(f"Import error: {e}")
-        print("Run from project root or ensure config.py is available")
+        logger.error("Import error: %s", e)
+        logger.error("Run from project root or ensure config.py is available")
         sys.exit(1)

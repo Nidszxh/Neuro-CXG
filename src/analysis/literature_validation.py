@@ -50,16 +50,13 @@ generate_validation_figure(results, output_path) -> Path
 
 import json
 import logging
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src.core.config import LOBE_NAMES, NUM_LOBES
+from src.core.config import LOBE_NAMES, NUM_LOBES, RESULTS_DIR
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 REGION_LABELS: list[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
@@ -171,7 +168,6 @@ for net in KNOWN_NETWORKS:
     for r in net["regions"]:
         REGION_TO_NETWORKS[r].append(net["short"])
 
-
 # ── Core validation logic ──────────────────────────────────────────────────────
 
 def validate_important_regions(
@@ -249,7 +245,6 @@ def validate_important_regions(
         "top_n":          top_n,
     }
 
-
 def generate_report(results: dict, output_dir: Path) -> Path:
     """
     Write a JSON + human-readable text report to *output_dir*.
@@ -317,7 +312,6 @@ def generate_report(results: dict, output_dir: Path) -> Path:
     print("\n".join(lines))
     return text_path
 
-
 def generate_validation_figure(results: dict, output_path: Path) -> Path:
     """
     Heatmap: top-N regions (rows) × known networks (cols), colour = network membership.
@@ -380,13 +374,12 @@ def generate_validation_figure(results: dict, output_path: Path) -> Path:
     logger.info("Validation figure saved → %s", out)
     return out
 
-
 # ── Convenience wrapper ────────────────────────────────────────────────────────
 
 def run_literature_validation(
     gradcam_asd_scores:     np.ndarray | None = None,
     attention_asd_scores:   np.ndarray | None = None,
-    output_dir: Path = Path("results/explainability/literature"),
+    output_dir: Path = RESULTS_DIR / "explainability" / "literature",
     top_n: int = 6,
 ) -> dict:
     """

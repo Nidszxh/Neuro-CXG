@@ -106,7 +106,6 @@ class ColorPalette:
         Returns:
             matplotlib colormap
         """
-        import matplotlib.cm as cm
 
         gradients = {
             "blues": ["#eff3ff", "#bdd7e7", "#6baed6", "#2171b5", "#08306b"],
@@ -116,9 +115,10 @@ class ColorPalette:
             "purple": ["#fcfcfc", "#e0e0e0", "#bcbddc", "#756bb1", "#54278f"],
         }
 
+        import matplotlib.pyplot as _plt
         from matplotlib.colors import LinearSegmentedColormap
         colors = gradients.get(name, gradients["blues"])
-        return LinearSegmentedColormap(name, {k: plt.cm.get_cmap("viridis")(v/255) for k, v in zip(['red', 'green', 'blue'], [(int(c[1:3],16), int(c[3:5],16), int(c[5:7],16)) for c in colors])})
+        return LinearSegmentedColormap(name, {k: _plt.cm.get_cmap("viridis")(v/255) for k, v in zip(['red', 'green', 'blue'], [(int(c[1:3],16), int(c[3:5],16), int(c[5:7],16)) for c in colors], strict=False)})
 
 
     GRADIENT_PALETTES = {
@@ -327,7 +327,6 @@ def apply_professional_style(ax, background_alpha=0.02, title_fontsize=14, label
         title_fontsize: Font size for titles
         label_fontsize: Font size for labels
     """
-    from matplotlib.patches import Rectangle
 
     ax.set_facecolor((1, 1, 1, 0.97))
     ax.grid(True, alpha=0.25, linestyle="-", linewidth=0.5)
@@ -360,16 +359,16 @@ def add_scientific_annotation(ax, x, y, text, offset=(0, 5), fontsize=9,
         bbox: Show bounding box around text
     """
     if bbox:
-        bbox_props = dict(boxstyle="round,pad=0.3", facecolor="white",
-                         edgecolor="#cccccc", alpha=0.9, linewidth=0.8)
+        bbox_props = {"boxstyle": "round,pad=0.3", "facecolor": "white",
+                         "edgecolor": "#cccccc", "alpha": 0.9, "linewidth": 0.8}
     else:
         bbox_props = None
 
     if arrow:
         ax.annotate(text, xy=(x, y), xytext=(x + offset[0], y + offset[1]),
                    fontsize=fontsize, ha="center", va="bottom",
-                   bbox=bbox_props, arrowprops=dict(arrowstyle="->",
-                   color=arrow_color, lw=1.2, connectionstyle="arc3,rad=0"))
+                   bbox=bbox_props, arrowprops={"arrowstyle": "->",
+                   "color": arrow_color, "lw": 1.2, "connectionstyle": "arc3,rad=0"})
     else:
         ax.text(x + offset[0], y + offset[1], text, fontsize=fontsize,
                ha="center", va="bottom", bbox=bbox_props)
@@ -385,7 +384,6 @@ def create_scientific_colormap(name="scientific", reverse=False):
     Returns:
         matplotlib colormap
     """
-    import matplotlib.cm as cm
 
     colormaps = {
         "scientific": ["#1f77b4", "#2ca02c", "#ff7f0e", "#9467bd",
@@ -417,7 +415,6 @@ def add_confidence_band(ax, x, mean, std, color=None, alpha=0.2, label=None):
         alpha: Transparency
         label: Label for legend
     """
-    import matplotlib.cm as cm
 
     if color is None:
         color = ax.lines[-1].get_color() if ax.lines else "#1f77b4"
@@ -473,8 +470,8 @@ def style_boxplot(ax, palette=None, linewidth=1.5, flier_size=4,
             ax.collections[flier].set_sizes([flier_size])
 
     if show_means:
-        ax.meanprops = dict(marker=mean_marker, markerfacecolor="white",
-                           markeredgecolor="#333333", markersize=6)
+        ax.meanprops = {"marker": mean_marker, "markerfacecolor": "white",
+                           "markeredgecolor": "#333333", "markersize": 6}
 
 
 def add_sample_size(ax, x_data, y_data, x_pos=None, fontsize=8, color="#666666"):
@@ -491,7 +488,7 @@ def add_sample_size(ax, x_data, y_data, x_pos=None, fontsize=8, color="#666666")
     if x_pos is None:
         x_pos = [np.median(x_data[i]) for i in range(len(x_data))]
 
-    for i, (x, y) in enumerate(zip(x_pos, [np.median(d) for d in y_data])):
+    for i, (x, y) in enumerate(zip(x_pos, [np.median(d) for d in y_data], strict=False)):
         ax.text(x, y - 0.03 * (ax.get_ylim()[1] - ax.get_ylim()[0]),
                f"n={len(x_data[i])}", fontsize=fontsize, color=color,
                ha="center", va="top", style="italic")
@@ -521,7 +518,7 @@ def add_statistical_annotation(
     """
     y_max = max(ci_upper)
 
-    for i, (x, mean, low, high) in enumerate(zip(x_groups, means, ci_lower, ci_upper)):
+    for _i, (x, mean, low, high) in enumerate(zip(x_groups, means, ci_lower, ci_upper, strict=False)):
         ax.errorbar(x, mean, yerr=[[mean - low], [high - mean]],
                    fmt='o', color="#333333", capsize=5, capthick=1.5, markersize=8)
 
@@ -594,5 +591,5 @@ def add_effect_size_annotation(
         label += " (large)"
 
     ax.text(x_pos, y_pos, label, fontsize=10, ha='center', va='bottom',
-           style='italic', color="#333333", bbox=dict(boxstyle='round,pad=0.3',
-           facecolor='white', edgecolor='#cccccc', alpha=0.9))
+           style='italic', color="#333333", bbox={"boxstyle": 'round,pad=0.3',
+           "facecolor": 'white', "edgecolor": '#cccccc', "alpha": 0.9})

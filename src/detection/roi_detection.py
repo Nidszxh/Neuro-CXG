@@ -1,10 +1,7 @@
 import logging
-import sys
-from pathlib import Path
 
 from ultralytics import YOLO
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     CONFIG_BRAIN_YAML,
     RESULTS_DIR,
@@ -13,10 +10,6 @@ from src.core.config import (
     YOLO_TRAIN_CONFIG,
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 def main():
@@ -24,7 +17,7 @@ def main():
     model = YOLO(YOLO_MODEL_SIZE)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("🚀 Initiating Anatomically-Preserving ROI Training...")
+    logger.info("Initiating Anatomically-Preserving ROI Training...")
 
     # 2. Training Parameters (consolidated from config.YOLO_TRAIN_CONFIG)
     model.train(
@@ -41,7 +34,7 @@ def main():
     except Exception as e:
         logger.warning("Post-training validation skipped: %s", e)
 
-    print("\n[SUCCESS] Training Complete. Model aligned for consistent lobe detection.")
+    logger.info("Training Complete. Model aligned for consistent lobe detection.")
 
 if __name__ == "__main__":
     main()

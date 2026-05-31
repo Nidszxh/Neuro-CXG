@@ -12,15 +12,12 @@ Usage:
 
 import argparse
 import logging
-import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     DEVICE,
     FOCAL_LOSS_ALPHA,
@@ -44,9 +41,7 @@ from src.models.factory import build_model
 from src.models.losses import FocalLoss
 from src.models.training_utils import make_loader, train_fold_with_onecycle
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
 
 def run_kfold_subsample(
     dataset: ABIDECausalDataset,
@@ -186,7 +181,6 @@ def run_kfold_subsample(
         "fold_aucs": fold_aucs,
     }
 
-
 def main():
     parser = argparse.ArgumentParser(description="Learning curve experiment")
     parser.add_argument(
@@ -248,7 +242,6 @@ def main():
     with open(out_json, "w") as f:
         json.dump(results, f, indent=2)
     logger.info(f"  JSON saved → {out_json}")
-
 
 if __name__ == "__main__":
     main()

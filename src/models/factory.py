@@ -109,7 +109,7 @@ def load_model(
     if not resolved_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {resolved_path}")
 
-    ckpt = torch.load(resolved_path, map_location=device, weights_only=False)
+    ckpt = torch.load(resolved_path, map_location=device, weights_only=True)
     state = ckpt.get("model_state", ckpt)
 
     has_site_embedding = any(k.startswith("site_embedding.") for k in state)

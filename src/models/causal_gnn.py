@@ -1,6 +1,4 @@
 import logging
-import sys
-from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -14,12 +12,10 @@ from torch_geometric.nn import (
 )
 from torch_geometric.nn.aggr import AttentionalAggregation
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import LOBE_TO_NETWORK, NETWORK_TO_LOBES, NUM_LOBES, NUM_NETWORKS
 from src.core.hyperparams import GRL_ANNEAL_STEEPNESS
 
 logger = logging.getLogger(__name__)
-
 
 class GradientReversal(torch.autograd.Function):
     @staticmethod
@@ -30,7 +26,6 @@ class GradientReversal(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         return grad_output.neg() * ctx.alpha, None
-
 
 # ─── TASK 3: Anatomical Hierarchical Pooling (DD-011) ──────────────────────────
 
@@ -176,7 +171,6 @@ class AnatomicalHierarchyPool(nn.Module):
         graph_emb = (attn2 * network_embs).sum(dim=1)     # (num_graphs, hidden_dim)
 
         return graph_emb
-
 
 # ─── MAIN GNN MODEL ────────────────────────────────────────────────────────────
 
@@ -434,7 +428,7 @@ class CausalBrainGNN(torch.nn.Module):
                 if mask_t.shape[1] == x.shape[1]:
                     x = x * mask_t
             except Exception:
-                pass
+                logger.warning("Failed to apply feature mask in forward pass", exc_info=True)
 
         # Optional fold-internal within-site normalization loaded from checkpoint.
         site_means = getattr(self, "_site_feature_means", None)
@@ -486,7 +480,7 @@ class CausalBrainGNN(torch.nn.Module):
                             site_norm_applied = True
                     x = x_norm
             except Exception:
-                pass
+                logger.warning("Failed to apply site normalization in forward pass", exc_info=True)
 
         # Optional fold-wise feature scaling loaded from checkpoint.
         # Keeps inference-time preprocessing consistent with train-fold scaling.
@@ -504,8 +498,7 @@ class CausalBrainGNN(torch.nn.Module):
                 if mean_t.shape[1] == x.shape[1] and std_t.shape[1] == x.shape[1]:
                     x = (x - mean_t) / std_t
             except Exception:
-                # Never fail the forward pass because scaler metadata is malformed.
-                pass
+                logger.warning("Failed to apply feature scaling in forward pass", exc_info=True)
 
         # 1. Optionally add site embeddings
         if self.use_site_embedding:

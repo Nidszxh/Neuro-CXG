@@ -8,7 +8,6 @@ from tqdm import tqdm
 from ultralytics import YOLO
 
 # Setup paths and config
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     DATA_FINAL,
     LOBE_MAPPING,
@@ -22,10 +21,6 @@ from src.core.config import (
 )
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
@@ -33,7 +28,6 @@ MODEL_PATH = YOLO_WEIGHTS_PATH
 SPLIT_ROOT = DATA_FINAL
 MANIFEST_PATH = MASTER_MANIFEST
 OUTPUT_PATH = NODE_FEATURES_3D
-
 
 def _load_atlas_lobe_fallbacks() -> dict:
     """Load atlas-derived lobe centroids/sizes (native atlas coordinate space)."""
@@ -83,7 +77,6 @@ def _load_atlas_lobe_fallbacks() -> dict:
 
     return fallback
 
-
 def _compute_missing_lobe_fallbacks(raw_df: pd.DataFrame) -> tuple[dict, set]:
     """Compute scale-matched fallback features for missing YOLO lobes.
 
@@ -131,7 +124,6 @@ def _compute_missing_lobe_fallbacks(raw_df: pd.DataFrame) -> tuple[dict, set]:
             fallback[lobe_id] = global_defaults
 
     return fallback, missing_set
-
 
 def extract_spatial():
     if not MODEL_PATH.exists():
@@ -339,7 +331,6 @@ def extract_spatial():
     logger.info(f"Success: {len(output_df)} subjects with {NUM_LOBES}-node architecture")
     logger.info(f"{NUM_SPATIAL_FEATURES} spatial features per lobe")
     logger.info(f"Saved to {OUTPUT_PATH}")
-
 
 import hashlib
 

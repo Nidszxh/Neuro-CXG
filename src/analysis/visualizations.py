@@ -1,20 +1,14 @@
 import argparse
 import logging
-import sys
 from pathlib import Path
 
 import pandas as pd
 import torch
 
 # Setup logging early for import-time warnings
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 # Setup paths
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import (
     ALL_FEATURE_NAMES,
     CAUSAL_GRAPHS_DIR,
@@ -57,11 +51,9 @@ def _parse_fold_id(history_file: Path) -> int:
         return int(match.group(1))
     return 0  # Default to fold 0 if parsing fails
 
-
 def create_feature_names():
     """Create list of temporal + spatial feature names."""
     return ALL_FEATURE_NAMES.copy()
-
 
 def run_visualization_pipeline(output_dir: Path):
     """Run complete visualization pipeline."""
@@ -81,7 +73,7 @@ def run_visualization_pipeline(output_dir: Path):
             if not checkpoint_path.exists():
                 logger.warning("Checkpoint not found: %s", checkpoint_path)
             else:
-                checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+                checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
                 state_dict = checkpoint["model_state"] if isinstance(checkpoint, dict) and "model_state" in checkpoint else checkpoint
 
                 site_dim = GNN_SITE_EMBEDDING_DIM if GNN_USE_SITE_EMBEDDING else 0
@@ -191,7 +183,6 @@ def run_visualization_pipeline(output_dir: Path):
     logger.info(f"All visualizations saved to: {output_dir}")
     logger.info("=" * 60)
 
-
 def main():
     parser = argparse.ArgumentParser(description="Generate comprehensive visualizations for Neuro-CXG results")
     parser.add_argument(
@@ -204,7 +195,6 @@ def main():
     args = parser.parse_args()
 
     run_visualization_pipeline(args.output_dir)
-
 
 if __name__ == "__main__":
     main()

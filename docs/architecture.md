@@ -67,25 +67,25 @@ Core stage keys (in execution order):
 | download | src.data.abide_download | Pull ABIDE artifacts | data/final/ |
 | split | src.data.split | 70/15/15 stratified split + cv_folds | data/metadata/split_manifest.csv |
 | manifest | src.data.manifestor | Build master manifest with site/subsample | data/metadata/master_manifest.csv |
-| atlas_validation | src.validation.pipeline_checks | Verify 170 ROI overlap | data/metadata/atlas_overlap_report.json |
+| atlas_validation | src.validation.atlas_validator | Verify 170 ROI overlap | data/metadata/atlas_metadata.json |
 | pipeline_validation | src.validation.pipeline_checks | Check pipeline readiness | data/metadata/pipeline_ready.flag |
 | post_download_integrity | src.validation.pipeline_checks | Validate downloaded assets | data/metadata/download_integrity.json |
-| annotate | src.features.annotate_rois | ROI to lobe mapping | data/metadata/roi_lobe_map.csv |
-| yolo | src.features.yolo_train | Train YOLO for lobe detection | models/yolo_lobe_detector/ |
+| annotate | src.detection.generate_labels | ROI to lobe mapping | data/final/train/labels |
+| yolo | src.detection.roi_detection | Train YOLO for lobe detection | results/experiments/detection/ROI_Detection_v29/weights/best.pt |
 | spatial_features | src.features.extract_spatial | Lobe geometric features | data/metadata/node_attributes_spatial.csv |
 | temporal_features | src.features.extract_temporal | Lobe temporal/frequency features | data/metadata/node_attributes_temporal.csv |
 | harmonization | src.features.fold_safe_harmonization | ComBat harmonization (fold-safe) | data/metadata/harmonized_folds_cv/ |
-| pre_gnn_integrity | src.core.validators | Pre-training validation | data/metadata/pre_gnn_ready.flag |
+| pre_gnn_integrity | src.validation.pipeline_checks | Pre-training validation | data/metadata/pre_gnn_ready.flag |
 | causal_graphs | src.features.construct_causal | Directed adjacency matrices | data/processed/causal_graphs/ |
 | diagnostics | src.validation.pipeline_checks | Runtime diagnostics | data/metadata/diagnostics.json |
 | quality_validation | src.validation.pipeline_checks | Quality gates pass | data/metadata/quality_gates_pass.json |
 | gnn_training | src.models.gnn_model | 5-fold CV training | results/checkpoints/ |
-| visualizations | src.features.visualizations | Plot generation | results/visualizations/ |
-| graph_visualization | src.features.graph_visualization | Graph plots | results/graphs/ |
+| visualizations | src.analysis.visualizations | Plot generation | results/visualizations/ |
+| graph_visualization | src.analysis.visualize_causal_graph | Graph plots | results/visualizations/causal_graph_comparison.png |
 | evaluation | src.run_evaluation | Metrics computation | results/evaluation/ |
 | explainability | src.run_explainability | Interpretability | results/explainability/ |
 | result_analysis | src.run_result_analysis | Result summary | results/analysis/ |
-| subject_analysis | src.run_result_analysis | Per-subject breakdown | results/subject_analysis/ |
+| subject_analysis | src.analysis.subject_analysis | Per-subject breakdown | results/subject_analysis/ |
 
 Optional/extended stages:
 
@@ -327,7 +327,7 @@ Into node tensor `x` with shape `(NUM_LOBES, GNN_IN_CHANNELS)`.
 
 **CV Summary**: 0.8102 ± 0.0273 (mean ± std), mean F1=0.7475 ± 0.0331
 
-**Data flow reference**: See `docs/dataflow.md` for complete 29-stage end-to-end data transformation.
+**Data flow reference**: See `docs/architecture.md` Stage Registry Map above for the complete 29-stage stage execution order.
 
 ## Loss Functions
 
@@ -408,7 +408,7 @@ for fold_id in range(5):
 |------|------------------|-----------------|
 | Missing harmonization files | Training blocked if per-fold harmonized CSV missing | `validate_gnn_training_inputs()` in `src/core/validators.py` |
 | Graph degeneracy | Excessive dead graphs (>50%) blocks training | `src/core/validators.py:validate_graph_construction_inputs()` |
-| Multiview quality | Degenerate multiview branches disabled | `src/features/construct_multiview.py` |
+| Multiview quality | Degenerate multiview branches disabled | `src/features/construct_causal.py:main_multiview()` |
 | Subject alignment | Graph factory checks shape/NaN/Inf | `src/features/graph_factory.py:ABIDECausalDataset` |
 | Pre-flight checks | Environment validation before any run | `validate_environment()` in `src/core/validators.py` |
 

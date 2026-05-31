@@ -107,7 +107,7 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 | `GRANGER_MAX_LAG_SECONDS` | 10.0 | Max lag in seconds |
 | `GRANGER_USE_GPU` | True | GPU acceleration |
 | `RIDGE_GRANGER_LAGS` | (1,2,3,4,5) | VAR lag order |
-| `RIDGE_GRANGER_LAMBDA` | 1.0 | Ridge regularization |
+| `RIDGE_GRANGER_LAMBDA` | 0.1 | Ridge regularization |
 | `SPARSITY_METHOD` | `"topk_per_node"` | Sparsification method |
 | `SPARSITY_TOPK_PER_NODE` | 3 | Edges per node |
 | `MIN_EDGES_PER_GRAPH` | 12 | Minimum edges |
@@ -129,7 +129,7 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 | `K_FOLDS` | 5 | 5 | CV folds |
 | `GNN_SEED` | 42 | 42 | Global seed (everywhere) |
 
-**Best Config Provenance**: 3 independent runs, AUC=[0.8807, 0.8773, 0.8810], mean=0.8797 ± 0.0015
+**Best Config Provenance**: May 31, 2026 run, AUC=0.8819 [0.8277, 0.9322]
 
 ### Site Bias Controls
 

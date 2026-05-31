@@ -26,7 +26,6 @@ Usage
 """
 
 import logging
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -34,19 +33,16 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.atlas_config import NETWORK_NAMES, NETWORK_TO_LOBES, NUM_NETWORKS
 from src.core.config import LOBE_NAMES, NUM_LOBES
 from src.core.plotting import ColorPalette, apply_professional_style
 
 palette = ColorPalette()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 REGION_LABELS: list[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 NETWORK_LABELS: list[str] = [NETWORK_NAMES[i] for i in range(NUM_NETWORKS)]
-
 
 def _aggregate_to_networks(lobe_scores: np.ndarray) -> np.ndarray:
     """
@@ -67,7 +63,6 @@ def _aggregate_to_networks(lobe_scores: np.ndarray) -> np.ndarray:
         if valid_lobes:
             network_scores[net_idx] = np.mean(lobe_scores[valid_lobes])
     return network_scores
-
 
 # ── AttentionWeightExtractor ───────────────────────────────────────────────────
 
@@ -130,7 +125,6 @@ class AttentionWeightExtractor:
         for h in self._hooks:
             h.remove()
         self._hooks.clear()
-
 
 # ── GradCAMGraphExplainer ──────────────────────────────────────────────────────
 
@@ -243,7 +237,6 @@ class GradCAMGraphExplainer:
         for h in self._hooks:
             h.remove()
         self._hooks.clear()
-
 
 # ── NodeImportanceAnalyzer ─────────────────────────────────────────────────────
 

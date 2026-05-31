@@ -10,10 +10,10 @@ The 12-lobe architecture is approved for publication. Key findings:
 
 - **12-Lobe (Primary)**: YOLO v29 never detects Brainstem → synthetic fallback coordinates
 - Counterintuitive: constant Brainstem features act as implicit regularization
-- Test AUC: 0.8810 [95% CI: 0.8277–0.9322] — +5.3% vs 11-lobe
+- Test AUC: 0.8819 [95% CI: 0.8277–0.9322] — +5.3% vs 11-lobe
 - Generalization: CV < Test (+0.064) indicates robust learning
 
-See `docs/decisions.md` (DD-018) and `docs/deprecated/FINAL_ARCHITECTURE_ANALYSIS.md` for full analysis.
+See `docs/decisions.md` (DD-018) for full analysis.
 
 ---
 
@@ -390,7 +390,7 @@ Stage-by-stage commands:
 ```bash
 python -m src.data.abide_download
 python -m src.data.split
-python -m src.pipelines.generate_labels
+python -m src.detection.generate_labels
 python -m src.features.extract_spatial
 python -m src.features.extract_temporal --n-jobs -1
 python -m src.features.fold_safe_harmonization

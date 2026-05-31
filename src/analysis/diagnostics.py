@@ -11,7 +11,6 @@ External interface is unchanged — all previously exported names are re-exporte
 
 import json
 import logging
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -23,15 +22,15 @@ import torch
 from scipy.stats import mannwhitneyu
 from tqdm import tqdm
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.core.config import LOBE_NAMES, NUM_LOBES
-from src.core.plotting import ColorPalette, FigureSize, apply_publication_style, apply_professional_style
+from src.core.plotting import (
+    ColorPalette,
+    apply_professional_style,
+)
 
 palette = ColorPalette()
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -46,7 +45,6 @@ def _to_json_safe(obj):
     if isinstance(obj, list):
         return [_to_json_safe(v) for v in obj]
     return obj
-
 
 # ── TrainingMonitor ────────────────────────────────────────────────────────────
 
@@ -205,14 +203,14 @@ class TrainingMonitor:
         )
         ax.text(0.5, 0.5, summary_text, ha="center", va="center", transform=ax.transAxes,
                 fontsize=11, fontfamily='monospace',
-                bbox=dict(boxstyle='round,pad=0.5', facecolor='#f8f9fa', edgecolor='#dee2e6', alpha=0.95))
+                bbox={"boxstyle": 'round,pad=0.5', "facecolor": '#f8f9fa', "edgecolor": '#dee2e6', "alpha": 0.95})
         axes[1, 1].text(0.5, 0.5, f"Epochs: {len(epochs)}\n"
                        f"Final Train Loss: {h['train_loss'][-1]:.4f}\n"
                        f"Final Val Loss: {h['val_loss'][-1]:.4f}\n"
                        f"Best Val AUC: {best_auc:.4f}",
                        ha="center", va="center", transform=axes[1, 1].transAxes,
-                       fontsize=12, bbox=dict(boxstyle="round", facecolor="#f8f9fa",
-                       edgecolor="#dee2e6", alpha=0.9))
+                       fontsize=12, bbox={"boxstyle": "round", "facecolor": "#f8f9fa",
+                       "edgecolor": "#dee2e6", "alpha": 0.9})
 
         plt.suptitle(f"Training Diagnostics — Fold {fold_id}", fontsize=18, fontweight="bold", y=0.995)
         plt.tight_layout()
@@ -257,7 +255,8 @@ class TrainingMonitor:
 
         fig.suptitle(f"Confusion Matrix Evolution - Fold {fold_id}", fontsize=15, fontweight="bold", y=0.98)
         out = self.output_dir / f"confusion_evolution_fold_{fold_id}.png"
-        plt.savefig(out, dpi=300, bbox_inches="tight", facecolor="white"); plt.close()
+        plt.savefig(out, dpi=300, bbox_inches="tight", facecolor="white")
+        plt.close()
         logger.info("Confusion evolution saved → %s", out)
         return out
 
@@ -298,7 +297,7 @@ class TrainingMonitor:
             bars = axes[1].bar(range(len(final)), final, color=bar_colors,
                         edgecolor="#333333", linewidth=1.2, alpha=0.85)
 
-            for i, (bar, val) in enumerate(zip(bars, final)):
+            for _i, (bar, val) in enumerate(zip(bars, final, strict=False)):
                 axes[1].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.008,
                            f"{val:.3f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
 
@@ -320,7 +319,8 @@ class TrainingMonitor:
 
         plt.tight_layout()
         out = self.output_dir / "fold_comparison.png"
-        plt.savefig(out, dpi=300, bbox_inches="tight", facecolor="white"); plt.close()
+        plt.savefig(out, dpi=300, bbox_inches="tight", facecolor="white")
+        plt.close()
         logger.info("Fold comparison saved → %s", out)
         return out
 
@@ -348,7 +348,6 @@ class TrainingMonitor:
             json.dump(_to_json_safe(self.fold_histories[fold_id]), f)
         logger.info("Training history saved → %s", p)
         return p
-
 
 # ── CausalGraphAnalyzer ────────────────────────────────────────────────────────
 
@@ -380,7 +379,7 @@ class CausalGraphAnalyzer:
         results = []
         for gf in tqdm(graph_files, desc="Graph properties"):
             try:
-                data = torch.load(gf, weights_only=False)
+                data = torch.load(gf, weights_only=True)
                 subject_id = gf.stem.replace("_graph", "")
                 sub = self.manifest[self.manifest["subject_id"] == subject_id]
                 if sub.empty:
@@ -408,7 +407,8 @@ class CausalGraphAnalyzer:
                     "density": nx.density(G),
                     "avg_clustering": avg_clust,
                 }
-                in_deg = dict(G.in_degree()); out_deg = dict(G.out_degree())
+                in_deg = dict(G.in_degree())
+                out_deg = dict(G.out_degree())
                 for lobe_id, name in enumerate(self.lobe_names):
                     n = name.lower()
                     row[f"{n}_in_degree"] = in_deg.get(lobe_id, 0)
@@ -489,7 +489,8 @@ class CausalGraphAnalyzer:
             ax.set(title=metric.replace("_", " ").title(), xlabel="Diagnosis")
         plt.tight_layout()
         out = output_dir / "topology_comparison.png"
-        plt.savefig(out, dpi=300, bbox_inches="tight"); plt.close()
+        plt.savefig(out, dpi=300, bbox_inches="tight")
+        plt.close()
         logger.info("Topology comparison saved → %s", out)
 
     # ── visualisation ─────────────────────────────────────────────────────────
@@ -542,7 +543,7 @@ class CausalGraphAnalyzer:
         matrices = []
         for gf in graph_files:
             try:
-                data = torch.load(gf, weights_only=False)
+                data = torch.load(gf, weights_only=True)
                 if "adj" not in data:
                     continue
                 matrices.append(data["adj"].detach().cpu().numpy())
@@ -558,7 +559,7 @@ class CausalGraphAnalyzer:
         fig, ax = plt.subplots(figsize=(12, 10))
 
         vmax = max(abs(avg.min()), abs(avg.max()))
-        hm = sns.heatmap(avg, xticklabels=labels, yticklabels=labels,
+        sns.heatmap(avg, xticklabels=labels, yticklabels=labels,
                     cmap="RdYlBu_r", center=0, linewidths=0.5,
                     vmin=-vmax, vmax=vmax, ax=ax,
                     cbar_kws={"label": "Causal Strength", "shrink": 0.8})
@@ -570,6 +571,7 @@ class CausalGraphAnalyzer:
         plt.setp(ax.get_yticklabels(), rotation=0, fontsize=9)
 
         fig.subplots_adjust(bottom=0.18, left=0.15, right=0.92, top=0.92)
-        plt.savefig(output_path, dpi=300, bbox_inches="tight", facecolor="white"); plt.close()
+        plt.savefig(output_path, dpi=300, bbox_inches="tight", facecolor="white")
+        plt.close()
         logger.info("Average causal graph saved → %s", output_path)
         return output_path

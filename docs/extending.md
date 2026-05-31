@@ -133,7 +133,7 @@ Any extension that changes runtime behavior should update these files in the sam
 - `docs/configuration.md`
 - `docs/setup.md`
 - `docs/operations.md`
-- `docs/evaluation.md`
+- `docs/paper/results.md`
 - Root `README.md` (if important)
 
 ---

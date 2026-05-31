@@ -16,7 +16,7 @@ mkdir -p results/paper_figures/
 
 # Run main figure generation script
 echo "[1/3] Running generate_paper_figures.py..."
-/home/nidszxh/.venvs/ichigo/bin/python src/analysis/generate_paper_figures.py --output results/paper_figures/
+python3 src/analysis/generate_paper_figures.py --output results/paper_figures/
 
 # Generate architecture diagram (from Mermaid in docs/architecture.md)
 echo "[2/3] Generating architecture diagram..."
@@ -28,7 +28,7 @@ fi
 
 # Generate causal graph with ASD vs Control split
 echo "[3/4] Generating causal graph visualizations..."
-/home/nidszxh/.venvs/ichigo/bin/python -c "
+python3 -c "
 import sys
 import warnings
 warnings.filterwarnings('ignore')
@@ -70,7 +70,7 @@ except Exception as e:
 
 # Generate circular connectome plots
 echo "[4/4] Generating circular connectome visualizations..."
-/home/nidszxh/.venvs/ichigo/bin/python src/analysis/circular_connectome.py --output results/paper_figures/causal_graphs/ || echo "  Note: Circular connectome requires causal graphs"
+python3 src/analysis/circular_connectome.py --output results/paper_figures/causal_graphs/ || echo "  Note: Circular connectome requires causal graphs"
 
 echo ""
 echo "========================================"
