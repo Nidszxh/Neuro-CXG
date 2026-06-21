@@ -3,71 +3,71 @@
 src/run_pipeline.py
 Neuro-CXG Unified Pipeline Runner
 ==================================
-Last Updated: March 1, 2026
+Last Updated: August 17, 2026
 
-Orchestrates the complete Neuro-CXG pipeline from data download to analysis:
+Orchestrates the Neuro-CXG pipeline from data download to evaluation.
+Stage order and numbering below mirror `src/pipeline/registry.py` (STAGES),
+the source of truth (see `--dry-run` output).
 
-Core Pipeline (17 stages):
+Data Preparation (Stages 1-3):
   1. ABIDE Download - fMRI data + 7-slice ALFF export
   2. Train/Val/Test Split - 2D stratification (DX_GROUP + SITE_ID)
   3. Master Manifest - Subject-phenotype mapping
-  4. Atlas Validation - Verify AAL3 atlas files
-  5. Pipeline Validation - Pre-flight health check
+
+Optional Data Prep:
+  4. Site-Stratified CV Fold Assignment - opt-in GroupKFold by site cluster
+
+Atlas & Validation (Stages 5-6):
+  5. Atlas Validation - Verify AAL3 atlas files
   6. Post-Download Integrity - PNG/NPY validation
+
+Feature Extraction (Stages 7-12):
   7. Atlas-Based Annotation - Generate YOLO labels
   8. YOLO Training - 12-region ROI detection (YOLO26n)
-  9. Spatial Features - 3D coordinate aggregation
-     (Stage 10 "Filter to 1,000" is handled within spatial features extraction)
-  11. Temporal Features - 20 features/ROI (8 time + 12 frequency)
-  12. Harmonization - Fold-safe neuroHarmonize (protects DX_GROUP)
-  13. Pre-GNN Integrity - Validate dataset completeness
-  14. Causal Graphs - Granger causality/lagged correlation (12×12)
-  15. Multiview Graphs - Optional multi-view causal graph construction
-  16. Diagnostics - Comprehensive health report
-  17. Quality Validation - YOLO quality, graph sparsity checks
+  9. Spatial Features - 3D coordinate aggregation (YOLO or atlas centroids)
+  10. Temporal Features - 20 features/ROI (8 time + 12 frequency)
+  11. Harmonization - Fold-safe neuroHarmonize (protects DX_GROUP)
+  12. Pre-GNN Integrity - Validate dataset completeness
 
-Main Training (Phase 3):
-  18. GNN Training - 5-fold CV with GAT+GRL
+Graph Construction & Validation (Stages 13-16):
+  13. Causal Graphs - Granger causality/lagged correlation (12x12)
+  14. Multiview Graphs - Optional multi-view causal graph construction
+  15. Diagnostics - Comprehensive health report
+  16. Quality Validation - YOLO quality, graph sparsity checks
 
-Post-Training Analysis (Phases 8 & 9):
-  19. Visualizations - Comprehensive plots and figures
-  20. Causal Graph Visualization - Render representative directed graphs
-  21. Evaluation - Bootstrap CI, permutation test, subgroups
-  22. Explainability - Node/edge importance, feature attribution
-  23. Result Analysis - Per-subject predictions, misclassification
-  24. Subject Analysis - Per-subject artifact integrity diagnostics
+Main Training (Stage 17):
+  17. GNN Training - 5-fold CV with GAT+GRL
 
-Diagnostics Snapshot:
-  25. Dead-Lobe Diagnosis - Quick lobe-signal sanity check on one subject
-
-Optional Extended Stages:
-  26. Post-Fix Audit Check - Strict artifact validation
-  27. Dev Audit - Static consistency checks
-  28. Feature Diagnostics - Feature/group and graph edge diagnostics
-  29. Data Quality Experiments - Site generalization and bottleneck analysis
-  30. Ablation Studies - Controlled model ablations (A-E)
+Post-Training Analysis (Stages 18-25):
+  18. Visualizations - Comprehensive plots and figures
+  19. Causal Graph Visualization - Render directed ASD-vs-Control graphs
+  20. Circular Connectome - Connectome ring visualization
+  21. 3D Brain Visualization - Nilearn brain rendering
+  22. Evaluation - Bootstrap CI, permutation test, subgroups
+  23. Explainability - Node/edge importance, feature attribution
+  24. Result Analysis - Per-subject predictions, misclassification
+  25. Subject Analysis - Per-subject artifact integrity diagnostics
 
 Usage:
   # Interactive mode (default)
   python src/run_pipeline.py --interactive
 
-  # Automatic mode
+  # Automatic mode (recommended for non-interactive shells)
   python src/run_pipeline.py --auto
 
   # Skip data prep
-  python src/run_pipeline.py --skip-download --skip-split
+  python src/run_pipeline.py --auto --skip-download --skip-split
 
-  # Run only analysis
-  python src/run_pipeline.py --analysis-only
-
-  # Full pipeline with all analysis
-  python src/run_pipeline.py --auto
+  # Run only post-training analysis
+  python src/run_pipeline.py --auto --analysis-only
 
 For detailed documentation, see:
-  - .github/copilot-instructions.md (comprehensive guide)
-  - docs/ROADMAP.md (project phases)
-  - docs/DATAFLOW.md (data pipeline details)
+  - AGENTS.md (agent instructions, commands, gotchas)
+  - docs/architecture.md (architecture, stage registry map)
+  - docs/setup.md (environment setup)
+  - docs/paper/results.md (canonical results)
 """
+
 import argparse
 import logging
 import os
@@ -76,10 +76,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 # Setup Pathing
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from src.core.config import (
+    BASELINE_CHECKPOINT_DIR,
     CAUSAL_GRAPHS_DIR,
     CAUSAL_GRAPHS_MULTIVIEW_DIR,
     CHECKPOINT_DIR,
@@ -90,7 +93,7 @@ from src.core.config import (
     FINAL_TEST,
     FINAL_TRAIN,
     FINAL_VAL,
-    MODEL_ROOT,
+    MASTER_MANIFEST,
     NODE_ATTRIBUTES_HARMONIZED,
     NODE_ATTRIBUTES_TEMPORAL,
     NODE_FEATURES_3D,
@@ -110,12 +113,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pipeline")
 
-# Path constants for new stages (some imported from config)
-DOWNLOAD_LOG          = DATA_METADATA / "download_log.csv"
-MASTER_MANIFEST       = DATA_METADATA / "master_manifest.csv"
-ATLAS_DIR             = PROJECT_ROOT  / "data" / "atlases"
-# Baseline checkpoints shipped with the repo; new training saves to CHECKPOINT_DIR
-BASELINE_CHECKPOINT_DIR = MODEL_ROOT / "checkpoints_baseline"
+# Path constants for new stages
+DOWNLOAD_LOG = DATA_METADATA / "download_log.csv"
 
 # Runnable modules that intentionally remain standalone debug/self-test tools and
 # are not part of the default orchestration chain.
@@ -125,6 +124,11 @@ EXEMPT_ENTRYPOINT_MODULES: set[str] = {
     "src.features.graph_factory",
     "src.features.causal_inference",
     "src.analysis.feature_attribution",
+    "src.analysis.generate_paper_figures",
+    "src.experiments.data_quality",
+    "src.experiments.run_ablations",
+    "src.experiments.run_learning_curve",
+    "src.experiments.test_random_edges_on_test",
 }
 
 
@@ -144,15 +148,6 @@ def _checkpoints_available() -> bool:
 def _graph_files_available() -> bool:
     """Return True when at least one causal graph file exists."""
     return CAUSAL_GRAPHS_DIR.exists() and any(CAUSAL_GRAPHS_DIR.glob("*_graph.pt"))
-
-
-def _timeseries_available() -> bool:
-    """Return True when split time-series files are available."""
-    for split_dir in (FINAL_TRAIN, FINAL_VAL, FINAL_TEST):
-        ts_dir = split_dir / "time_series"
-        if ts_dir.exists() and any(ts_dir.glob("*_ts.npy")):
-            return True
-    return False
 
 
 def _source_timeseries_dir() -> Path | None:
@@ -208,19 +203,24 @@ def _check_stage_coverage(staged_modules: set[str], strict: bool = False) -> Non
     """Log uncovered runnable modules; fail in strict mode."""
     discovered = _discover_runnable_src_modules()
     uncovered = sorted(
-        m for m in discovered
+        m
+        for m in discovered
         if m not in staged_modules and m not in EXEMPT_ENTRYPOINT_MODULES
     )
     if not uncovered:
         logger.info("✓ Stage coverage check: all runnable src modules are orchestrated")
         return
 
-    logger.warning("Found %d runnable src module(s) not mapped to pipeline stages:", len(uncovered))
+    logger.warning(
+        "Found %d runnable src module(s) not mapped to pipeline stages:", len(uncovered)
+    )
     for mod in uncovered:
         logger.warning("  - %s", mod)
 
     if strict:
-        logger.error("Strict stage coverage failed. Add stages or exempt modules before continuing.")
+        logger.error(
+            "Strict stage coverage failed. Add stages or exempt modules before continuing."
+        )
         sys.exit(1)
 
 
@@ -269,6 +269,7 @@ def prompt_user(message, default=True):
         else:
             logger.info("Please enter 'y' or 'n'")
 
+
 def clear_old_state():
     """
     Prevents 'Shape Mismatches' by clearing old 164/170 ROI data.
@@ -277,11 +278,7 @@ def clear_old_state():
     logger.info("Cleaning legacy pipeline state for 12-region alignment...")
 
     # Files to remove to force regeneration
-    to_delete = [
-        NODE_FEATURES_3D,
-        NODE_ATTRIBUTES_TEMPORAL,
-        NODE_ATTRIBUTES_HARMONIZED
-    ]
+    to_delete = [NODE_FEATURES_3D, NODE_ATTRIBUTES_TEMPORAL, NODE_ATTRIBUTES_HARMONIZED]
     for f in to_delete:
         if f.exists():
             f.unlink()
@@ -297,7 +294,10 @@ def clear_old_state():
     if CAUSAL_GRAPHS_MULTIVIEW_DIR.exists():
         shutil.rmtree(CAUSAL_GRAPHS_MULTIVIEW_DIR)
         CAUSAL_GRAPHS_MULTIVIEW_DIR.mkdir(parents=True)
-        logger.info("Reset Multi-view Causal Graph directory (cleared stale view artifacts)")
+        logger.info(
+            "Reset Multi-view Causal Graph directory (cleared stale view artifacts)"
+        )
+
 
 def run_module(module_path, args_list=None, description="", function_name=None):
 
@@ -306,9 +306,12 @@ def run_module(module_path, args_list=None, description="", function_name=None):
 
     if function_name:
         # Call specific function within module; propagate False return as exit code 1
-        cmd = [python_exe, "-c",
+        cmd = [
+            python_exe,
+            "-c",
             f"import sys; from {module_path} import {function_name}; "
-            f"result = {function_name}(); sys.exit(0 if result is not False else 1)"]
+            f"result = {function_name}(); sys.exit(0 if result is not False else 1)",
+        ]
     else:
         # Run module as script
         cmd = [python_exe, "-m", module_path]
@@ -327,6 +330,7 @@ def run_module(module_path, args_list=None, description="", function_name=None):
 
     logger.info(f"Completed: {log_msg}")
 
+
 def check_download_status():
     """Check if ABIDE data has been downloaded.
 
@@ -338,7 +342,9 @@ def check_download_status():
     # Fast-path: if split data is present, download already happened.
     train_ts = FINAL_TRAIN / "time_series"
     if train_ts.exists() and any(train_ts.glob("*_ts.npy")):
-        logger.info("Download status: split data present — treating download as complete.")
+        logger.info(
+            "Download status: split data present — treating download as complete."
+        )
         return True
 
     # Second fast-path: pre-split source pools exist (legacy/canonical layouts).
@@ -356,29 +362,31 @@ def check_download_status():
         return True
 
     if not DOWNLOAD_LOG.exists():
-        logger.warning("Download log not found and no split data detected. Data may not be downloaded.")
+        logger.warning(
+            "Download log not found and no split data detected. Data may not be downloaded."
+        )
         return False
 
     # Count downloaded subjects from log file
-    import pandas as pd
     try:
         log_df = pd.read_csv(DOWNLOAD_LOG)
         total = len(log_df)
         # Success includes both 'success' and 'skipped' (already downloaded)
-        successful = len(log_df[log_df['status'].str.lower().isin(['success', 'skipped'])])
-        logger.info(f"Download status: {successful}/{total} subjects ready (downloaded/skipped)")
+        successful = len(
+            log_df[log_df["status"].str.lower().isin(["success", "skipped"])]
+        )
+        logger.info(
+            f"Download status: {successful}/{total} subjects ready (downloaded/skipped)"
+        )
         return successful > 0
     except Exception as e:
         logger.warning(f"Could not parse download log: {e}")
         return False
 
+
 def check_split_status():
     """Check if train/val/test splits are complete and non-empty."""
-    splits_exist = all([
-        FINAL_TRAIN.exists(),
-        FINAL_VAL.exists(),
-        FINAL_TEST.exists()
-    ])
+    splits_exist = all([FINAL_TRAIN.exists(), FINAL_VAL.exists(), FINAL_TEST.exists()])
 
     if not splits_exist:
         logger.warning("Train/val/test splits not found.")
@@ -412,9 +420,13 @@ def check_split_status():
         return False
 
     source_images_dir = DATA_ROOT / "images"
-    remaining_source_images = len(list(source_images_dir.glob("*.png"))) if source_images_dir.exists() else 0
+    remaining_source_images = (
+        len(list(source_images_dir.glob("*.png"))) if source_images_dir.exists() else 0
+    )
     source_ts_dir = _source_timeseries_dir()
-    remaining_source_ts = len(list(source_ts_dir.glob("*_ts.npy"))) if source_ts_dir else 0
+    remaining_source_ts = (
+        len(list(source_ts_dir.glob("*_ts.npy"))) if source_ts_dir else 0
+    )
 
     if remaining_source_images > 0 or remaining_source_ts > 0:
         logger.warning(
@@ -427,15 +439,17 @@ def check_split_status():
 
     return True
 
+
 def show_execution_plan(stages):
     """Display what will be executed."""
-    logger.info("\n" + "="*70)
+    logger.info("\n" + "=" * 70)
     logger.info("EXECUTION PLAN")
-    logger.info("="*70)
+    logger.info("=" * 70)
     for i, (stage_name, will_run, reason) in enumerate(stages, 1):
         status = "✓ WILL RUN" if will_run else "○ SKIP"
         logger.info("%d. %-40s %-15s %s", i, stage_name, status, reason)
-    logger.info("="*70 + "\n")
+    logger.info("=" * 70 + "\n")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -472,99 +486,163 @@ Examples:
 
   # Regenerate features without full reset
   python run_pipeline.py --regenerate-features
-        """
+        """,
     )
 
     # Execution modes
-    parser.add_argument("--interactive", action="store_true", default=True,
-                        help="Prompt user before each stage (default)")
-    parser.add_argument("--auto", action="store_true",
-                        help="Run all missing stages without prompts")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Show execution plan without running")
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        default=True,
+        help="Prompt user before each stage (default)",
+    )
+    parser.add_argument(
+        "--auto", action="store_true", help="Run all missing stages without prompts"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show execution plan without running"
+    )
 
     # Stage control - Skip flags
-    parser.add_argument("--skip-download", action="store_true",
-                        help="Skip ABIDE download (use existing data)")
-    parser.add_argument("--skip-split", action="store_true",
-                        help="Skip train/val/test split (use existing splits)")
-    parser.add_argument("--skip-manifest", action="store_true",
-                        help="Skip manifest generation")
-    parser.add_argument("--skip-annotate", action="store_true",
-                        help="Skip atlas-based annotation (use existing labels)")
-    parser.add_argument("--skip-yolo", action="store_true",
-                        help="Skip YOLO training (use existing weights)")
-    parser.add_argument("--use-yolo-spatial", action="store_true",
-                        help="Use YOLO-derived spatial features (default).")
-    parser.add_argument("--use-atlas-spatial", action="store_true",
-                        help=argparse.SUPPRESS)
-    parser.add_argument("--skip-spatial", action="store_true",
-                        help="Skip spatial feature extraction (use existing features)")
-    parser.add_argument("--multiview", action="store_true",
-                        help="Run optional multi-view causal graph construction stage after causal_graphs")
-    parser.add_argument("--site-stratified-cv", action="store_true",
-                        help="Run optional site-stratified CV fold assignment stage after split")
-    parser.add_argument("--skip-gnn", action="store_true",
-                        help="Skip GNN training")
-    parser.add_argument("--skip-integrity", action="store_true",
-                        help="Skip all integrity checks")
-    parser.add_argument("--skip-atlas-validation", action="store_true",
-                        help="Skip atlas validation")
-    parser.add_argument("--skip-validation", action="store_true",
-                        help="Skip validation checks")
-    parser.add_argument("--11-lobes", "--11-lobe", dest="lobes_11", action="store_true",
-                        help="Use 11 lobes (exclude Brainstem) - see FINAL_ARCHITECTURE_ANALYSIS.md for performance comparison")
+    parser.add_argument(
+        "--skip-download",
+        action="store_true",
+        help="Skip ABIDE download (use existing data)",
+    )
+    parser.add_argument(
+        "--skip-split",
+        action="store_true",
+        help="Skip train/val/test split (use existing splits)",
+    )
+    parser.add_argument(
+        "--skip-manifest", action="store_true", help="Skip manifest generation"
+    )
+    parser.add_argument(
+        "--skip-annotate",
+        action="store_true",
+        help="Skip atlas-based annotation (use existing labels)",
+    )
+    parser.add_argument(
+        "--skip-yolo",
+        action="store_true",
+        help="Skip YOLO training (use existing weights)",
+    )
+    parser.add_argument(
+        "--use-yolo-spatial",
+        action="store_true",
+        help="Use YOLO-derived spatial features (default).",
+    )
+    parser.add_argument(
+        "--use-atlas-spatial", action="store_true", help=argparse.SUPPRESS
+    )
+    parser.add_argument(
+        "--skip-spatial",
+        action="store_true",
+        help="Skip spatial feature extraction (use existing features)",
+    )
+    parser.add_argument(
+        "--multiview",
+        action="store_true",
+        help="Run optional multi-view causal graph construction stage after causal_graphs",
+    )
+    parser.add_argument(
+        "--site-stratified-cv",
+        action="store_true",
+        help="Run optional site-stratified CV fold assignment stage after split",
+    )
+    parser.add_argument("--skip-gnn", action="store_true", help="Skip GNN training")
+    parser.add_argument(
+        "--skip-integrity", action="store_true", help="Skip all integrity checks"
+    )
+    parser.add_argument(
+        "--skip-atlas-validation", action="store_true", help="Skip atlas validation"
+    )
+    parser.add_argument(
+        "--skip-validation", action="store_true", help="Skip validation checks"
+    )
+    parser.add_argument(
+        "--11-lobes",
+        "--11-lobe",
+        dest="lobes_11",
+        action="store_true",
+        help="Use 11 lobes (exclude Brainstem)",
+    )
 
     # Post-training analysis flags
-    parser.add_argument("--skip-visualizations", action="store_true",
-                        help="Skip generating visualizations after training")
-    parser.add_argument("--skip-graph-visualization", action="store_true",
-                        help="Skip causal graph visualization stage")
-    parser.add_argument("--skip-evaluation", action="store_true",
-                        help="Skip comprehensive evaluation (bootstrap CI, permutation test, subgroups)")
-    parser.add_argument("--skip-explainability", action="store_true",
-                        help="Skip explainability analysis (node/edge importance, feature attribution)")
-    parser.add_argument("--skip-result-analysis", action="store_true",
-                        help="Skip result analysis (per-subject predictions, misclassification analysis)")
-    parser.add_argument("--skip-subject-analysis", action="store_true",
-                        help="Skip per-subject artifact integrity analysis")
-    parser.add_argument("--skip-dead-lobe-diagnosis", action="store_true",
-                        help="Skip dead-lobe diagnostic snapshot")
-    parser.add_argument("--skip-audit-check", action="store_true",
-                        help="Skip strict post-fix audit check stage")
-    parser.add_argument("--skip-dev-audit", action="store_true",
-                        help="Skip developer static audit stage")
-    parser.add_argument("--skip-feature-diagnostics", action="store_true",
-                        help="Skip deep feature diagnostics stage")
-    parser.add_argument("--skip-data-quality", action="store_true",
-                        help="Skip data quality experiment stage")
-    parser.add_argument("--skip-ablations", action="store_true",
-                        help="Skip ablation study stage")
-    parser.add_argument("--skip-paper-figures", action="store_true",
-                        help="Skip paper figure generation stage")
-    parser.add_argument("--full-src", action="store_true",
-                        help="Run all optional extended stages (audit + diagnostics + experiments)")
-    parser.add_argument("--visualizations-only", action="store_true",
-                        help="Only run visualizations (skip all other stages)")
-    parser.add_argument("--analysis-only", action="store_true",
-                        help="Only run post-training analysis stages (vis, eval, explain, results)")
+    parser.add_argument(
+        "--skip-visualizations",
+        action="store_true",
+        help="Skip generating visualizations after training",
+    )
+    parser.add_argument(
+        "--skip-graph-visualization",
+        action="store_true",
+        help="Skip causal graph visualization stage",
+    )
+    parser.add_argument(
+        "--skip-evaluation",
+        action="store_true",
+        help="Skip comprehensive evaluation (bootstrap CI, permutation test, subgroups)",
+    )
+    parser.add_argument(
+        "--skip-explainability",
+        action="store_true",
+        help="Skip explainability analysis (node/edge importance, feature attribution)",
+    )
+    parser.add_argument(
+        "--skip-result-analysis",
+        action="store_true",
+        help="Skip result analysis (per-subject predictions, misclassification analysis)",
+    )
+    parser.add_argument(
+        "--skip-subject-analysis",
+        action="store_true",
+        help="Skip per-subject artifact integrity analysis",
+    )
+    parser.add_argument(
+        "--visualizations-only",
+        action="store_true",
+        help="Only run visualizations (skip all other stages)",
+    )
+    parser.add_argument(
+        "--analysis-only",
+        action="store_true",
+        help="Only run post-training analysis stages (vis, eval, explain, results)",
+    )
 
-    parser.add_argument("--config-hash", type=str, default=None,
-                        help="Expected 8-character config hash to enforce reproducibility")
-    parser.add_argument("--seed", type=int, default=42,
-                        help="Global random seed for reproducibility")
-    parser.add_argument("--skip-diagnostics", action="store_true",
-                        help="Skip comprehensive health check")
-    parser.add_argument("--skip-comprehensive-validation", action="store_true",
-                        help="Skip comprehensive validation & tuning suite (YOLO quality, sparsity, stratification)")
+    parser.add_argument(
+        "--config-hash",
+        type=str,
+        default=None,
+        help="Expected 8-character config hash to enforce reproducibility",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Global random seed for reproducibility"
+    )
+    parser.add_argument(
+        "--skip-diagnostics",
+        action="store_true",
+        help="Skip comprehensive health check",
+    )
+    parser.add_argument(
+        "--skip-comprehensive-validation",
+        action="store_true",
+        help="Skip comprehensive validation & tuning suite (YOLO quality, sparsity, stratification)",
+    )
 
     # Feature regeneration
-    parser.add_argument("--regenerate-features", action="store_true",
-                        help="Regenerate spatial/temporal features, harmonization, and graphs (keeps other data)")
+    parser.add_argument(
+        "--regenerate-features",
+        action="store_true",
+        help="Regenerate spatial/temporal features, harmonization, and graphs (keeps other data)",
+    )
 
     # Force/Diagnostics
-    parser.add_argument("--force-reset", action="store_true",
-                        help="Wipe all intermediate CSVs and Graphs")
+    parser.add_argument(
+        "--force-reset",
+        action="store_true",
+        help="Wipe all intermediate CSVs and Graphs",
+    )
 
     args = parser.parse_args()
 
@@ -584,14 +662,6 @@ Examples:
         # Default behavior: use YOLO-derived spatial features unless atlas is requested.
         args.use_yolo_spatial = True
 
-    if args.full_src:
-        args.skip_audit_check = False
-        args.skip_dev_audit = False
-        args.skip_feature_diagnostics = False
-        args.skip_data_quality = False
-        args.skip_ablations = False
-        args.skip_paper_figures = False
-
     # 11-lobe mode is handled via env var set BEFORE argparse above
     # Just log the confirmation here
     if args.lobes_11:
@@ -608,10 +678,10 @@ Examples:
     if args.auto:
         os.environ["NEURO_CXG_NONINTERACTIVE"] = "1"
 
-    logger.info("\n" + "="*70)
+    logger.info("\n" + "=" * 70)
     logger.info("NEURO-CXG PIPELINE RUNNER")
     logger.info("12-Region Causal GNN for fMRI Analysis")
-    logger.info("="*70)
+    logger.info("=" * 70)
 
     # STAGE 0: PRE-FLIGHT VALIDATION
     logger.info("\nStage 0: Pre-Flight Validation")
@@ -621,11 +691,14 @@ Examples:
         sys.exit(1)
 
     from src.validation.config_snapshot import get_config_hash
+
     current_hash = get_config_hash()
     logger.info(f"Current Config Hash: {current_hash}")
     if args.config_hash:
         if args.config_hash != current_hash:
-            logger.error(f"Config hash mismatch! Expected {args.config_hash}, got {current_hash}")
+            logger.error(
+                f"Config hash mismatch! Expected {args.config_hash}, got {current_hash}"
+            )
             sys.exit(1)
         else:
             logger.info("Config hash match confirmed.")
@@ -642,42 +715,75 @@ Examples:
     execution_order = [stage.key for stage in STAGE_REGISTRY]
 
     yolo_weights = YOLO_WEIGHTS_PATH
-    if "yolo" in registry_by_key and registry_by_key["yolo"].output_sentinel is not None:
+    if (
+        "yolo" in registry_by_key
+        and registry_by_key["yolo"].output_sentinel is not None
+    ):
         yolo_weights = registry_by_key["yolo"].output_sentinel
 
     data_downloaded = check_download_status() if not args.skip_download else True
     data_split = check_split_status() if not args.skip_split else True
-    existing_labels = registry_by_key["annotate"].is_complete() if "annotate" in registry_by_key else _file_has_rows(FINAL_TRAIN / "labels", "*.txt")
-    existing_spatial = registry_by_key["spatial_features"].is_complete() if "spatial_features" in registry_by_key else NODE_FEATURES_3D.exists()
-    existing_temporal = registry_by_key["temporal_features"].is_complete() if "temporal_features" in registry_by_key else NODE_ATTRIBUTES_TEMPORAL.exists()
-    existing_harmonized = registry_by_key["harmonization"].is_complete() if "harmonization" in registry_by_key else NODE_ATTRIBUTES_HARMONIZED.exists()
-    existing_graphs = registry_by_key["causal_graphs"].is_complete() if "causal_graphs" in registry_by_key else _graph_files_available()
-    existing_timeseries = _timeseries_available()
+    existing_labels = (
+        registry_by_key["annotate"].is_complete()
+        if "annotate" in registry_by_key
+        else _file_has_rows(FINAL_TRAIN / "labels", "*.txt")
+    )
+    existing_spatial = (
+        registry_by_key["spatial_features"].is_complete()
+        if "spatial_features" in registry_by_key
+        else NODE_FEATURES_3D.exists()
+    )
+    existing_temporal = (
+        registry_by_key["temporal_features"].is_complete()
+        if "temporal_features" in registry_by_key
+        else NODE_ATTRIBUTES_TEMPORAL.exists()
+    )
+    existing_harmonized = (
+        registry_by_key["harmonization"].is_complete()
+        if "harmonization" in registry_by_key
+        else NODE_ATTRIBUTES_HARMONIZED.exists()
+    )
+    existing_graphs = (
+        registry_by_key["causal_graphs"].is_complete()
+        if "causal_graphs" in registry_by_key
+        else _graph_files_available()
+    )
     existing_checkpoints = _checkpoints_available()
-
-    # Compute readiness and planned outputs once so downstream stages can run in the
-    # same invocation even when their artifacts are produced earlier in this run.
+    # Compute readiness and planned outputs once so downstream stages can run in the    # same invocation even when their artifacts are produced earlier in this run.
     download_will_run = not args.skip_download and not data_downloaded
     split_will_run = not args.skip_split and (not data_split or args.force_reset)
-    labels_will_run = not args.skip_annotate and (args.force_reset or not existing_labels)
+    labels_will_run = not args.skip_annotate and (
+        args.force_reset or not existing_labels
+    )
     yolo_will_run = (
         (not yolo_weights.exists() or args.force_reset)
         and not args.skip_yolo
         and args.use_yolo_spatial
     )
-    spatial_will_run = not args.skip_spatial and (not existing_spatial or args.force_reset or args.regenerate_features)
-    temporal_will_run = not existing_temporal or args.force_reset or args.regenerate_features
-    harmonization_will_run = not existing_harmonized or args.force_reset or args.regenerate_features
-    graphs_will_run = not existing_graphs or args.force_reset or args.regenerate_features
-    gnn_training_will_run = not args.skip_gnn and not args.visualizations_only and not args.analysis_only
+    spatial_will_run = not args.skip_spatial and (
+        not existing_spatial or args.force_reset or args.regenerate_features
+    )
+    temporal_will_run = (
+        not existing_temporal or args.force_reset or args.regenerate_features
+    )
+    harmonization_will_run = (
+        not existing_harmonized or args.force_reset or args.regenerate_features
+    )
+    graphs_will_run = (
+        not existing_graphs or args.force_reset or args.regenerate_features
+    )
+    gnn_training_will_run = (
+        not args.skip_gnn and not args.visualizations_only and not args.analysis_only
+    )
 
     download_ready_or_planned = data_downloaded or download_will_run
     split_ready_or_planned = data_split or split_will_run
     labels_ready_or_planned = existing_labels or labels_will_run
-    yolo_ready_or_planned = (not args.use_yolo_spatial) or yolo_weights.exists() or yolo_will_run
+    yolo_ready_or_planned = (
+        (not args.use_yolo_spatial) or yolo_weights.exists() or yolo_will_run
+    )
     spatial_ready_or_planned = existing_spatial or spatial_will_run
     temporal_ready_or_planned = existing_temporal or temporal_will_run
-    timeseries_ready_or_planned = existing_timeseries or split_will_run
     graphs_ready_or_planned = existing_graphs or graphs_will_run
     harmonized_ready_or_planned = existing_harmonized or harmonization_will_run
     checkpoints_ready_or_planned = existing_checkpoints or gnn_training_will_run
@@ -685,70 +791,74 @@ Examples:
     stage_should_run = {
         "download": download_will_run,
         "split": split_will_run,
-        "manifest": not args.skip_manifest and (
-            not MASTER_MANIFEST.exists() or args.force_reset or (not args.skip_split and not data_split)
+        "manifest": not args.skip_manifest
+        and (
+            not MASTER_MANIFEST.exists()
+            or args.force_reset
+            or (not args.skip_split and not data_split)
         ),
         "atlas_validation": not args.skip_atlas_validation,
-        "pipeline_validation": not args.skip_validation,
-        "post_download_integrity": not args.skip_integrity and download_ready_or_planned,
+        "post_download_integrity": not args.skip_integrity
+        and download_ready_or_planned,
         "annotate": labels_will_run and split_ready_or_planned,
         "site_stratified_cv": args.site_stratified_cv and split_ready_or_planned,
         "yolo": yolo_will_run and labels_ready_or_planned,
-        "spatial_features": spatial_will_run and split_ready_or_planned and yolo_ready_or_planned,
+        "spatial_features": spatial_will_run
+        and split_ready_or_planned
+        and yolo_ready_or_planned,
         "temporal_features": temporal_will_run and split_ready_or_planned,
-        "harmonization": harmonization_will_run and spatial_ready_or_planned and temporal_ready_or_planned,
+        "harmonization": harmonization_will_run
+        and spatial_ready_or_planned
+        and temporal_ready_or_planned,
         "pre_gnn_integrity": not args.skip_integrity and harmonized_ready_or_planned,
         "causal_graphs": graphs_will_run and harmonized_ready_or_planned,
         "multiview_graphs": args.multiview and graphs_ready_or_planned,
-        "dead_lobe_diagnosis": not args.skip_dead_lobe_diagnosis and timeseries_ready_or_planned,
         "diagnostics": not args.skip_diagnostics and graphs_ready_or_planned,
-        "quality_validation": not args.skip_comprehensive_validation and graphs_ready_or_planned,
-        "gnn_training": gnn_training_will_run and graphs_ready_or_planned and harmonized_ready_or_planned,
+        "quality_validation": not args.skip_comprehensive_validation
+        and graphs_ready_or_planned,
+        "gnn_training": gnn_training_will_run
+        and graphs_ready_or_planned
+        and harmonized_ready_or_planned,
         "visualizations": not args.skip_visualizations and checkpoints_ready_or_planned,
-        "graph_visualization": not args.skip_graph_visualization and graphs_ready_or_planned,
+        "graph_visualization": not args.skip_graph_visualization
+        and graphs_ready_or_planned,
         "evaluation": not args.skip_evaluation and checkpoints_ready_or_planned,
         "explainability": not args.skip_explainability and checkpoints_ready_or_planned,
-        "result_analysis": not args.skip_result_analysis and checkpoints_ready_or_planned,
-        "subject_analysis": not args.skip_subject_analysis and graphs_ready_or_planned and harmonized_ready_or_planned,
-        "audit_check": not args.skip_audit_check and graphs_ready_or_planned and harmonized_ready_or_planned,
-        "dev_audit": not args.skip_dev_audit,
-        "feature_diagnostics": not args.skip_feature_diagnostics and graphs_ready_or_planned,
-        "data_quality_experiments": not args.skip_data_quality and graphs_ready_or_planned and harmonized_ready_or_planned,
-        "ablation_studies": not args.skip_ablations and checkpoints_ready_or_planned,
-        "paper_figures": not args.skip_paper_figures and checkpoints_ready_or_planned,
+        "result_analysis": not args.skip_result_analysis
+        and checkpoints_ready_or_planned,
+        "subject_analysis": not args.skip_subject_analysis
+        and graphs_ready_or_planned
+        and harmonized_ready_or_planned,
     }
 
     stage_reasons = {
         "download": "Download ABIDE fMRI data + 7-slice ALFF export (Stage 1)",
         "split": "2D stratification by DX_GROUP + SITE_ID (Stage 2)",
         "manifest": "Maps subjects to phenotypes (Stage 3)",
-        "atlas_validation": "Verify AAL3 atlas files exist and are valid (Stage 4)",
-        "pipeline_validation": "Full pipeline health check (Stage 5)",
+        "atlas_validation": "Verify AAL3 atlas files exist and are valid (Stage 5)",
         "post_download_integrity": "Validate PNG/NPY files after download (Stage 6)",
         "annotate": "Generate YOLO training labels from AAL3 atlas (Stage 7)",
         "site_stratified_cv": "Regenerate cv_fold with site-stratified GroupKFold by site-cluster",
-        "yolo": "Train YOLO26n for 12-region detection (Stage 8)" if not yolo_weights.exists() else "Force retrain",
+        "yolo": (
+            "Train YOLO26n for 12-region detection (Stage 8)"
+            if not yolo_weights.exists()
+            else "Force retrain"
+        ),
         "spatial_features": "YOLO inference -> 3D spatial coords aggregation (Stage 9)",
-        "temporal_features": "20 features per ROI: 8 time-domain + 12 frequency (Stage 11)",
-        "harmonization": "Fold-safe neuroHarmonize, protects DX_GROUP (Stage 12)",
-        "pre_gnn_integrity": "Validate dataset completeness per split (Stage 13)",
-        "causal_graphs": "Granger causality/lagged correlation (Stage 14)",
-        "multiview_graphs": "Optional multi-view causal graph construction (Stage 15)",
-        "dead_lobe_diagnosis": "Quick sanity check for lobe aggregation and causality readiness",
-        "diagnostics": "Comprehensive health report after graphs built (Stage 16)",
-        "quality_validation": "YOLO quality, graph sparsity, stratification (Stage 17)",
-        "gnn_training": "Main training phase — 5-fold CV with GAT+GRL (Stage 18)",
+        "temporal_features": "20 features per ROI: 8 time-domain + 12 frequency (Stage 10)",
+        "harmonization": "Fold-safe neuroHarmonize, protects DX_GROUP (Stage 11)",
+        "pre_gnn_integrity": "Validate dataset completeness per split (Stage 12)",
+        "causal_graphs": "Granger causality/lagged correlation (Stage 13)",
+        "multiview_graphs": "Optional multi-view causal graph construction (Stage 14)",
+        "diagnostics": "Comprehensive health report after graphs built (Stage 15)",
+        "quality_validation": "YOLO quality, graph sparsity, stratification (Stage 16)",
+        "gnn_training": "Main training phase — 5-fold CV with GAT+GRL (Stage 17)",
         "visualizations": "Generate comprehensive visualizations (Phase 9 Reporting)",
         "graph_visualization": "Render directed ASD-vs-Control causal graph comparison",
         "evaluation": "Ensemble evaluation, bootstrap CI, permutation test, subgroups (Phase 9.2)",
         "explainability": "Node/edge importance, feature attribution, literature validation (Phase 8)",
         "result_analysis": "Per-subject predictions, misclassification analysis, site effects (Phase 9.3)",
         "subject_analysis": "Per-subject artifact diagnostics and summary report",
-        "audit_check": "Strict post-fix artifact validation",
-        "dev_audit": "Static code audit for consistency and legacy drift",
-        "feature_diagnostics": "Deep feature-group and graph edge diagnostics",
-        "data_quality_experiments": "Cross-site, bottleneck, and atlas-baseline audits",
-        "ablation_studies": "Controlled ablations (A-E) for signal-source attribution",
     }
 
     # Build executable stage dictionary from registry metadata.
@@ -768,16 +878,12 @@ Examples:
                 reason = "Atlas centroids -> 3D spatial coords aggregation (Stage 9)"
         elif stage_meta.key == "split":
             name = "Train/Val/Test Split (2D Stratified)"
-        elif stage_meta.key == "pipeline_validation":
-            name = "Pipeline Validation (Comprehensive Health Check)"
         elif stage_meta.key == "post_download_integrity":
             name = "Post-Download Integrity Check"
         elif stage_meta.key == "yolo":
             name = "YOLO Training (ROI Detection)"
         elif stage_meta.key == "causal_graphs":
             name = "Causal Graph Construction (12x12)"
-        elif stage_meta.key == "dead_lobe_diagnosis":
-            name = "Dead-Lobe Diagnosis (Snapshot)"
         elif stage_meta.key == "quality_validation":
             name = "Quality Validation (YOLO & Graph Sparsity)"
         elif stage_meta.key == "gnn_training":
@@ -786,8 +892,6 @@ Examples:
             name = "Result Interpretation & Analysis"
         elif stage_meta.key == "subject_analysis":
             name = "Subject-Level Analysis"
-        elif stage_meta.key == "dev_audit":
-            name = "Developer Code Audit"
 
         stage_args = list(stage_meta.args) if stage_meta.args else []
         if stage_meta.key == "gnn_training":
@@ -813,10 +917,6 @@ Examples:
             "explainability",
             "result_analysis",
             "subject_analysis",
-            "audit_check",
-            "feature_diagnostics",
-            "data_quality_experiments",
-            "ablation_studies",
         }
         for key in stages.keys():
             if key not in analysis_stages:
@@ -826,8 +926,10 @@ Examples:
     # `spatial_features` can route to either YOLO-based or atlas-based extractor,
     # so mark both modules as covered for strict stage-audit mode.
     staged_modules = {stage_info["module"] for stage_info in stages.values()}
-    staged_modules.update({"src.features.extract_spatial", "src.features.extract_spatial_atlas"})
-    _check_stage_coverage(staged_modules, strict=args.full_src)
+    staged_modules.update(
+        {"src.features.extract_spatial", "src.features.extract_spatial_atlas"}
+    )
+    _check_stage_coverage(staged_modules, strict=False)
 
     # Special handling for visualizations-only mode
     if args.visualizations_only:
@@ -837,8 +939,10 @@ Examples:
                 stages[key]["should_run"] = False
 
     # Show execution plan
-    stage_list = [(stage_info["name"], stage_info["should_run"], stage_info["reason"])
-                  for stage_info in stages.values()]
+    stage_list = [
+        (stage_info["name"], stage_info["should_run"], stage_info["reason"])
+        for stage_info in stages.values()
+    ]
     show_execution_plan(stage_list)
 
     if args.dry_run:
@@ -847,7 +951,9 @@ Examples:
 
     # Reset state if requested
     if args.force_reset:
-        if interactive and not prompt_user("⚠️  This will delete intermediate files. Continue?", default=False):
+        if interactive and not prompt_user(
+            "⚠️  This will delete intermediate files. Continue?", default=False
+        ):
             logger.info("Aborted by user")
             sys.exit(0)
         clear_old_state()
@@ -880,25 +986,17 @@ Examples:
         elif stage_key == "explainability":
             msg = f"🔬 Run {stage['name']}? (Node/edge importance, feature attribution)"
         elif stage_key == "result_analysis":
-            msg = f"📈 Run {stage['name']}? (Per-subject predictions, misclassification)"
+            msg = (
+                f"📈 Run {stage['name']}? (Per-subject predictions, misclassification)"
+            )
         elif stage_key == "subject_analysis":
             msg = f"🧾 Run {stage['name']}? (Generates per-subject diagnostics CSV/TXT)"
-        elif stage_key == "audit_check":
-            msg = f"✅ Run {stage['name']}? (Strict artifact validation with pass/fail exit)"
-        elif stage_key == "dev_audit":
-            msg = f"🛠️  Run {stage['name']}? (Static consistency audit over src/)"
-        elif stage_key == "feature_diagnostics":
-            msg = f"🧬 Run {stage['name']}? (Detailed feature and graph diagnostics)"
-        elif stage_key == "data_quality_experiments":
-            msg = f"📉 Run {stage['name']}? (Cross-site and bottleneck experiments)"
-        elif stage_key == "ablation_studies":
-            msg = f"🧪 Run {stage['name']}? (Can be long: trains multiple ablation models)"
-        elif stage_key == "dead_lobe_diagnosis":
-            msg = f"🩺 Run {stage['name']}? (Quick single-subject dead-lobe sanity check)"
         else:
             msg = f"Run {stage['name']}?"
 
-        if interactive and not args.visualizations_only and not args.analysis_only:  # No prompt in special modes
+        if (
+            interactive and not args.visualizations_only and not args.analysis_only
+        ):  # No prompt in special modes
             if not prompt_user(msg, default=True):
                 logger.info(f"⏭️  User skipped: {stage['name']}")
                 continue
@@ -908,20 +1006,24 @@ Examples:
                 validate_gnn_training_inputs()
             except FileNotFoundError as exc:
                 raise FileNotFoundError(
-                    "Pre-training validation failed for gnn_training stage. "
-                    f"{exc}"
+                    "Pre-training validation failed for gnn_training stage. " f"{exc}"
                 ) from exc
 
         # Execute with function name if specified
         function_name = stage.get("function", None)
         args_list = stage.get("args", None)
-        run_module(stage["module"], args_list=args_list, description=stage["name"], function_name=function_name)
+        run_module(
+            stage["module"],
+            args_list=args_list,
+            description=stage["name"],
+            function_name=function_name,
+        )
 
     # COMPLETION
 
-    logger.info("\n" + "="*70)
+    logger.info("\n" + "=" * 70)
     logger.info("NEURO-CXG PIPELINE EXECUTION COMPLETE")
-    logger.info("="*70)
+    logger.info("=" * 70)
     logger.info(f"📁 Checkpoints: {CHECKPOINT_DIR}")
     logger.info(f"📁 Causal graphs: {CAUSAL_GRAPHS_DIR}")
     logger.info(f"📁 Features: {DATA_METADATA}")
@@ -939,25 +1041,19 @@ Examples:
         logger.info(f"📁 Subject analysis: {RESULTS_DIR / 'subject_analysis'}")
     if (RESULTS_DIR / "experiments" / "ablations").exists():
         logger.info(f"📁 Ablation studies: {RESULTS_DIR / 'experiments' / 'ablations'}")
-    if (RESULTS_DIR / "experiments" / "data_quality").exists():
-        logger.info(f"📁 Data quality experiments: {RESULTS_DIR / 'experiments' / 'data_quality'}")
 
-    logger.info("="*70)
+    logger.info("=" * 70)
     logger.info("\n✨ Post-Training Analysis Commands:")
-    logger.info("   python src/run_pipeline.py --visualizations-only")
-    logger.info("   python src/run_pipeline.py --analysis-only")
+    logger.info("   python src/run_pipeline.py --auto --visualizations-only")
+    logger.info("   python src/run_pipeline.py --auto --analysis-only")
     logger.info("   python -m src.analysis.visualize_causal_graph --auto-pair")
     logger.info("   python -m src.analysis.subject_analysis")
-    logger.info("   python -m src.validation.dev_audit --features --quick")
-    logger.info("   python -m src.validation.audit_check")
-    logger.info("   python -m src.validation.dev_audit --all")
     logger.info("   python -m src.validation.pipeline_checks")
-    logger.info("   python -m src.experiments.data_quality")
-    logger.info("   python -m src.experiments.run_ablations")
     logger.info("   python src/run_evaluation.py")
     logger.info("   python src/run_explainability.py")
     logger.info("   python src/run_result_analysis.py")
-    logger.info("="*70 + "\n")
+    logger.info("=" * 70 + "\n")
+
 
 if __name__ == "__main__":
     main()

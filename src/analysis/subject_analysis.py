@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 LOBE_NAME_LIST = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 DEFAULT_OUTPUT_DIR = RESULTS_DIR / "subject_analysis"
 
+
 def _build_ts_index() -> dict[str, Path]:
     """Map subject_id to its time-series file path across train/val/test splits."""
     ts_index: dict[str, Path] = {}
@@ -48,6 +49,7 @@ def _build_ts_index() -> dict[str, Path]:
             subject_id = ts_file.stem.replace("_ts", "")
             ts_index[subject_id] = ts_file
     return ts_index
+
 
 def _analyze_time_series(ts_path: Path) -> dict[str, object]:
     """Compute per-subject time-series quality metrics."""
@@ -77,6 +79,7 @@ def _analyze_time_series(ts_path: Path) -> dict[str, object]:
 
     return out
 
+
 def _analyze_graph(graph_path: Path) -> dict[str, object]:
     """Compute per-subject graph quality metrics from graph file."""
     out: dict[str, object] = {}
@@ -96,14 +99,22 @@ def _analyze_graph(graph_path: Path) -> dict[str, object]:
     off_diag_mask = ~torch.eye(adj.shape[0], dtype=torch.bool)
     edge_count = int((nonzero_mask & off_diag_mask).sum().item())
 
-    deg_summary = summarize_graph_degeneracy_from_adj(adj, min_edges=MIN_EDGES_PER_GRAPH)
+    deg_summary = summarize_graph_degeneracy_from_adj(
+        adj, min_edges=MIN_EDGES_PER_GRAPH
+    )
 
     nonzero_vals = adj[nonzero_mask & off_diag_mask]
-    mean_weight = float(nonzero_vals.abs().mean().item()) if nonzero_vals.numel() > 0 else 0.0
-    max_weight = float(nonzero_vals.abs().max().item()) if nonzero_vals.numel() > 0 else 0.0
+    mean_weight = (
+        float(nonzero_vals.abs().mean().item()) if nonzero_vals.numel() > 0 else 0.0
+    )
+    max_weight = (
+        float(nonzero_vals.abs().max().item()) if nonzero_vals.numel() > 0 else 0.0
+    )
 
     out["graph_edges"] = int(stats.get("edges", edge_count))
-    out["graph_density"] = float(stats.get("density", edge_count / max(possible_edges, 1)))
+    out["graph_density"] = float(
+        stats.get("density", edge_count / max(possible_edges, 1))
+    )
     out["graph_mean_weight"] = float(stats.get("mean_weight", mean_weight))
     out["graph_max_weight"] = float(stats.get("max_weight", max_weight))
     out["graph_nan_in_adj"] = bool(torch.isnan(adj).any().item())
@@ -132,6 +143,7 @@ def _analyze_graph(graph_path: Path) -> dict[str, object]:
 
     return out
 
+
 def _analyze_harmonized_row(row: pd.Series) -> dict[str, object]:
     """Compute harmonized feature quality metrics for one subject row."""
     out: dict[str, object] = {}
@@ -148,6 +160,7 @@ def _analyze_harmonized_row(row: pd.Series) -> dict[str, object]:
     out["harm_zero_lobes"] = int(zero_lobes)
     return out
 
+
 def _safe_manifest_value(manifest_row: pd.Series, col: str, default=None):
     if col not in manifest_row.index:
         return default
@@ -155,6 +168,7 @@ def _safe_manifest_value(manifest_row: pd.Series, col: str, default=None):
     if pd.isna(value):
         return default
     return value
+
 
 def run_analysis(limit: int | None = None) -> pd.DataFrame:
     """Run full subject-level analysis across manifest, ts, graph, and harmonized files."""
@@ -172,7 +186,9 @@ def run_analysis(limit: int | None = None) -> pd.DataFrame:
     logger.info("Loading harmonized features from %s", NODE_ATTRIBUTES_HARMONIZED)
     harm_df = pd.read_csv(NODE_ATTRIBUTES_HARMONIZED)
     if "subject_id" not in harm_df.columns:
-        raise KeyError(f"subject_id missing in harmonized file: {NODE_ATTRIBUTES_HARMONIZED}")
+        raise KeyError(
+            f"subject_id missing in harmonized file: {NODE_ATTRIBUTES_HARMONIZED}"
+        )
     harm_df["subject_id"] = harm_df["subject_id"].astype(str)
     harm_df = harm_df.set_index("subject_id")
     logger.info("Found %d harmonized feature rows", len(harm_df))
@@ -184,7 +200,12 @@ def run_analysis(limit: int | None = None) -> pd.DataFrame:
     }
     logger.info("Found %d graph files", len(graph_files))
 
-    subject_ids = sorted(set(manifest_df.index) | set(ts_index.keys()) | set(harm_df.index) | set(graph_files.keys()))
+    subject_ids = sorted(
+        set(manifest_df.index)
+        | set(ts_index.keys())
+        | set(harm_df.index)
+        | set(graph_files.keys())
+    )
     if limit is not None and limit > 0:
         subject_ids = subject_ids[:limit]
 
@@ -233,7 +254,9 @@ def run_analysis(limit: int | None = None) -> pd.DataFrame:
             try:
                 row.update(_analyze_time_series(ts_index[subject_id]))
             except Exception as exc:
-                logger.warning("Time-series analysis failed for %s: %s", subject_id, exc)
+                logger.warning(
+                    "Time-series analysis failed for %s: %s", subject_id, exc
+                )
                 row["ts_exists"] = "error"
         else:
             row["ts_exists"] = False
@@ -272,7 +295,9 @@ def run_analysis(limit: int | None = None) -> pd.DataFrame:
             try:
                 row.update(_analyze_harmonized_row(harm_df.loc[subject_id]))
             except Exception as exc:
-                logger.warning("Harmonized feature analysis failed for %s: %s", subject_id, exc)
+                logger.warning(
+                    "Harmonized feature analysis failed for %s: %s", subject_id, exc
+                )
                 row["harm_exists"] = "error"
         else:
             row["harm_exists"] = False
@@ -282,6 +307,7 @@ def run_analysis(limit: int | None = None) -> pd.DataFrame:
         rows.append(row)
 
     return pd.DataFrame(rows)
+
 
 def build_report(df: pd.DataFrame) -> str:
     """Build text summary report from per-subject diagnostics DataFrame."""
@@ -295,7 +321,9 @@ def build_report(df: pd.DataFrame) -> str:
     lines.append(f"Total subjects scanned: {total}")
 
     in_manifest = int((df["in_manifest"]).sum())
-    lines.append(f"In manifest: {in_manifest} ({100 * in_manifest / max(total, 1):.1f}%)")
+    lines.append(
+        f"In manifest: {in_manifest} ({100 * in_manifest / max(total, 1):.1f}%)"
+    )
 
     if "split" in df.columns:
         split_counts = df[df["split"].notna()]["split"].value_counts().to_dict()
@@ -316,9 +344,15 @@ def build_report(df: pd.DataFrame) -> str:
     harm_exists = int((df["harm_exists"]).sum())
     lines.append("")
     lines.append("Artifact availability:")
-    lines.append(f"  Time-series present: {ts_exists} ({100 * ts_exists / max(total, 1):.1f}%)")
-    lines.append(f"  Graph present:       {graph_exists} ({100 * graph_exists / max(total, 1):.1f}%)")
-    lines.append(f"  Harmonized present:  {harm_exists} ({100 * harm_exists / max(total, 1):.1f}%)")
+    lines.append(
+        f"  Time-series present: {ts_exists} ({100 * ts_exists / max(total, 1):.1f}%)"
+    )
+    lines.append(
+        f"  Graph present:       {graph_exists} ({100 * graph_exists / max(total, 1):.1f}%)"
+    )
+    lines.append(
+        f"  Harmonized present:  {harm_exists} ({100 * harm_exists / max(total, 1):.1f}%)"
+    )
 
     if "graph_is_degenerate" in df.columns:
         degenerate = int((df["graph_is_degenerate"]).sum())
@@ -330,8 +364,10 @@ def build_report(df: pd.DataFrame) -> str:
 
     if "graph_dead_lobe_names" in df.columns:
         exploded = (
-            df[df["graph_dead_lobe_names"].notna() & (df["graph_dead_lobe_names"] != "")]
-            ["graph_dead_lobe_names"]
+            df[
+                df["graph_dead_lobe_names"].notna()
+                & (df["graph_dead_lobe_names"] != "")
+            ]["graph_dead_lobe_names"]
             .str.split("|")
             .explode()
             .value_counts()
@@ -358,12 +394,22 @@ def build_report(df: pd.DataFrame) -> str:
     lines.append("=" * 78)
     return "\n".join(lines)
 
+
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Comprehensive per-subject pipeline analysis")
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Output directory")
-    parser.add_argument("--limit", type=int, default=None, help="Optional limit for number of subjects")
-    parser.add_argument("--prefix", type=str, default="subject_analysis", help="Output filename prefix")
+    parser = argparse.ArgumentParser(
+        description="Comprehensive per-subject pipeline analysis"
+    )
+    parser.add_argument(
+        "--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Output directory"
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None, help="Optional limit for number of subjects"
+    )
+    parser.add_argument(
+        "--prefix", type=str, default="subject_analysis", help="Output filename prefix"
+    )
     return parser.parse_args()
+
 
 def main() -> None:
     args = _parse_args()
@@ -383,6 +429,7 @@ def main() -> None:
     logger.info("Saved summary report to %s", txt_path)
 
     print(report)
+
 
 if __name__ == "__main__":
     main()

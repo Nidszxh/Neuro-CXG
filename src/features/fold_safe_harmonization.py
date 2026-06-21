@@ -43,17 +43,23 @@ logger = logging.getLogger(__name__)
 # ── constants ─────────────────────────────────────────────────────────────────
 FEATURE_TYPES = FEATURE_GROUPS["temporal"] + FEATURE_GROUPS["frequency"]
 
-NAN_REMOVAL_THRESHOLD = 0.5   # drop subjects with >50 % NaN
-OUTLIER_STD_THRESHOLD = 5     # cap outliers beyond ±5 σ
+NAN_REMOVAL_THRESHOLD = 0.5  # drop subjects with >50 % NaN
+OUTLIER_STD_THRESHOLD = 5  # cap outliers beyond ±5 σ
 VARIANCE_WARNING_THRESHOLD = 30.0  # warn when >30 % features lose/gain variance
-VARIANCE_RETENTION_LOW = 0.7     # flag features retaining <70 % of original variance
-VARIANCE_RETENTION_HIGH = 1.3    # flag features gaining  >30 % of original variance
-COMBAT_MIN_VARIANCE = 1e-8       # treat near-constant channels as constant for ComBat stability
-QUALITY_MIN_REFERENCE_VARIANCE = 1e-8  # avoid unstable retention ratios from tiny denominators
+VARIANCE_RETENTION_LOW = 0.7  # flag features retaining <70 % of original variance
+VARIANCE_RETENTION_HIGH = 1.3  # flag features gaining  >30 % of original variance
+COMBAT_MIN_VARIANCE = (
+    1e-8  # treat near-constant channels as constant for ComBat stability
+)
+QUALITY_MIN_REFERENCE_VARIANCE = (
+    1e-8  # avoid unstable retention ratios from tiny denominators
+)
+
 
 @dataclass
 class HarmonizationFold:
     """Container for harmonization results of a single CV fold."""
+
     fold: int
     train: pd.DataFrame
     val: pd.DataFrame
@@ -61,13 +67,17 @@ class HarmonizationFold:
     val_idx: np.ndarray
     model: object | None
 
+
 # ── feature-column helpers ────────────────────────────────────────────────────
+
 
 def _feat_cols(df: pd.DataFrame) -> list[str]:
     """Return all columns except subject_id."""
     return [c for c in df.columns if c != "subject_id"]
 
+
 # ── 1. Validation ───────────────────────────────────────────────────────────────────
+
 
 def validate_features(df: pd.DataFrame) -> None:
     """Log a compact validation summary for the feature matrix."""
@@ -83,12 +93,22 @@ def validate_features(df: pd.DataFrame) -> None:
     logger.info(
         "Feature validation: %d subjects × %d features | "
         "NaN: %d (%.1f%%) | Inf: %d | Subjects with NaN: %d | Features with NaN: %d",
-        len(df), len(cols), nan_total, nan_pct, inf_total, subj_nan, feat_nan,
+        len(df),
+        len(cols),
+        nan_total,
+        nan_pct,
+        inf_total,
+        subj_nan,
+        feat_nan,
     )
+
 
 # ── 2. Repair ─────────────────────────────────────────────────────────────────────
 
-def repair_features(df: pd.DataFrame, *, impute_nans: bool = True, clip_outliers: bool = True) -> pd.DataFrame:
+
+def repair_features(
+    df: pd.DataFrame, *, impute_nans: bool = True, clip_outliers: bool = True
+) -> pd.DataFrame:
     """
     Clean feature matrix in four vectorised steps.
 
@@ -109,7 +129,9 @@ def repair_features(df: pd.DataFrame, *, impute_nans: bool = True, clip_outliers
     removed = n_before - len(df)
     if removed:
         logger.warning(
-            "Dropped %d subjects with >%d%% NaN values", removed, int(NAN_REMOVAL_THRESHOLD * 100)
+            "Dropped %d subjects with >%d%% NaN values",
+            removed,
+            int(NAN_REMOVAL_THRESHOLD * 100),
         )
 
     # Step 2 — replace ±Inf with quantile bounds (column-wise)
@@ -123,10 +145,18 @@ def repair_features(df: pd.DataFrame, *, impute_nans: bool = True, clip_outliers
             df.loc[mask_neg, col] = valid.quantile(0.01) if len(valid) else 0.0
             inf_replaced += int(mask_pos.sum()) + int(mask_neg.sum())
     if inf_replaced:
-        logger.warning("Replaced %d ±Inf values with 1st/99th-percentile bounds", inf_replaced)
+        logger.warning(
+            "Replaced %d ±Inf values with 1st/99th-percentile bounds", inf_replaced
+        )
 
     # Step 3 — log-transform spectral power (positive-valued, heavy-tailed)
-    spectral = ["delta_power", "theta_power", "alpha_power", "beta_power", "gamma_power"]
+    spectral = [
+        "delta_power",
+        "theta_power",
+        "alpha_power",
+        "beta_power",
+        "gamma_power",
+    ]
     spectral_cols = [c for c in cols if any(s in c for s in spectral)]
     for col in spectral_cols:
         mask = df[col] > 0
@@ -152,7 +182,9 @@ def repair_features(df: pd.DataFrame, *, impute_nans: bool = True, clip_outliers
     logger.info("Repair complete: %d subjects remaining (removed %d)", len(df), removed)
     return df
 
+
 # ── 3. ROI → Lobe aggregation ─────────────────────────────────────────────
+
 
 def aggregate_to_lobes(df: pd.DataFrame) -> pd.DataFrame:
     """Aggregate 170-ROI → 12-lobe feature matrix (vectorised).
@@ -166,20 +198,28 @@ def aggregate_to_lobes(df: pd.DataFrame) -> pd.DataFrame:
         lobe_name = LOBE_NAMES[lobe_id]
         roi_ids = [i + 1 for i in LOBE_MAPPING[lobe_id]]
         for feat in FEATURE_TYPES:
-            present = [f"roi{r}_{feat}" for r in roi_ids if f"roi{r}_{feat}" in df.columns]
+            present = [
+                f"roi{r}_{feat}" for r in roi_ids if f"roi{r}_{feat}" in df.columns
+            ]
             result[f"{lobe_name}_{feat}"] = df[present].mean(axis=1) if present else 0.0
     out = pd.DataFrame(result)
     expected_cols = 1 + NUM_LOBES * len(FEATURE_TYPES)
     if len(out.columns) != expected_cols:
         logger.warning(
-            "aggregate_to_lobes: expected %d columns, got %d", expected_cols, len(out.columns)
+            "aggregate_to_lobes: expected %d columns, got %d",
+            expected_cols,
+            len(out.columns),
         )
     logger.info(
-        "Aggregated \u2192 %d subjects \u00d7 %d lobe-features", len(out), len(out.columns) - 1
+        "Aggregated \u2192 %d subjects \u00d7 %d lobe-features",
+        len(out),
+        len(out.columns) - 1,
     )
     return out
 
+
 # ── 4. Harmonization helpers ──────────────────────────────────────────────
+
 
 def _outlier_clip_fit(
     df: pd.DataFrame,
@@ -198,6 +238,7 @@ def _outlier_clip_fit(
     clipped[cols] = clipped[cols].clip(lower=lower, upper=upper, axis=1)
     return clipped, {"lower": lower, "upper": upper}
 
+
 def _outlier_clip_apply(
     df: pd.DataFrame,
     clip_bounds: dict[str, "pd.Series"],
@@ -209,6 +250,7 @@ def _outlier_clip_apply(
     clipped = df.copy()
     clipped[cols] = clipped[cols].clip(lower=lower, upper=upper, axis=1)
     return clipped
+
 
 def _clip_outliers(df: pd.DataFrame, percentile_range: float = 0.05) -> pd.DataFrame:
     """Clip extreme values based on percentile range to prevent outlier explosion.
@@ -231,7 +273,11 @@ def _clip_outliers(df: pd.DataFrame, percentile_range: float = 0.05) -> pd.DataF
         clipped[col] = clipped[col].clip(lower_bound, upper_bound)
 
     return clipped
-def _prepare_covariates(manifest: pd.DataFrame, features_df: pd.DataFrame) -> pd.DataFrame:
+
+
+def _prepare_covariates(
+    manifest: pd.DataFrame, features_df: pd.DataFrame
+) -> pd.DataFrame:
     """Build covariate DataFrame for neuroHarmonize (requires exact 'SITE' column).
 
     DX_GROUP is included as a *protected* covariate so ComBat preserves
@@ -246,8 +292,11 @@ def _prepare_covariates(manifest: pd.DataFrame, features_df: pd.DataFrame) -> pd
         cov["SEX"] = cov["SEX"].fillna(cov["SEX"].mode().iloc[0])
     cov["SITE"] = cov["SITE"].astype(str)
     cov["SEX"] = pd.to_numeric(cov["SEX"], errors="coerce").fillna(1).astype(int)
-    cov["DX_GROUP"] = pd.to_numeric(cov["DX_GROUP"], errors="coerce").fillna(1).astype(int)
+    cov["DX_GROUP"] = (
+        pd.to_numeric(cov["DX_GROUP"], errors="coerce").fillna(1).astype(int)
+    )
     return cov.drop(columns=["subject_id"])
+
 
 def _remove_constant_features(
     features: pd.DataFrame,
@@ -264,6 +313,7 @@ def _remove_constant_features(
             COMBAT_MIN_VARIANCE,
         )
     return features[kept_cols], kept_cols, constant_cols
+
 
 def _restore_constant_features(
     harmonized: pd.DataFrame,
@@ -283,6 +333,7 @@ def _restore_constant_features(
 
     all_cols = [c for c in original.columns if c != "subject_id"]
     return df[[c for c in all_cols if c in df.columns]]
+
 
 def _safe_harmonization_apply(
     apply_features: pd.DataFrame,
@@ -340,6 +391,7 @@ def _safe_harmonization_apply(
 
     return harmonized
 
+
 def _harmonize_fold(
     train_features: pd.DataFrame,
     val_features: pd.DataFrame,
@@ -396,14 +448,19 @@ def _harmonize_fold(
 
         return (
             model,
-            pd.DataFrame(train_harm, columns=train_features.columns, index=train_features.index),
-            pd.DataFrame(val_harm, columns=train_features.columns, index=val_features.index),
+            pd.DataFrame(
+                train_harm, columns=train_features.columns, index=train_features.index
+            ),
+            pd.DataFrame(
+                val_harm, columns=train_features.columns, index=val_features.index
+            ),
         )
     except Exception as exc:
         logger.error(
             "Harmonization failed (%s); using unharmonized features for this fold", exc
         )
         return None, train_features, val_features
+
 
 def _harmonize_train_apply_pair(
     train_data: pd.DataFrame,
@@ -439,7 +496,9 @@ def _harmonize_train_apply_pair(
 
     train_features = train_data.drop(columns=["subject_id"])
     if apply_data.empty:
-        apply_features = pd.DataFrame(columns=train_features.columns, index=apply_data.index)
+        apply_features = pd.DataFrame(
+            columns=train_features.columns, index=apply_data.index
+        )
     else:
         apply_features = apply_data.drop(columns=["subject_id"])
 
@@ -470,34 +529,47 @@ def _harmonize_train_apply_pair(
         fold_id=fold_id,
     )
 
-    train_restored = _restore_constant_features(train_harmonized, train_data, kept_cols, dropped_cols)
+    train_restored = _restore_constant_features(
+        train_harmonized, train_data, kept_cols, dropped_cols
+    )
     train_restored = pd.concat([train_data[["subject_id"]], train_restored], axis=1)
     train_lobes = _clip_outliers(aggregate_to_lobes(train_restored))
 
     if apply_data.empty:
         apply_lobes = pd.DataFrame(columns=train_lobes.columns)
     else:
-        apply_restored = _restore_constant_features(apply_harmonized, apply_data, kept_cols, dropped_cols)
+        apply_restored = _restore_constant_features(
+            apply_harmonized, apply_data, kept_cols, dropped_cols
+        )
         apply_restored = pd.concat([apply_data[["subject_id"]], apply_restored], axis=1)
         apply_lobes = _clip_outliers(aggregate_to_lobes(apply_restored))
 
     return model, train_lobes, apply_lobes
 
-def _write_ordered_subject_csv(df: pd.DataFrame, subject_order: list[str], output_path: Path) -> None:
+
+def _write_ordered_subject_csv(
+    df: pd.DataFrame, subject_order: list[str], output_path: Path
+) -> None:
     """Write CSV ordered by subject_id according to subject_order."""
     if df.empty:
         logger.warning("No rows to save for %s", output_path)
         return
 
-    dedup = df.drop_duplicates(subset=["subject_id"], keep="first").set_index("subject_id")
+    dedup = df.drop_duplicates(subset=["subject_id"], keep="first").set_index(
+        "subject_id"
+    )
     keep_order = [sid for sid in subject_order if sid in dedup.index]
     ordered = dedup.reindex(keep_order).dropna(how="all").reset_index()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     ordered.to_csv(output_path, index=False)
-    logger.info("Saved harmonized features -> %s (%d subjects)", output_path, len(ordered))
+    logger.info(
+        "Saved harmonized features -> %s (%d subjects)", output_path, len(ordered)
+    )
+
 
 # ── 5. Quality verification ───────────────────────────────────────────────
+
 
 def _check_harmonization_quality(
     original_df: pd.DataFrame,
@@ -511,7 +583,9 @@ def _check_harmonization_quality(
     val_only = [f.val for f in harmonized_folds if not f.val.empty]
     if val_only:
         # Validation slices are disjoint across folds and avoid repeated train subjects.
-        all_harmonized = pd.concat(val_only, ignore_index=True).drop_duplicates(subset=["subject_id"])
+        all_harmonized = pd.concat(val_only, ignore_index=True).drop_duplicates(
+            subset=["subject_id"]
+        )
     else:
         all_harmonized = pd.concat(
             [pd.concat([f.train, f.val], ignore_index=True) for f in harmonized_folds],
@@ -522,7 +596,9 @@ def _check_harmonization_quality(
     orig_cols = _feat_cols(original_df)
     common = [c for c in orig_cols if c in harm_cols]
     if not common:
-        logger.info("No overlapping columns — aggregating originals to lobes for comparison")
+        logger.info(
+            "No overlapping columns — aggregating originals to lobes for comparison"
+        )
         try:
             original_df = aggregate_to_lobes(original_df)
             orig_cols = _feat_cols(original_df)
@@ -531,17 +607,31 @@ def _check_harmonization_quality(
             logger.warning("Lobe aggregation failed for quality check: %s", exc)
 
     if not common:
-        logger.warning("No overlapping feature columns — skipping variance retention check")
-        return {"variance_retention": np.nan, "nans_introduced": 0, "quality": "check_warnings"}
+        logger.warning(
+            "No overlapping feature columns — skipping variance retention check"
+        )
+        return {
+            "variance_retention": np.nan,
+            "nans_introduced": 0,
+            "quality": "check_warnings",
+        }
 
     # Match the preprocessing scale used before ComBat so retention ratios are
     # numerically meaningful (raw-vs-log comparisons otherwise overstate loss).
     original_for_quality = original_df[common].copy()
-    spectral = ("delta_power", "theta_power", "alpha_power", "beta_power", "gamma_power")
+    spectral = (
+        "delta_power",
+        "theta_power",
+        "alpha_power",
+        "beta_power",
+        "gamma_power",
+    )
     spectral_cols = [c for c in common if any(s in c for s in spectral)]
     for col in spectral_cols:
         mask = original_for_quality[col] > 0
-        original_for_quality.loc[mask, col] = np.log1p(original_for_quality.loc[mask, col])
+        original_for_quality.loc[mask, col] = np.log1p(
+            original_for_quality.loc[mask, col]
+        )
 
     orig_var_series = original_for_quality.var()
     harm_var_series = all_harmonized[common].var()
@@ -550,7 +640,9 @@ def _check_harmonization_quality(
     var_retention = harm_var / orig_var if orig_var != 0 else 0.0
 
     with np.errstate(divide="ignore", invalid="ignore"):
-        per_feat_ret = (harm_var_series / orig_var_series).replace([np.inf, -np.inf], np.nan)
+        per_feat_ret = (harm_var_series / orig_var_series).replace(
+            [np.inf, -np.inf], np.nan
+        )
 
     retention_df = pd.DataFrame(
         {
@@ -561,13 +653,19 @@ def _check_harmonization_quality(
         }
     )
     retention_df["status"] = "within"
-    retention_df.loc[retention_df["retention"] < VARIANCE_RETENTION_LOW, "status"] = "low"
-    retention_df.loc[retention_df["retention"] > VARIANCE_RETENTION_HIGH, "status"] = "high"
+    retention_df.loc[retention_df["retention"] < VARIANCE_RETENTION_LOW, "status"] = (
+        "low"
+    )
+    retention_df.loc[retention_df["retention"] > VARIANCE_RETENTION_HIGH, "status"] = (
+        "high"
+    )
 
     report_path = HARMONIZED_FOLDS_DIR / "harmonization_variance_retention.csv"
     try:
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        retention_df.sort_values("retention", ascending=True).to_csv(report_path, index=False)
+        retention_df.sort_values("retention", ascending=True).to_csv(
+            report_path, index=False
+        )
         logger.info("  Saved per-feature variance retention report -> %s", report_path)
     except Exception as exc:
         logger.warning("  Failed to save variance retention report: %s", exc)
@@ -627,7 +725,9 @@ def _check_harmonization_quality(
                 logger.warning(
                     "  Highest-retention features (>%.2f): %s",
                     VARIANCE_RETENTION_HIGH,
-                    high_examples.sort_values("retention", ascending=False).head(10)["feature"].tolist(),
+                    high_examples.sort_values("retention", ascending=False)
+                    .head(10)["feature"]
+                    .tolist(),
                 )
     if nans_introduced > 0:
         logger.warning("  Harmonization introduced %d NaN values", nans_introduced)
@@ -655,6 +755,7 @@ def _check_harmonization_quality(
         "quality": "good" if is_ok else "check_warnings",
     }
 
+
 def harmonize_cv_safe_fold(
     features_df: pd.DataFrame,
     manifest_df: pd.DataFrame,
@@ -672,13 +773,20 @@ def harmonize_cv_safe_fold(
     features_safe = repair_features(features_df, impute_nans=False, clip_outliers=False)
 
     if "split" not in manifest_df.columns:
-        raise ValueError("manifest_df must contain 'split' column for strict leakage prevention!")
+        raise ValueError(
+            "manifest_df must contain 'split' column for strict leakage prevention!"
+        )
 
     # Align manifest to feature ordering and drop rows missing manifest metadata.
-    aligned_manifest = manifest_df.set_index("subject_id").reindex(features_safe["subject_id"])
+    aligned_manifest = manifest_df.set_index("subject_id").reindex(
+        features_safe["subject_id"]
+    )
     missing_manifest = int(aligned_manifest["split"].isna().sum())
     if missing_manifest:
-        logger.warning("Dropping %d subjects missing manifest split/site metadata", missing_manifest)
+        logger.warning(
+            "Dropping %d subjects missing manifest split/site metadata",
+            missing_manifest,
+        )
         keep_mask = ~aligned_manifest["split"].isna().to_numpy()
         features_safe = features_safe.loc[keep_mask].reset_index(drop=True)
         aligned_manifest = aligned_manifest.loc[keep_mask]
@@ -729,7 +837,9 @@ def harmonize_cv_safe_fold(
         train_sites = set(fold_train_manifest["SITE_ID"].astype(str).tolist())
         val_sites = set(fold_val_manifest["SITE_ID"].astype(str).tolist())
         unseen_val_sites = sorted(val_sites - train_sites)
-        unseen_rows = int(fold_val_manifest["SITE_ID"].astype(str).isin(unseen_val_sites).sum())
+        unseen_rows = int(
+            fold_val_manifest["SITE_ID"].astype(str).isin(unseen_val_sites).sum()
+        )
         fold_site_audit.append(
             {
                 "fold": fold,
@@ -747,7 +857,8 @@ def harmonize_cv_safe_fold(
     all_rows_unseen = bool(
         fold_site_audit
         and all(
-            int(row["val_rows"]) > 0 and int(row["unseen_row_count"]) == int(row["val_rows"])
+            int(row["val_rows"]) > 0
+            and int(row["unseen_row_count"]) == int(row["val_rows"])
             for row in fold_site_audit
         )
     )
@@ -866,9 +977,12 @@ def harmonize_cv_safe_fold(
         )
         combined_df = pd.concat([train_lobes_full, holdout_lobes], ignore_index=True)
         full_subject_order = features_safe["subject_id"].tolist()
-        _write_ordered_subject_csv(combined_df, full_subject_order, Path(full_output_path))
+        _write_ordered_subject_csv(
+            combined_df, full_subject_order, Path(full_output_path)
+        )
 
     return harmonized_folds
+
 
 # ── 6. Spatial feature harmonization (conf_std / detection_count) ────────────
 
@@ -878,10 +992,10 @@ def harmonize_cv_safe_fold(
 # Kruskal-Wallis test (March 2026) confirms 14/24 of these columns have
 # highly significant site effects (p<0.001), making them scanner proxies.
 # x, y, z_depth, and size are kept unchanged because they represent physical brain anatomy.
-_SPATIAL_SITE_COLS = (
-    [f"{name}_conf_std" for name in LOBE_NAMES.values()]
-    + [f"{name}_detection_count" for name in LOBE_NAMES.values()]
-)
+_SPATIAL_SITE_COLS = [f"{name}_conf_std" for name in LOBE_NAMES.values()] + [
+    f"{name}_detection_count" for name in LOBE_NAMES.values()
+]
+
 
 def harmonize_spatial_features(
     spatial_df: pd.DataFrame,
@@ -912,30 +1026,47 @@ def harmonize_spatial_features(
     # Identify which site-proxy columns are actually present in this CSV.
     site_cols = [c for c in _SPATIAL_SITE_COLS if c in spatial_df.columns]
     if not site_cols:
-        logger.warning("No conf_std / detection_count columns found — skipping spatial harmonization")
+        logger.warning(
+            "No conf_std / detection_count columns found — skipping spatial harmonization"
+        )
         return spatial_df
 
-    logger.info("  Harmonizing %d site-proxy columns: %s …", len(site_cols), site_cols[:4])
+    logger.info(
+        "  Harmonizing %d site-proxy columns: %s …", len(site_cols), site_cols[:4]
+    )
 
     # Merge with manifest to get SITE_ID / DX_GROUP / split.
     # Drop any manifest-derived columns already present in spatial_df to avoid _x/_y collisions.
-    _MANIFEST_COLS = ["SITE_ID", "split", "DX_GROUP", "AGE_AT_SCAN", "SEX", "FIQ",
-                      "HANDEDNESS_CATEGORY", "TR", "cv_fold"]
+    _MANIFEST_COLS = [
+        "SITE_ID",
+        "split",
+        "DX_GROUP",
+        "AGE_AT_SCAN",
+        "SEX",
+        "FIQ",
+        "HANDEDNESS_CATEGORY",
+        "TR",
+        "cv_fold",
+    ]
     spatial_no_site = spatial_df.drop(
         columns=[c for c in _MANIFEST_COLS if c in spatial_df.columns]
     )
     merged = spatial_no_site.merge(
-        manifest_df[["subject_id", "split", "SITE_ID", "AGE_AT_SCAN", "SEX", "DX_GROUP"]],
+        manifest_df[
+            ["subject_id", "split", "SITE_ID", "AGE_AT_SCAN", "SEX", "DX_GROUP"]
+        ],
         on="subject_id",
         how="inner",
     )
     if merged.empty:
-        logger.error("Spatial + manifest merge produced zero rows — skipping harmonization")
+        logger.error(
+            "Spatial + manifest merge produced zero rows — skipping harmonization"
+        )
         return spatial_df
 
     train_mask = merged["split"] == "train"
     train_df = merged[train_mask].copy()
-    other_df  = merged[~train_mask].copy()
+    other_df = merged[~train_mask].copy()
 
     # Build neuroHarmonize covariate matrices: SITE, AGE_AT_SCAN, SEX, DX_GROUP.
     def _build_cov(df: pd.DataFrame) -> pd.DataFrame:
@@ -946,7 +1077,9 @@ def harmonize_spatial_features(
             cov["AGE_AT_SCAN"].median()
         )
         cov["SEX"] = pd.to_numeric(cov["SEX"], errors="coerce").fillna(1).astype(int)
-        cov["DX_GROUP"] = pd.to_numeric(cov["DX_GROUP"], errors="coerce").fillna(1).astype(int)
+        cov["DX_GROUP"] = (
+            pd.to_numeric(cov["DX_GROUP"], errors="coerce").fillna(1).astype(int)
+        )
         return cov
 
     train_cov = _build_cov(train_df)
@@ -960,10 +1093,14 @@ def harmonize_spatial_features(
     constant = var[var == 0].index.tolist()
     active_cols = [c for c in site_cols if c not in constant]
     if constant:
-        logger.info("  Dropping %d constant spatial columns before ComBat", len(constant))
+        logger.info(
+            "  Dropping %d constant spatial columns before ComBat", len(constant)
+        )
 
     if not active_cols:
-        logger.warning("All spatial site-proxy columns are constant — skipping harmonization")
+        logger.warning(
+            "All spatial site-proxy columns are constant — skipping harmonization"
+        )
         return spatial_df
 
     try:
@@ -988,7 +1125,9 @@ def harmonize_spatial_features(
 
         logger.info("  ComBat harmonization successful for %d subjects", len(merged))
     except Exception as exc:
-        logger.error("  Spatial harmonization failed (%s) — writing raw features unchanged", exc)
+        logger.error(
+            "  Spatial harmonization failed (%s) — writing raw features unchanged", exc
+        )
         return spatial_df
 
     # Reassemble: harmonized train + other rows, then re-merge with original
@@ -998,12 +1137,16 @@ def harmonize_spatial_features(
         harm_parts.append(other_df[["subject_id"] + active_cols])
     harm_site_cols = pd.concat(harm_parts, ignore_index=True)
 
-    result = spatial_df.drop(columns=active_cols).merge(harm_site_cols, on="subject_id", how="left")
+    result = spatial_df.drop(columns=active_cols).merge(
+        harm_site_cols, on="subject_id", how="left"
+    )
     # Subjects not in manifest keep original values.
     for col in active_cols:
         mask = result[col].isna()
         if mask.any():
-            result.loc[mask, col] = spatial_df.loc[spatial_df["subject_id"].isin(result.loc[mask, "subject_id"]), col].values
+            result.loc[mask, col] = spatial_df.loc[
+                spatial_df["subject_id"].isin(result.loc[mask, "subject_id"]), col
+            ].values
 
     # Restore original column order.
     result = result[[c for c in spatial_df.columns if c in result.columns]]
@@ -1013,6 +1156,7 @@ def harmonize_spatial_features(
     logger.info("  Saved harmonized spatial features → %s", output_path)
 
     return result
+
 
 def main():
     """Main execution function."""
@@ -1048,7 +1192,10 @@ def main():
     if NODE_FEATURES_3D.exists():
         spatial_df = pd.read_csv(NODE_FEATURES_3D)
         spatial_df.to_csv(NODE_FEATURES_3D_HARMONIZED, index=False)
-        logger.info("Spatial features copied without harmonization (legacy columns removed)")
+        logger.info(
+            "Spatial features copied without harmonization (legacy columns removed)"
+        )
+
 
 if __name__ == "__main__":
     main()

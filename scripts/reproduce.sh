@@ -2,7 +2,7 @@
 # Neuro-CXG Reproducibility Script
 # Usage: ./reproduce.sh [--skip-download]
 
-set -e
+set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
@@ -43,12 +43,29 @@ python3 -c "from src.core.config import validate_environment" || {
 
 # ---- Run Pipeline ----
 echo "Running pipeline..."
-if [[ "$1" == "--skip-download" ]]; then
-    echo "Skipping download and split (using existing data)..."
-    python3 src/run_pipeline.py --auto --skip-download --skip-split
-else
-    python3 src/run_pipeline.py --auto
+SKIP_DOWNLOAD=false
+SKIP_SPLIT=false
+for arg in "$@"; do
+    case $arg in
+        --skip-download) SKIP_DOWNLOAD=true ;;
+        --skip-split) SKIP_SPLIT=true ;;
+        -h|--help)
+            echo "Usage: $0 [--skip-download] [--skip-split]"
+            exit 0
+            ;;
+    esac
+done
+
+PIPELINE_ARGS="--auto"
+if [[ "$SKIP_DOWNLOAD" == true ]]; then
+    PIPELINE_ARGS="$PIPELINE_ARGS --skip-download"
+    echo "Skipping download..."
 fi
+if [[ "$SKIP_SPLIT" == true ]]; then
+    PIPELINE_ARGS="$PIPELINE_ARGS --skip-split"
+    echo "Skipping split..."
+fi
+python3 src/run_pipeline.py $PIPELINE_ARGS
 
 echo "Done!"
 echo ""

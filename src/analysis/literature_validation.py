@@ -55,11 +55,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.core.config import LOBE_NAMES, NUM_LOBES, RESULTS_DIR
+from src.core.config import NUM_LOBES, REGION_LABELS, RESULTS_DIR
 
 logger = logging.getLogger(__name__)
-
-REGION_LABELS: list[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 
 # ── Network Definitions ────────────────────────────────────────────────────────
 
@@ -68,7 +66,13 @@ KNOWN_NETWORKS: list[dict] = [
     {
         "name": "Default Mode Network (DMN)",
         "short": "DMN",
-        "regions": [0, 1, 4, 7, 8],   # Frontal_Superior, Frontal_Orbital, Cingulate, Parietal, Temporal
+        "regions": [
+            0,
+            1,
+            4,
+            7,
+            8,
+        ],  # Frontal_Superior, Frontal_Orbital, Cingulate, Parietal, Temporal
         "asd_finding": (
             "Hypo-connectivity within DMN; reduced anti-correlation with task-positive "
             "networks; persistent DMN activation during task performance."
@@ -82,7 +86,7 @@ KNOWN_NETWORKS: list[dict] = [
     {
         "name": "Social Brain Network",
         "short": "Social",
-        "regions": [1, 3, 5, 8],       # Frontal_Orbital, Insula, Limbic, Temporal
+        "regions": [1, 3, 5, 8],  # Frontal_Orbital, Insula, Limbic, Temporal
         "asd_finding": (
             "Reduced activity and connectivity during social cognition, theory-of-mind tasks, "
             "and face perception; atypical amygdala-temporal coupling."
@@ -96,7 +100,7 @@ KNOWN_NETWORKS: list[dict] = [
     {
         "name": "Salience Network",
         "short": "Salience",
-        "regions": [2, 3, 4, 9],       # Motor_Premotor, Insula, Cingulate, Subcortical
+        "regions": [2, 3, 4, 9],  # Motor_Premotor, Insula, Cingulate, Subcortical
         "asd_finding": (
             "Reduced salience network connectivity; impaired interoceptive awareness "
             "via anterior insula; hypo-connectivity between insula and ACC."
@@ -110,7 +114,7 @@ KNOWN_NETWORKS: list[dict] = [
     {
         "name": "Sensorimotor Network",
         "short": "Sensorimotor",
-        "regions": [2, 7],             # Motor_Premotor, Parietal
+        "regions": [2, 7],  # Motor_Premotor, Parietal
         "asd_finding": (
             "Atypical motor cortex organisation; reduced parietal involvement in "
             "action observation; mirror neuron system differences."
@@ -123,7 +127,7 @@ KNOWN_NETWORKS: list[dict] = [
     {
         "name": "Visual Network",
         "short": "Visual",
-        "regions": [6, 7],             # Occipital, Parietal
+        "regions": [6, 7],  # Occipital, Parietal
         "asd_finding": (
             "Enhanced low-level visual processing with reduced top-down modulation; "
             "altered V1 surround suppression; local processing bias."
@@ -136,7 +140,7 @@ KNOWN_NETWORKS: list[dict] = [
     {
         "name": "Subcortical / Thalamo-Cortical",
         "short": "Subcortical",
-        "regions": [9, 10, 11],        # Subcortical, Cerebellum, Brainstem
+        "regions": [9, 10, 11],  # Subcortical, Cerebellum, Brainstem
         "asd_finding": (
             "Thalamic hypo-connectivity to frontal and parietal regions; cerebellar "
             "differences in timing and prediction; enlarged amygdala in young children."
@@ -150,7 +154,7 @@ KNOWN_NETWORKS: list[dict] = [
     {
         "name": "Frontoparietal Control Network",
         "short": "FPC",
-        "regions": [0, 2, 7],          # Frontal_Superior, Motor_Premotor, Parietal
+        "regions": [0, 2, 7],  # Frontal_Superior, Motor_Premotor, Parietal
         "asd_finding": (
             "Reduced cognitive control network efficiency; weaker fronto-parietal "
             "coupling during executive function tasks."
@@ -169,6 +173,7 @@ for net in KNOWN_NETWORKS:
         REGION_TO_NETWORKS[r].append(net["short"])
 
 # ── Core validation logic ──────────────────────────────────────────────────────
+
 
 def validate_important_regions(
     top_region_indices: list[int],
@@ -217,8 +222,8 @@ def validate_important_regions(
         s = net["short"]
         net_set = set(net["regions"])
         intersection = top_set & net_set
-        union        = top_set | net_set
-        jaccard      = len(intersection) / len(union) if union else 0.0
+        union = top_set | net_set
+        jaccard = len(intersection) / len(union) if union else 0.0
         coverage[s] = {
             "hit": len(intersection) > 0,
             "regions_found": [REGION_LABELS[i] for i in sorted(intersection)],
@@ -229,8 +234,8 @@ def validate_important_regions(
 
     # Summary sentence
     hit_networks = [s for s, v in coverage.items() if v["hit"]]
-    top_names    = [REGION_LABELS[i] for i in top_regions]
-    summary      = (
+    top_names = [REGION_LABELS[i] for i in top_regions]
+    summary = (
         f"Top-{top_n} important regions: {', '.join(top_names)}.\n"
         f"These overlap with {len(hit_networks)}/{len(KNOWN_NETWORKS)} known ASD-relevant networks: "
         f"{', '.join(hit_networks) if hit_networks else 'none'}."
@@ -238,12 +243,13 @@ def validate_important_regions(
     logger.info(summary)
 
     return {
-        "top_regions":    region_info,
+        "top_regions": region_info,
         "network_coverage": coverage,
         "overlap_scores": overlap_scores,
-        "summary":        summary,
-        "top_n":          top_n,
+        "summary": summary,
+        "top_n": top_n,
     }
+
 
 def generate_report(results: dict, output_dir: Path) -> Path:
     """
@@ -289,16 +295,18 @@ def generate_report(results: dict, output_dir: Path) -> Path:
 
     lines += ["", "-" * 72, "NETWORK COVERAGE ANALYSIS", "-" * 72]
     for net in KNOWN_NETWORKS:
-        s    = net["short"]
-        cov  = results["network_coverage"][s]
-        jac  = results["overlap_scores"][s]
-        hit  = "✓" if cov["hit"] else "✗"
+        s = net["short"]
+        cov = results["network_coverage"][s]
+        jac = results["overlap_scores"][s]
+        hit = "✓" if cov["hit"] else "✗"
         lines.append(f"\n{hit}  {net['name']}")
         lines.append(f"   Jaccard similarity : {jac:.4f}")
         lines.append(f"   Network regions    : {', '.join(cov['network_regions'])}")
         if cov["hit"]:
             lines.append(f"   Matched by model   : {', '.join(cov['regions_found'])}")
-        lines.append(f"   ASD finding        : {textwrap.fill(net['asd_finding'], 70, subsequent_indent='     ')}")
+        lines.append(
+            f"   ASD finding        : {textwrap.fill(net['asd_finding'], 70, subsequent_indent='     ')}"
+        )
         lines.append(f"   Key refs           : {'; '.join(net['refs'])}")
 
     lines += ["", "=" * 72, "END OF REPORT", "=" * 72]
@@ -311,6 +319,7 @@ def generate_report(results: dict, output_dir: Path) -> Path:
     # Print to stdout (captured by pipeline runner)
     print("\n".join(lines))
     return text_path
+
 
 def generate_validation_figure(results: dict, output_path: Path) -> Path:
     """
@@ -330,7 +339,7 @@ def generate_validation_figure(results: dict, output_path: Path) -> Path:
 
     top_regions = results["top_regions"]
     network_shorts = [n["short"] for n in KNOWN_NETWORKS]
-    region_names   = [r["name"] for r in top_regions]
+    region_names = [r["name"] for r in top_regions]
 
     # Membership matrix (binary)
     mat = np.zeros((len(top_regions), len(KNOWN_NETWORKS)), dtype=float)
@@ -351,7 +360,8 @@ def generate_validation_figure(results: dict, output_path: Path) -> Path:
         xticklabels=network_shorts,
         yticklabels=region_names,
         cmap="YlOrRd",
-        vmin=0, vmax=1,
+        vmin=0,
+        vmax=1,
         linewidths=0.5,
         ax=ax,
         cbar_kws={"label": "Importance (1/rank) × membership"},
@@ -359,7 +369,8 @@ def generate_validation_figure(results: dict, output_path: Path) -> Path:
     ax.set_title(
         "Literature Validation: Top Regions vs Known ASD Networks\n"
         "(colour intensity = importance rank; blank = not in network)",
-        fontsize=12, fontweight="bold",
+        fontsize=12,
+        fontweight="bold",
     )
     ax.set_xlabel("ASD-Relevant Network", fontsize=11)
     ax.set_ylabel("Brain Region (ranked by model)", fontsize=11)
@@ -374,11 +385,13 @@ def generate_validation_figure(results: dict, output_path: Path) -> Path:
     logger.info("Validation figure saved → %s", out)
     return out
 
+
 # ── Convenience wrapper ────────────────────────────────────────────────────────
 
+
 def run_literature_validation(
-    gradcam_asd_scores:     np.ndarray | None = None,
-    attention_asd_scores:   np.ndarray | None = None,
+    gradcam_asd_scores: np.ndarray | None = None,
+    attention_asd_scores: np.ndarray | None = None,
     output_dir: Path = RESULTS_DIR / "explainability" / "literature",
     top_n: int = 6,
 ) -> dict:
@@ -401,9 +414,13 @@ def run_literature_validation(
     Dict — validation results
     """
     # Combine scores
-    score_arrays = [s for s in [gradcam_asd_scores, attention_asd_scores] if s is not None]
+    score_arrays = [
+        s for s in [gradcam_asd_scores, attention_asd_scores] if s is not None
+    ]
     if not score_arrays:
-        logger.warning("No importance scores provided to literature validation; using random order")
+        logger.warning(
+            "No importance scores provided to literature validation; using random order"
+        )
         combined = np.arange(NUM_LOBES, dtype=float)
         np.random.shuffle(combined)
     elif len(score_arrays) == 1:
@@ -413,13 +430,14 @@ def run_literature_validation(
         def _norm(a: np.ndarray) -> np.ndarray:
             rng = a.max() - a.min()
             return (a - a.min()) / (rng + 1e-9)
+
         combined = np.mean([_norm(s) for s in score_arrays], axis=0)
 
     ranked_indices: list[int] = np.argsort(combined)[::-1].tolist()
 
     results = validate_important_regions(ranked_indices, top_n=top_n)
     report_path = generate_report(results, output_dir)
-    fig_path    = generate_validation_figure(
+    fig_path = generate_validation_figure(
         results, Path(output_dir) / "literature_validation_heatmap.png"
     )
     results["report_path"] = str(report_path)

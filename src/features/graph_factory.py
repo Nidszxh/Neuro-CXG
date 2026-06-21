@@ -39,25 +39,31 @@ logger = logging.getLogger(__name__)
 
 _exclusion_logged = False  # Suppress repeated exclusion log messages
 
+
 def _log_exclusions_once():
     """Log excluded subjects only once per session."""
     global _exclusion_logged
     if not _exclusion_logged:
         logger.info(
             "Excluded %d hard-coded corrupted subjects: %s",
-            len(EXCLUDED_SUBJECTS), sorted(EXCLUDED_SUBJECTS),
+            len(EXCLUDED_SUBJECTS),
+            sorted(EXCLUDED_SUBJECTS),
         )
         _exclusion_logged = True
+
 
 def _trim_to_num_lobes(tensor: torch.Tensor, name: str) -> torch.Tensor | None:
     """Handle lobe count mismatch (12→11) for compatibility."""
     if tensor.shape[0] == NUM_LOBES:
         return tensor
     if tensor.shape[0] == 12 and NUM_LOBES == 11:
-        logger.debug(f"{name} has 12 lobes, trimming to {NUM_LOBES} (excluding Brainstem)")
+        logger.debug(
+            f"{name} has 12 lobes, trimming to {NUM_LOBES} (excluding Brainstem)"
+        )
         return tensor[:NUM_LOBES] if tensor.dim() == 1 else tensor[:NUM_LOBES, ...]
     logger.warning(f"{name} shape {tensor.shape} mismatches NUM_LOBES={NUM_LOBES}")
     return None
+
 
 @functools.lru_cache(maxsize=64)
 def _load_csv_cached(csv_path_str: str, index_col: str | None = None) -> pd.DataFrame:
@@ -68,15 +74,17 @@ def _load_csv_cached(csv_path_str: str, index_col: str | None = None) -> pd.Data
         df = df.set_index(index_col)
     return df
 
+
 def _stable_subject_seed(subject_id: str) -> int:
     """Derive a reproducible 32-bit seed from subject_id."""
     return int(hashlib.md5(subject_id.encode()).hexdigest()[:8], 16)
+
 
 class ABIDECausalDataset(Dataset):
 
     def __init__(
         self,
-        split='train',
+        split="train",
         transform=None,
         pre_transform=None,
         temporal_features_path: Path | None = None,
@@ -84,18 +92,22 @@ class ABIDECausalDataset(Dataset):
     ):
         super().__init__(None, transform, pre_transform)
         self.split = split
-        self.augment_graphs = split == 'train'  # Only augment training data
-        self.temporal_features_path = temporal_features_path or NODE_ATTRIBUTES_HARMONIZED
+        self.augment_graphs = split == "train"  # Only augment training data
+        self.temporal_features_path = (
+            temporal_features_path or NODE_ATTRIBUTES_HARMONIZED
+        )
         self._cache_limit = max(int(graph_cache_limit), 16)
         self._load_data_sources()
         self._validate_subjects()
-        self.subject_ids = self.manifest['subject_id'].astype(str).tolist()
+        self.subject_ids = self.manifest["subject_id"].astype(str).tolist()
 
         # Validate feature counts match config
         self._validate_feature_dimensions()
 
         logger.info(f"Initialized {split} dataset with {len(self.manifest)} subjects")
-        logger.info(f"  Node features: {GNN_IN_CHANNELS} ({NUM_TEMPORAL_FEATURES} temporal+internal + {NUM_SPATIAL_FEATURES} spatial)")
+        logger.info(
+            f"  Node features: {GNN_IN_CHANNELS} ({NUM_TEMPORAL_FEATURES} temporal+internal + {NUM_SPATIAL_FEATURES} spatial)"
+        )
 
     def _validate_feature_dimensions(self):
         """Ensure loaded features match config expectations."""
@@ -104,13 +116,19 @@ class ABIDECausalDataset(Dataset):
             temporal = self._get_subject_temporal(sample_sub)
             spatial = self._get_subject_spatial(sample_sub)
 
-            if temporal is not None and temporal.shape != (NUM_LOBES, NUM_TEMPORAL_FEATURES):
+            if temporal is not None and temporal.shape != (
+                NUM_LOBES,
+                NUM_TEMPORAL_FEATURES,
+            ):
                 raise ValueError(
                     f"Temporal feature mismatch! Expected ({NUM_LOBES}, {NUM_TEMPORAL_FEATURES}), "
                     f"got {temporal.shape}. Check extract_temporal.py output."
                 )
 
-            if spatial is not None and spatial.shape != (NUM_LOBES, NUM_SPATIAL_FEATURES):
+            if spatial is not None and spatial.shape != (
+                NUM_LOBES,
+                NUM_SPATIAL_FEATURES,
+            ):
                 raise ValueError(
                     f"Spatial feature mismatch! Expected ({NUM_LOBES}, {NUM_SPATIAL_FEATURES}), "
                     f"got {spatial.shape}. Check extract_spatial.py output."
@@ -124,7 +142,9 @@ class ABIDECausalDataset(Dataset):
         self.manifest_raw = _load_csv_cached(str(MASTER_MANIFEST))
 
         # 2. Harmonized temporal features (aggregated to 12 regions)
-        self.node_attr = _load_csv_cached(str(self.temporal_features_path), index_col='subject_id')
+        self.node_attr = _load_csv_cached(
+            str(self.temporal_features_path), index_col="subject_id"
+        )
         logger.info("  Temporal features: %s", Path(self.temporal_features_path).name)
 
         # 3. Spatial coordinates and geometric features (6 per lobe).
@@ -136,7 +156,7 @@ class ABIDECausalDataset(Dataset):
             else NODE_FEATURES_3D
         )
         logger.info("  Spatial features: %s", _spatial_path.name)
-        self.coords = _load_csv_cached(str(_spatial_path), index_col='subject_id')
+        self.coords = _load_csv_cached(str(_spatial_path), index_col="subject_id")
         self._spatial_missing_cols = [
             f"{name}_spatial_missing" for name in LOBE_NAMES.values()
         ]
@@ -144,14 +164,16 @@ class ABIDECausalDataset(Dataset):
             c in self.coords.columns for c in self._spatial_missing_cols
         )
         if self._has_spatial_missing_mask:
-            logger.info("  Spatial missing-mask columns detected and will be merged into zero_lobe_mask")
+            logger.info(
+                "  Spatial missing-mask columns detected and will be merged into zero_lobe_mask"
+            )
 
         # 4. Adjacency matrices directory
         self.adj_dir = CAUSAL_GRAPHS_DIR
 
     def _validate_subjects(self):
         """Find subjects present in all data files and the physical graph folder."""
-        manifest_subs = set(self.manifest_raw['subject_id'].astype(str).unique())
+        manifest_subs = set(self.manifest_raw["subject_id"].astype(str).unique())
         attr_subs = set(self.node_attr.index.astype(str).unique())
         coord_subs = set(self.coords.index.astype(str).unique())
 
@@ -159,22 +181,21 @@ class ABIDECausalDataset(Dataset):
 
         # 1. Remove known-corrupted subjects (near-100% NaN coverage).
         excluded_upper = {s.upper() for s in EXCLUDED_SUBJECTS}
-        available_subs = {
-            s for s in available_subs
-            if s.upper() not in excluded_upper
-        }
+        available_subs = {s for s in available_subs if s.upper() not in excluded_upper}
         if excluded_upper:
             _log_exclusions_once()
 
         # 2. Remove subjects where too many temporal feature columns are NaN.
         # Any column whose name starts with a lobe index (0-11) is a feature column.
-        feat_cols = [c for c in self.node_attr.columns if c != 'subject_id']
+        feat_cols = [c for c in self.node_attr.columns if c != "subject_id"]
         nan_counts = self.node_attr[feat_cols].isna().sum(axis=1)
         high_nan_subs = set(nan_counts[nan_counts > MAX_NAN_ROIS].index.astype(str))
         if high_nan_subs:
             logger.warning(
                 "Removing %d subjects with >%d NaN feature columns (likely brainstem/coverage gaps): %s",
-                len(high_nan_subs), MAX_NAN_ROIS, sorted(high_nan_subs)[:10],
+                len(high_nan_subs),
+                MAX_NAN_ROIS,
+                sorted(high_nan_subs)[:10],
             )
         available_subs -= high_nan_subs
 
@@ -189,24 +210,28 @@ class ABIDECausalDataset(Dataset):
             graph_path = self.adj_dir / f"{sub}_graph.pt"
             if graph_path.exists():
                 try:
-                    graph_data = torch.load(graph_path, map_location='cpu', weights_only=True)
-                    if 'adj' not in graph_data:
+                    graph_data = torch.load(
+                        graph_path, map_location="cpu", weights_only=True
+                    )
+                    if "adj" not in graph_data:
                         invalid_count += 1
                         continue
 
-                    adj = graph_data['adj']
+                    adj = graph_data["adj"]
                     num_edges = (adj != 0).sum().item()
 
                     if num_edges == 0:
-                        logger.warning(f"Subject {sub}: Graph has zero edges - skipping")
+                        logger.warning(
+                            f"Subject {sub}: Graph has zero edges - skipping"
+                        )
                         invalid_count += 1
                         continue
 
                     valid_subs.append(sub)
                     self._subject_edge_counts[sub] = int(num_edges)
                     self._graph_stats[sub] = {
-                        'num_edges': int(num_edges),
-                        'path': graph_path,
+                        "num_edges": int(num_edges),
+                        "path": graph_path,
                     }
                 except Exception as e:
                     logger.warning(f"Subject {sub}: Failed to validate graph: {e}")
@@ -242,11 +267,11 @@ class ABIDECausalDataset(Dataset):
             )
 
         self.manifest = self.manifest_raw[
-            (self.manifest_raw['subject_id'].astype(str).isin(valid_subs)) &
-            (self.manifest_raw['split'] == self.split)
+            (self.manifest_raw["subject_id"].astype(str).isin(valid_subs))
+            & (self.manifest_raw["split"] == self.split)
         ].copy()
 
-        self.manifest = self.manifest.sort_values('subject_id').reset_index(drop=True)
+        self.manifest = self.manifest.sort_values("subject_id").reset_index(drop=True)
 
     def len(self):
         return len(self.manifest)
@@ -292,9 +317,11 @@ class ABIDECausalDataset(Dataset):
               ±5 % Gaussian noise on node features and 30 % edge weight dropout.
             * DX_GROUP encoding: 1 → 0 (Control), 2 → 1 (ASD).
         """
-        sub_id = str(self.manifest.iloc[idx]['subject_id'])
-        dx_group = self.manifest.iloc[idx]['DX_GROUP']
-        label = 1 if dx_group == 2 else 0  # DX_GROUP: 1=Control, 2=ASD → labels: 0=Control, 1=ASD
+        sub_id = str(self.manifest.iloc[idx]["subject_id"])
+        dx_group = self.manifest.iloc[idx]["DX_GROUP"]
+        label = (
+            1 if dx_group == 2 else 0
+        )  # DX_GROUP: 1=Control, 2=ASD → labels: 0=Control, 1=ASD
 
         try:
             # 1. Load 12×12 Causal Adjacency Matrix
@@ -303,10 +330,10 @@ class ABIDECausalDataset(Dataset):
                 graph_path = self.adj_dir / f"{sub_id}_graph.pt"
                 raw_graph = torch.load(graph_path, weights_only=True)
                 graph_dict = {
-                    'adj': raw_graph['adj'].clone().to(torch.float32),
-                    'internal_features': raw_graph.get('internal_features'),
-                    'zero_lobe_mask': raw_graph.get(
-                        'zero_lobe_mask',
+                    "adj": raw_graph["adj"].clone().to(torch.float32),
+                    "internal_features": raw_graph.get("internal_features"),
+                    "zero_lobe_mask": raw_graph.get(
+                        "zero_lobe_mask",
                         torch.zeros(NUM_LOBES, dtype=torch.bool),
                     ).bool(),
                 }
@@ -317,7 +344,9 @@ class ABIDECausalDataset(Dataset):
             else:
                 self._graph_cache.move_to_end(sub_id)  # LRU: mark as recently used
 
-            adj = graph_dict['adj'].clone()  # Should be (NUM_LOBES, NUM_LOBES) or (12, 12) in older graphs
+            adj = graph_dict[
+                "adj"
+            ].clone()  # Should be (NUM_LOBES, NUM_LOBES) or (12, 12) in older graphs
 
             adj_trimmed = _trim_to_num_lobes(adj, f"Subject {sub_id}: Adjacency")
             if adj_trimmed is None:
@@ -332,43 +361,58 @@ class ABIDECausalDataset(Dataset):
             temporal_features = self._get_subject_temporal(sub_id)
 
             # 2b. Load Internal Features from graph (Coherence + Variance)
-            internal_features = graph_dict.get('internal_features')  # (12, 2) or (NUM_LOBES, 2)
+            internal_features = graph_dict.get(
+                "internal_features"
+            )  # (12, 2) or (NUM_LOBES, 2)
             if internal_features is None:
-                logger.warning(f"Subject {sub_id}: Missing internal_features in graph, using zeros")
+                logger.warning(
+                    f"Subject {sub_id}: Missing internal_features in graph, using zeros"
+                )
                 internal_features = torch.zeros((NUM_LOBES, 2), dtype=torch.float32)
             else:
                 # SAFETY: Clean NaN/Inf in internal features
                 internal_features = internal_features.float()
 
-                internal_trimmed = _trim_to_num_lobes(internal_features, f"Subject {sub_id}: Internal features")
+                internal_trimmed = _trim_to_num_lobes(
+                    internal_features, f"Subject {sub_id}: Internal features"
+                )
                 if internal_trimmed is None:
                     internal_features = torch.zeros((NUM_LOBES, 2), dtype=torch.float32)
                 else:
                     internal_features = internal_trimmed
 
-                if torch.isnan(internal_features).any() or torch.isinf(internal_features).any():
-                    logger.warning(f"Subject {sub_id}: Internal features contain NaN/Inf, replacing with 0")
+                if (
+                    torch.isnan(internal_features).any()
+                    or torch.isinf(internal_features).any()
+                ):
+                    logger.warning(
+                        f"Subject {sub_id}: Internal features contain NaN/Inf, replacing with 0"
+                    )
                     internal_features = torch.where(
                         torch.isnan(internal_features) | torch.isinf(internal_features),
                         torch.tensor(0.0, dtype=torch.float32),
-                        internal_features
+                        internal_features,
                     )
 
             # Load zero-signal lobe mask (True = atlas gap / zero-signal fallback).
             # Graphs built before this field was introduced get an all-False default.
             zero_lobe_mask = graph_dict.get(
-                'zero_lobe_mask',
-                torch.zeros(NUM_LOBES, dtype=torch.bool)
+                "zero_lobe_mask", torch.zeros(NUM_LOBES, dtype=torch.bool)
             ).bool()
 
-            zero_lobe_mask_trimmed = _trim_to_num_lobes(zero_lobe_mask.float(), f"Subject {sub_id}: Zero mask")
+            zero_lobe_mask_trimmed = _trim_to_num_lobes(
+                zero_lobe_mask.float(), f"Subject {sub_id}: Zero mask"
+            )
             if zero_lobe_mask_trimmed is None:
                 zero_lobe_mask = torch.zeros(NUM_LOBES, dtype=torch.bool)
             else:
                 zero_lobe_mask = zero_lobe_mask_trimmed.bool()
 
             spatial_missing_mask = self._get_subject_spatial_missing_mask(sub_id)
-            if spatial_missing_mask is not None and spatial_missing_mask.numel() == NUM_LOBES:
+            if (
+                spatial_missing_mask is not None
+                and spatial_missing_mask.numel() == NUM_LOBES
+            ):
                 zero_lobe_mask = (zero_lobe_mask | spatial_missing_mask.bool()).bool()
 
             # 3. Load 12-Region Spatial Features (6 per region)
@@ -379,18 +423,29 @@ class ABIDECausalDataset(Dataset):
                 return None
 
             # 4. Combine all features: (12, 18+) temporal/freq + (12, 2) internal + (12, 4) spatial = (12, GNN_IN_CHANNELS)
-            x = torch.cat([
-                torch.tensor(temporal_features, dtype=torch.float32),  # (12, NUM_TEMPORAL_FEATURES)
-                internal_features,                                       # (12, 2)
-                torch.tensor(spatial_features, dtype=torch.float32)     # (12, NUM_SPATIAL_FEATURES)
-            ], dim=1)
+            x = torch.cat(
+                [
+                    torch.tensor(
+                        temporal_features, dtype=torch.float32
+                    ),  # (12, NUM_TEMPORAL_FEATURES)
+                    internal_features,  # (12, 2)
+                    torch.tensor(
+                        spatial_features, dtype=torch.float32
+                    ),  # (12, NUM_SPATIAL_FEATURES)
+                ],
+                dim=1,
+            )
 
             # SAFETY: Check final feature tensor for NaN/Inf
             if torch.isnan(x).any() or torch.isinf(x).any():
-                logger.error(f"Subject {sub_id}: Combined features contain NaN/Inf after concatenation")
+                logger.error(
+                    f"Subject {sub_id}: Combined features contain NaN/Inf after concatenation"
+                )
                 nan_mask = torch.isnan(x) | torch.isinf(x)
                 x = torch.where(nan_mask, torch.tensor(0.0, dtype=torch.float32), x)
-                logger.warning(f"Subject {sub_id}: Replaced {nan_mask.sum().item()} NaN/Inf values with 0")
+                logger.warning(
+                    f"Subject {sub_id}: Replaced {nan_mask.sum().item()} NaN/Inf values with 0"
+                )
 
             # Validate final shape
             if x.shape != (NUM_LOBES, GNN_IN_CHANNELS):
@@ -428,10 +483,10 @@ class ABIDECausalDataset(Dataset):
             pos = torch.tensor(spatial_features[:, :3], dtype=torch.float32)
 
             # 7. Extract site and demographic covariates (NEW: for conditioning)
-            site_id = self.manifest.iloc[idx]['SITE_ID']
-            age = self.manifest.iloc[idx].get('AGE_AT_SCAN', 0)
-            sex = self.manifest.iloc[idx].get('SEX', 0)  # 1=M, 2=F typically
-            fiq = self.manifest.iloc[idx].get('FIQ', 100)
+            site_id = self.manifest.iloc[idx]["SITE_ID"]
+            age = self.manifest.iloc[idx].get("AGE_AT_SCAN", 0)
+            sex = self.manifest.iloc[idx].get("SEX", 0)  # 1=M, 2=F typically
+            fiq = self.manifest.iloc[idx].get("FIQ", 100)
 
             # Map site names to indices (0-19 for 20 sites)
             site_idx = self._encode_site(site_id)
@@ -439,7 +494,11 @@ class ABIDECausalDataset(Dataset):
             # Normalize covariates
             age_norm = (age - DEMO_AGE_CENTER) / DEMO_AGE_SCALE if pd.notna(age) else 0
             sex_norm = (sex - DEMO_SEX_CENTER) if pd.notna(sex) else 0
-            fiq_norm = (fiq - DEMO_FIQ_CENTER) / DEMO_FIQ_SCALE if pd.notna(fiq) and fiq > 0 else 0
+            fiq_norm = (
+                (fiq - DEMO_FIQ_CENTER) / DEMO_FIQ_SCALE
+                if pd.notna(fiq) and fiq > 0
+                else 0
+            )
 
             data_obj = Data(
                 x=x,
@@ -465,6 +524,7 @@ class ABIDECausalDataset(Dataset):
         except Exception as e:
             logger.error(f"Failed to build graph for {sub_id}: {e}")
             import traceback
+
             logger.debug(traceback.format_exc())
             return None
 
@@ -491,7 +551,7 @@ class ABIDECausalDataset(Dataset):
             # Reshape based on available lobes and target NUM_LOBES
             if num_lobes_in_row == 12 and NUM_LOBES == 11:
                 # Old CSV with 12 lobes, trim Brainstem (last lobe)
-                features = row[:11 * features_per_lobe].reshape(11, features_per_lobe)
+                features = row[: 11 * features_per_lobe].reshape(11, features_per_lobe)
             elif num_lobes_in_row == NUM_LOBES:
                 # CSV matches target lobe count
                 features = row.reshape(NUM_LOBES, features_per_lobe)
@@ -620,8 +680,8 @@ class ABIDECausalDataset(Dataset):
         mapping across train, val, and test so the site embedding lookup is
         identical at training and inference time.
         """
-        if not hasattr(self, '_site_mapping'):
-            unique_sites = sorted(self.manifest_raw['SITE_ID'].unique())
+        if not hasattr(self, "_site_mapping"):
+            unique_sites = sorted(self.manifest_raw["SITE_ID"].unique())
             self._site_mapping = {site: idx for idx, site in enumerate(unique_sites)}
 
         return self._site_mapping.get(site_name, 0)  # Default to site 0 if unknown
@@ -650,19 +710,22 @@ class ABIDECausalDataset(Dataset):
 
         # Edge weight dropout (30% chance to drop edge weights, but keep edge)
         edge_dropout = 0.3
-        keep_mask = torch.from_numpy(rng.random(data.edge_attr.shape[0]) > edge_dropout).to(data.edge_attr.device)
+        keep_mask = torch.from_numpy(
+            rng.random(data.edge_attr.shape[0]) > edge_dropout
+        ).to(data.edge_attr.device)
         if keep_mask.sum() > 0:
             data.edge_attr = data.edge_attr * keep_mask.unsqueeze(1).float()
 
         return data
 
+
 if __name__ == "__main__":
     # Test with comprehensive validation
-    logger.info("="*60)
+    logger.info("=" * 60)
     logger.info("TESTING FIXED GRAPH FACTORY")
-    logger.info("="*60)
+    logger.info("=" * 60)
 
-    train_set = ABIDECausalDataset(split='train')
+    train_set = ABIDECausalDataset(split="train")
 
     if len(train_set) == 0:
         logger.error("No valid graphs found in training set!")
@@ -682,13 +745,17 @@ if __name__ == "__main__":
             valid_count += 1
 
             # Validate shapes
-            assert sample.x.shape == (NUM_LOBES, GNN_IN_CHANNELS), \
-                f"Wrong node features shape: {sample.x.shape}"
-            assert sample.edge_index.shape[0] == 2, \
-                f"Wrong edge_index shape: {sample.edge_index.shape}"
+            assert sample.x.shape == (
+                NUM_LOBES,
+                GNN_IN_CHANNELS,
+            ), f"Wrong node features shape: {sample.x.shape}"
+            assert (
+                sample.edge_index.shape[0] == 2
+            ), f"Wrong edge_index shape: {sample.edge_index.shape}"
             assert sample.edge_index.shape[1] > 0, "Empty edge_index!"
-            assert sample.edge_attr.shape[0] == sample.edge_index.shape[1], \
-                "Edge attr mismatch"
+            assert (
+                sample.edge_attr.shape[0] == sample.edge_index.shape[1]
+            ), "Edge attr mismatch"
             assert sample.y.shape == (1,), f"Wrong label shape: {sample.y.shape}"
 
         logger.info(f"✓ Validated {valid_count} graphs successfully")
@@ -702,5 +769,7 @@ if __name__ == "__main__":
             logger.info(f"  Nodes: {sample.x.shape[0]}")
             logger.info(f"  Edges: {sample.edge_index.shape[1]}")
             logger.info(f"  Node Features: {sample.x.shape[1]}")
-            logger.info(f"  Label: {sample.y.item()} ({'ASD' if sample.y.item() == 1 else 'Control'})")
+            logger.info(
+                f"  Label: {sample.y.item()} ({'ASD' if sample.y.item() == 1 else 'Control'})"
+            )
             logger.info(f"  Subject ID: {sample.sub_id}")

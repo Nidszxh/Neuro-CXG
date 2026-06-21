@@ -10,15 +10,8 @@ import torch
 from src.core.atlas_config import LOBE_MAPPING, NUM_LOBES
 from src.core.feature_registry import GNN_IN_CHANNELS
 from src.core.hyperparams import (
-    AUC_GOOD_THRESHOLD,
-    AUC_RANDOM_THRESHOLD,
-    AUC_WEAK_THRESHOLD,
     DEVICE,
-    F1_BROKEN_THRESHOLD,
-    F1_GOOD_THRESHOLD,
-    F1_WEAK_THRESHOLD,
     K_FOLDS,
-    LOSS_RANDOM_THRESHOLD,
     YOLO_DEGREES,
     YOLO_FLIPLR,
 )
@@ -26,13 +19,11 @@ from src.core.paths import (
     BASELINE_CHECKPOINT_DIR,
     CAUSAL_GRAPHS_DIR,
     CHECKPOINT_DIR,
-    DATA_FINAL,
     DATA_METADATA,
     DATA_ROOT,
     HARMONIZED_FOLDS_DIR,
     MASTER_MANIFEST,
     NODE_ATTRIBUTES_HARMONIZED,
-    NODE_FEATURES_3D,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,7 +36,9 @@ def summarize_graph_degeneracy_from_adj(
     """Summarize edge/dead-lobe degeneracy from an adjacency matrix."""
     adj_t = torch.as_tensor(adj, dtype=torch.float32)
     if adj_t.ndim != 2 or adj_t.shape[0] != adj_t.shape[1]:
-        raise ValueError(f"Expected square adjacency matrix, got shape={tuple(adj_t.shape)}")
+        raise ValueError(
+            f"Expected square adjacency matrix, got shape={tuple(adj_t.shape)}"
+        )
 
     n = int(adj_t.shape[0])
     offdiag = ~torch.eye(n, dtype=torch.bool, device=adj_t.device)
@@ -64,7 +57,7 @@ def summarize_graph_degeneracy_from_adj(
 
 
 def summarize_graph_degeneracy_from_edge_index(
-    edge_index: torch.Tensor,
+    edge_index: torch.Tensor | None,
     num_nodes: int,
     min_edges: int,
 ) -> dict[str, int | bool]:
@@ -78,7 +71,9 @@ def summarize_graph_degeneracy_from_edge_index(
         }
 
     if edge_index.ndim != 2 or edge_index.shape[0] != 2:
-        raise ValueError(f"Expected edge_index shape (2, E), got {tuple(edge_index.shape)}")
+        raise ValueError(
+            f"Expected edge_index shape (2, E), got {tuple(edge_index.shape)}"
+        )
 
     e = int(edge_index.shape[1])
     device = edge_index.device
@@ -94,55 +89,6 @@ def summarize_graph_degeneracy_from_edge_index(
         "dead_lobes": dead_lobes,
         "is_degenerate": bool(e < int(min_edges) or dead_lobes > 0),
     }
-
-
-def validate_training_health(metrics: dict) -> str:
-    """Return a short health-status string for training metrics."""
-    auc = metrics.get("auc", 0.5)
-    f1 = metrics.get("f1", 0.0)
-    loss = metrics.get("loss", 0.693)
-
-    # Critical failures
-    if auc < AUC_RANDOM_THRESHOLD:
-        return "CRITICAL: Random guessing (AUC < 0.52)"
-
-    if f1 < F1_BROKEN_THRESHOLD and loss > LOSS_RANDOM_THRESHOLD:
-        return "CRITICAL: Class collapse (F1 ~= 0, Loss > 0.693 random baseline)"
-
-    # Weak signal
-    if auc < AUC_WEAK_THRESHOLD:
-        if f1 < F1_WEAK_THRESHOLD:
-            return "WARNING: Weak signal, class imbalance likely"
-        return "OK: Learning but needs improvement"
-
-    # Good performance
-    if auc >= AUC_GOOD_THRESHOLD and f1 >= F1_GOOD_THRESHOLD:
-        return "EXCELLENT: Clinical utility achieved"
-
-    return "OK: Model learning"
-
-
-def log_training_diagnostics(fold: int, epoch: int, metrics: dict) -> None:
-    """Log detailed diagnostics for training monitoring."""
-    health = validate_training_health(metrics)
-
-    logger.info("\nFold %d, Epoch %d Diagnostics:", fold, epoch)
-    logger.info("  Health: %s", health)
-    logger.info("  AUC: %.4f (random=0.52, weak<0.70, good>=0.70)", metrics["auc"])
-    logger.info("  F1: %.4f (broken<0.01, weak<0.30, acceptable<0.50, good>=0.50, excellent>=0.70)", metrics["f1"])
-    logger.info("  Loss: %.4f (random=0.693, learning=0.65, converged<0.50)", metrics["loss"])
-
-    if "cm" in metrics:
-        tn, fp, fn, tp = metrics["cm"].ravel()
-        logger.info("  Confusion Matrix: TN=%s, FP=%s, FN=%s, TP=%s", tn, fp, fn, tp)
-
-        if tp == 0:
-            logger.warning("  No true positives! Model predicting all Control.")
-
-        if fp + tn == 0:
-            logger.warning("  No negative predictions! Model predicting all ASD.")
-
-    logger.info("")
 
 
 def validate_lobe_mapping() -> bool:
@@ -238,46 +184,12 @@ def validate_environment() -> bool:
     # Prevent accidental anatomy-destroying augmentation settings.
     if YOLO_FLIPLR > 0 or YOLO_DEGREES > 0:
         logger.warning("DANGER: YOLO augmentations (fliplr/degrees) are enabled.")
-        logger.warning("This can invert hemispheres and collapse classification quality.")
+        logger.warning(
+            "This can invert hemispheres and collapse classification quality."
+        )
 
     logger.info("Target: %d nodes | Features: %d", NUM_LOBES, GNN_IN_CHANNELS)
     logger.info("Device: %s", DEVICE)
-    return True
-
-
-def validate_graph_construction_inputs() -> bool:
-    """Pre-check before graph construction to ensure all required inputs exist."""
-    logger.info("Validating graph construction inputs...")
-
-    errors: list[str] = []
-
-    if not NODE_ATTRIBUTES_HARMONIZED.exists():
-        errors.append(f"Missing: {NODE_ATTRIBUTES_HARMONIZED}")
-
-    if not NODE_FEATURES_3D.exists():
-        errors.append(f"Missing: {NODE_FEATURES_3D}")
-
-    if not MASTER_MANIFEST.exists():
-        errors.append(f"Missing: {MASTER_MANIFEST}")
-
-    if DATA_FINAL.exists():
-        ts_count = sum(
-            1
-            for path in (DATA_FINAL / "train" / "time_series").glob("*.npy")
-            if path.is_file()
-        )
-        if ts_count == 0:
-            errors.append(f"No time series files found in {DATA_FINAL / 'train' / 'time_series'}")
-    else:
-        errors.append(f"Data directory not found: {DATA_FINAL}")
-
-    if errors:
-        logger.error("Graph construction validation FAILED:")
-        for err in errors:
-            logger.error("  %s", err)
-        raise FileNotFoundError("\n".join(errors))
-
-    logger.info("Graph construction inputs validated")
     return True
 
 
@@ -290,7 +202,9 @@ def validate_gnn_training_inputs() -> bool:
     if not CAUSAL_GRAPHS_DIR.exists():
         errors.append(f"Missing causal graphs directory: {CAUSAL_GRAPHS_DIR}")
     else:
-        graph_count = sum(1 for path in CAUSAL_GRAPHS_DIR.glob("*.pt") if path.is_file())
+        graph_count = sum(
+            1 for path in CAUSAL_GRAPHS_DIR.glob("*.pt") if path.is_file()
+        )
         if graph_count == 0:
             errors.append(f"No graph files found in {CAUSAL_GRAPHS_DIR}")
         else:

@@ -1,4 +1,5 @@
 import logging
+from typing import cast
 
 import torch
 import torch.nn as nn
@@ -17,6 +18,7 @@ from src.core.hyperparams import GRL_ANNEAL_STEEPNESS
 
 logger = logging.getLogger(__name__)
 
+
 class GradientReversal(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, alpha):
@@ -27,7 +29,9 @@ class GradientReversal(torch.autograd.Function):
     def backward(ctx, grad_output):
         return grad_output.neg() * ctx.alpha, None
 
+
 # ─── TASK 3: Anatomical Hierarchical Pooling (DD-011) ──────────────────────────
+
 
 class AnatomicalHierarchyPool(nn.Module):
     """
@@ -56,6 +60,10 @@ class AnatomicalHierarchyPool(nn.Module):
         lobe_to_network: Dict mapping lobe index → network index.
         network_to_lobes: Dict mapping network index → list of lobe indices.
     """
+
+    lobe_idx_padded: torch.Tensor
+    lobe_counts: torch.Tensor
+    last_network_embeddings: torch.Tensor | None
 
     def __init__(
         self,
@@ -103,7 +111,7 @@ class AnatomicalHierarchyPool(nn.Module):
         self.register_buffer("lobe_counts", lobe_counts)
 
         # Stored during forward for explainability access
-        self.last_network_embeddings: torch.Tensor = None
+        self.last_network_embeddings = None
 
     def forward(
         self,
@@ -133,7 +141,7 @@ class AnatomicalHierarchyPool(nn.Module):
                 h.size(0),
             )
             self.last_network_embeddings = None
-            return global_mean_pool(h, batch)
+            return cast(torch.Tensor, global_mean_pool(h, batch))
 
         h_3d = h.reshape(num_graphs, NUM_LOBES, self.hidden_dim)
 
@@ -166,13 +174,15 @@ class AnatomicalHierarchyPool(nn.Module):
         self.last_network_embeddings = network_embs.detach()
 
         # Level-2 attention: collapse (num_graphs, num_networks, hidden_dim) → (num_graphs, hidden_dim)
-        gates2 = self.network_gate(network_embs)          # (num_graphs, num_networks, 1)
-        attn2 = torch.softmax(gates2, dim=1)              # (num_graphs, num_networks, 1)
-        graph_emb = (attn2 * network_embs).sum(dim=1)     # (num_graphs, hidden_dim)
+        gates2 = self.network_gate(network_embs)  # (num_graphs, num_networks, 1)
+        attn2 = torch.softmax(gates2, dim=1)  # (num_graphs, num_networks, 1)
+        graph_emb = (attn2 * network_embs).sum(dim=1)  # (num_graphs, hidden_dim)
 
         return graph_emb
 
+
 # ─── MAIN GNN MODEL ────────────────────────────────────────────────────────────
+
 
 class CausalBrainGNN(torch.nn.Module):
     """
@@ -187,6 +197,7 @@ class CausalBrainGNN(torch.nn.Module):
     - Optional site conditioning (16-dim embeddings)
     - Optional per-lobe identity embeddings (16-dim by default)
     """
+
     def __init__(
         self,
         num_node_features,
@@ -231,16 +242,14 @@ class CausalBrainGNN(torch.nn.Module):
             site_embed_dim = 0
 
         # 1. Input Projection with LayerNorm
-        self.lin_in = Linear(num_node_features + site_embed_dim + node_emb_dim, hidden_channels)
+        self.lin_in = Linear(
+            num_node_features + site_embed_dim + node_emb_dim, hidden_channels
+        )
         self.norm_in = LayerNorm(hidden_channels)
 
         # 2. GAT Layer 1
         self.conv1 = GATv2Conv(
-            hidden_channels,
-            hidden_channels,
-            heads=num_heads,
-            edge_dim=1,
-            concat=True
+            hidden_channels, hidden_channels, heads=num_heads, edge_dim=1, concat=True
         )
         self.norm1 = LayerNorm(hidden_channels * num_heads)
         self.skip1 = Linear(hidden_channels, hidden_channels * num_heads)
@@ -254,7 +263,7 @@ class CausalBrainGNN(torch.nn.Module):
             hidden_channels,
             heads=num_heads,
             edge_dim=1,
-            concat=conv2_concat
+            concat=conv2_concat,
         )
         self.norm2 = LayerNorm(conv2_out)
         self.skip2 = Linear(hidden_channels * num_heads, conv2_out)
@@ -266,7 +275,7 @@ class CausalBrainGNN(torch.nn.Module):
                 hidden_channels,
                 heads=num_heads,
                 edge_dim=1,
-                concat=False
+                concat=False,
             )
             self.norm3 = LayerNorm(hidden_channels)
             self.skip3 = Linear(hidden_channels, hidden_channels)
@@ -277,7 +286,7 @@ class CausalBrainGNN(torch.nn.Module):
             self.edge_gate_nn = Sequential(
                 Linear(2 * hidden_channels + 1, hidden_channels // 2),
                 GELU(),
-                Linear(hidden_channels // 2, 1)
+                Linear(hidden_channels // 2, 1),
             )
 
         # 4. Pooling
@@ -291,7 +300,7 @@ class CausalBrainGNN(torch.nn.Module):
                 gate_nn=Sequential(
                     Linear(hidden_channels, hidden_channels // 2),
                     GELU(),
-                    Linear(hidden_channels // 2, 1)
+                    Linear(hidden_channels // 2, 1),
                 )
             )
             pooling_dim = hidden_channels + demo_dim
@@ -304,9 +313,7 @@ class CausalBrainGNN(torch.nn.Module):
 
         if use_grl:
             self.site_classifier = Sequential(
-                Linear(pooling_dim, 32),
-                GELU(),
-                Linear(32, num_sites)
+                Linear(pooling_dim, 32), GELU(), Linear(32, num_sites)
             )
 
         # 5. Classification Head
@@ -314,12 +321,13 @@ class CausalBrainGNN(torch.nn.Module):
             Linear(pooling_dim, hidden_channels),
             GELU(),
             Dropout(dropout),
-            Linear(hidden_channels, num_classes)
+            Linear(hidden_channels, num_classes),
         )
 
     def set_grl_alpha(self, progress: float, alpha_max: float = 0.1) -> None:
         """Anneal GRL alpha with warmup and capped adversarial strength."""
         import math
+
         p = min(max(float(progress), 0.0), 1.0)
         if p < 0.2:
             self.grl_alpha = 0.0
@@ -380,8 +388,15 @@ class CausalBrainGNN(torch.nn.Module):
         return None
 
     def _forward_with_embedding(
-        self, x, edge_index, edge_attr, batch,
-        site_id=None, age=None, sex=None, fiq=None,
+        self,
+        x,
+        edge_index,
+        edge_attr,
+        batch,
+        site_id=None,
+        age=None,
+        sex=None,
+        fiq=None,
     ):
         """Internal: returns (logits, graph_embedding) for contrastive/multiview use."""
         g = self._encode(x, edge_index, edge_attr, batch, site_id, age, sex, fiq)
@@ -407,7 +422,9 @@ class CausalBrainGNN(torch.nn.Module):
             raise ValueError("Batch tensor contains negative graph indices")
 
         if edge_index is None or edge_index.dim() != 2 or int(edge_index.size(0)) != 2:
-            raise ValueError(f"Expected edge_index shape (2, E), got {tuple(edge_index.shape)}")
+            raise ValueError(
+                f"Expected edge_index shape (2, E), got {tuple(edge_index.shape)}"
+            )
         edge_index = edge_index.long()
         if edge_index.numel() > 0:
             e_min = int(edge_index.min().item())
@@ -417,18 +434,26 @@ class CausalBrainGNN(torch.nn.Module):
                     f"edge_index out of range: min={e_min}, max={e_max}, num_nodes={num_nodes}"
                 )
 
-        preprocessing_mode = str(getattr(self, "_preprocessing_mode", "legacy_global")).strip().lower()
-        site_norm_mode = str(getattr(self, "_site_normalization_mode", "global")).strip().lower()
+        preprocessing_mode = (
+            str(getattr(self, "_preprocessing_mode", "legacy_global")).strip().lower()
+        )
+        site_norm_mode = (
+            str(getattr(self, "_site_normalization_mode", "global")).strip().lower()
+        )
 
         # Optional fold-internal MI feature mask loaded from checkpoint.
         feature_mask = getattr(self, "_feature_mask", None)
         if feature_mask is not None:
             try:
-                mask_t = torch.as_tensor(feature_mask, dtype=x.dtype, device=x.device).view(1, -1)
+                mask_t = torch.as_tensor(
+                    feature_mask, dtype=x.dtype, device=x.device
+                ).view(1, -1)
                 if mask_t.shape[1] == x.shape[1]:
                     x = x * mask_t
             except Exception:
-                logger.warning("Failed to apply feature mask in forward pass", exc_info=True)
+                logger.warning(
+                    "Failed to apply feature mask in forward pass", exc_info=True
+                )
 
         # Optional fold-internal within-site normalization loaded from checkpoint.
         site_means = getattr(self, "_site_feature_means", None)
@@ -452,9 +477,18 @@ class CausalBrainGNN(torch.nn.Module):
                     global_mean_t = None
                     global_std_t = None
                     if global_mean is not None and global_std is not None:
-                        global_mean_t = torch.as_tensor(global_mean, dtype=x.dtype, device=x.device).view(1, -1)
-                        global_std_t = torch.as_tensor(global_std, dtype=x.dtype, device=x.device).view(1, -1).clamp_min(1e-6)
-                        if global_mean_t.shape[1] != x.shape[1] or global_std_t.shape[1] != x.shape[1]:
+                        global_mean_t = torch.as_tensor(
+                            global_mean, dtype=x.dtype, device=x.device
+                        ).view(1, -1)
+                        global_std_t = (
+                            torch.as_tensor(global_std, dtype=x.dtype, device=x.device)
+                            .view(1, -1)
+                            .clamp_min(1e-6)
+                        )
+                        if (
+                            global_mean_t.shape[1] != x.shape[1]
+                            or global_std_t.shape[1] != x.shape[1]
+                        ):
                             global_mean_t = None
                             global_std_t = None
 
@@ -467,20 +501,31 @@ class CausalBrainGNN(torch.nn.Module):
                             mean_t = global_mean_t
                             std_t = global_std_t
                         else:
-                            mean_t = torch.as_tensor(mean, dtype=x.dtype, device=x.device).view(1, -1)
-                            std_t = torch.as_tensor(std, dtype=x.dtype, device=x.device).view(1, -1).clamp_min(1e-6)
+                            mean_t = torch.as_tensor(
+                                mean, dtype=x.dtype, device=x.device
+                            ).view(1, -1)
+                            std_t = (
+                                torch.as_tensor(std, dtype=x.dtype, device=x.device)
+                                .view(1, -1)
+                                .clamp_min(1e-6)
+                            )
 
                         if mean_t is None or std_t is None:
                             continue
-                        if mean_t.shape[1] != x.shape[1] or std_t.shape[1] != x.shape[1]:
+                        if (
+                            mean_t.shape[1] != x.shape[1]
+                            or std_t.shape[1] != x.shape[1]
+                        ):
                             continue
-                        node_mask = (site_vec[batch] == sid_int)
+                        node_mask = site_vec[batch] == sid_int
                         if node_mask.any():
                             x_norm[node_mask] = (x_norm[node_mask] - mean_t) / std_t
                             site_norm_applied = True
                     x = x_norm
             except Exception:
-                logger.warning("Failed to apply site normalization in forward pass", exc_info=True)
+                logger.warning(
+                    "Failed to apply site normalization in forward pass", exc_info=True
+                )
 
         # Optional fold-wise feature scaling loaded from checkpoint.
         # Keeps inference-time preprocessing consistent with train-fold scaling.
@@ -493,12 +538,20 @@ class CausalBrainGNN(torch.nn.Module):
         )
         if should_apply_global and feature_mean is not None and feature_std is not None:
             try:
-                mean_t = torch.as_tensor(feature_mean, dtype=x.dtype, device=x.device).view(1, -1)
-                std_t = torch.as_tensor(feature_std, dtype=x.dtype, device=x.device).view(1, -1).clamp_min(1e-6)
+                mean_t = torch.as_tensor(
+                    feature_mean, dtype=x.dtype, device=x.device
+                ).view(1, -1)
+                std_t = (
+                    torch.as_tensor(feature_std, dtype=x.dtype, device=x.device)
+                    .view(1, -1)
+                    .clamp_min(1e-6)
+                )
                 if mean_t.shape[1] == x.shape[1] and std_t.shape[1] == x.shape[1]:
                     x = (x - mean_t) / std_t
             except Exception:
-                logger.warning("Failed to apply feature scaling in forward pass", exc_info=True)
+                logger.warning(
+                    "Failed to apply feature scaling in forward pass", exc_info=True
+                )
 
         # 1. Optionally add site embeddings
         if self.use_site_embedding:
@@ -524,8 +577,10 @@ class CausalBrainGNN(torch.nn.Module):
                 site_per_node = site_emb[batch]
             else:
                 site_per_node = torch.zeros(
-                    x.shape[0], self.site_embedding.embedding_dim,
-                    device=x.device, dtype=x.dtype
+                    x.shape[0],
+                    self.site_embedding.embedding_dim,
+                    device=x.device,
+                    dtype=x.dtype,
                 )
             x = torch.cat([x, site_per_node], dim=1)
 
@@ -592,10 +647,16 @@ class CausalBrainGNN(torch.nn.Module):
 
     def forward(
         self,
-        x, edge_index, edge_attr, batch,
-        site_id=None, age=None, sex=None, fiq=None,
+        x,
+        edge_index,
+        edge_attr,
+        batch,
+        site_id=None,
+        age=None,
+        sex=None,
+        fiq=None,
         return_site_logits=False,
-    ):
+    ) -> torch.Tensor:
         """
         Forward pass through the GATv2-based brain connectivity classifier.
 
@@ -630,6 +691,6 @@ class CausalBrainGNN(torch.nn.Module):
         if self.use_grl and return_site_logits:
             grl_out = GradientReversal.apply(g, self.grl_alpha)
             site_logits = self.site_classifier(grl_out)
-            return class_logits, site_logits
+            return class_logits, site_logits  # type: ignore[return-value]
 
-        return class_logits
+        return cast(torch.Tensor, class_logits)

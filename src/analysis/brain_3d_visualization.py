@@ -10,6 +10,7 @@ Generates professional 3D brain visualizations showing:
 Usage:
     python -m src.analysis.brain_3d_visualization --output results/paper_figures/brain_3d/
 """
+
 import argparse
 import json
 from pathlib import Path
@@ -41,6 +42,7 @@ def get_lobe_centroids() -> dict[str, tuple[float, float, float]]:
         "Brainstem": (0, -30, -40),
     }
 
+
 def create_importance_brain_map(
     importance_scores: np.ndarray,
     output_dir: Path,
@@ -50,7 +52,9 @@ def create_importance_brain_map(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if len(importance_scores) != NUM_LOBES:
-        importance_scores = np.pad(importance_scores, (0, NUM_LOBES - len(importance_scores)))
+        importance_scores = np.pad(
+            importance_scores, (0, NUM_LOBES - len(importance_scores))
+        )
 
     lobe_names = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
     centroids = get_lobe_centroids()
@@ -80,7 +84,8 @@ def create_importance_brain_map(
 
     for ax, (i, j, view_name) in zip(axes, views, strict=False):
         scatter = ax.scatter(
-            coords[:, i], coords[:, j],
+            coords[:, i],
+            coords[:, j],
             s=norm_values * 500 + 50,
             c=values,
             cmap="plasma",
@@ -90,8 +95,15 @@ def create_importance_brain_map(
         )
 
         for k, (x, y) in enumerate(zip(coords[:, i], coords[:, j], strict=False)):
-            ax.annotate(labels[k], (x, y), fontsize=7, ha="center", va="bottom",
-                       xytext=(0, 5), textcoords="offset points")
+            ax.annotate(
+                labels[k],
+                (x, y),
+                fontsize=7,
+                ha="center",
+                va="bottom",
+                xytext=(0, 5),
+                textcoords="offset points",
+            )
 
         ax.set_xlabel(f"Position {['X', 'Y', 'Z'][i]} (mm)")
         ax.set_ylabel(f"Position {['X', 'Y', 'Z'][j]} (mm)")
@@ -111,54 +123,6 @@ def create_importance_brain_map(
     print(f"Saved: {output_path}")
     return output_path
 
-def create_connectivity_3d_plot(
-    adjacency_matrix: np.ndarray,
-    output_dir: Path,
-    title: str = "Brain Connectivity",
-    threshold: float = 0.1,
-) -> Path:
-    """Create 3D connectivity visualization."""
-    try:
-        from nilearn import plotting
-    except ImportError:
-        print("Warning: nilearn not installed. Skipping 3D connectivity.")
-        return None
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    lobe_names = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
-    centroids = get_lobe_centroids()
-
-    coords = np.array([centroids[name] for name in lobe_names if name in centroids])
-
-    valid_indices = [i for i, name in enumerate(lobe_names) if name in centroids]
-    if len(valid_indices) < 2:
-        print("Not enough valid coordinates for 3D plot.")
-        return None
-
-    adj_subset = adjacency_matrix[np.ix_(valid_indices, valid_indices)]
-
-    adj_subset = np.abs(adj_subset)
-    adj_subset[adj_subset < threshold] = 0
-
-    try:
-        display = plotting.plot_connectome(
-            adj_subset,
-            coords,
-            display_mode="lyrz",
-            title=title,
-            edge_threshold=f"{threshold * 100:.0f}%",
-            node_size=20,
-        )
-
-        output_path = output_dir / f"connectivity_3d_{title.lower().replace(' ', '_')}.png"
-        display.savefig(output_path, dpi=300, bbox_inches="tight", facecolor="white")
-        plt.close()
-        print(f"Saved: {output_path}")
-        return output_path
-    except Exception as e:
-        print(f"Connectivity plot failed: {e}")
-        return None
 
 def create_glass_brain_plot(
     importance_scores: np.ndarray,
@@ -169,7 +133,9 @@ def create_glass_brain_plot(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if len(importance_scores) != NUM_LOBES:
-        importance_scores = np.pad(importance_scores, (0, NUM_LOBES - len(importance_scores)))
+        importance_scores = np.pad(
+            importance_scores, (0, NUM_LOBES - len(importance_scores))
+        )
 
     lobe_names = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
     centroids = get_lobe_centroids()
@@ -194,13 +160,30 @@ def create_glass_brain_plot(
     norm_values = values / values.max() if values.max() > 0 else values
     plt.cm.plasma(norm_values)
 
-    ax.scatter(coords[:, 0], coords[:, 1], s=norm_values * 800 + 100,
-               c=values, cmap="plasma", alpha=0.7, edgecolors="black", linewidths=2)
+    ax.scatter(
+        coords[:, 0],
+        coords[:, 1],
+        s=norm_values * 800 + 100,
+        c=values,
+        cmap="plasma",
+        alpha=0.7,
+        edgecolors="black",
+        linewidths=2,
+    )
 
-    for _, (x, y, label) in enumerate(zip(coords[:, 0], coords[:, 1], labels, strict=False)):
-        ax.annotate(label, (x, y), fontsize=9, ha="center", va="bottom",
-                   xytext=(0, 8), textcoords="offset points",
-                   bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.8})
+    for _, (x, y, label) in enumerate(
+        zip(coords[:, 0], coords[:, 1], labels, strict=False)
+    ):
+        ax.annotate(
+            label,
+            (x, y),
+            fontsize=9,
+            ha="center",
+            va="bottom",
+            xytext=(0, 8),
+            textcoords="offset points",
+            bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.8},
+        )
 
     ax.set_xlabel("X (mm) - Left ↔ Right", fontsize=12)
     ax.set_ylabel("Y (mm) - Posterior ↔ Anterior", fontsize=12)
@@ -218,6 +201,7 @@ def create_glass_brain_plot(
     plt.close()
     print(f"Saved: {output_path}")
     return output_path
+
 
 def main():
     parser = argparse.ArgumentParser(description="Generate 3D brain visualizations")
@@ -272,10 +256,13 @@ def main():
             create_glass_brain_plot(importance, output_dir, "Node Importance")
 
     if importance is None:
-        print("No importance data available. Use --mock flag to generate test visualization.")
+        print(
+            "No importance data available. Use --mock flag to generate test visualization."
+        )
 
     print("\n✓ 3D brain visualizations complete!")
     print(f"   Output: {output_dir}")
+
 
 if __name__ == "__main__":
     main()

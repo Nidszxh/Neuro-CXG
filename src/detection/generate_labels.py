@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # --- CONFIGURATION ---
 IMG_SIZE = (YOLO_IMGSZ, YOLO_IMGSZ)
 
+
 def calculate_yolo_bbox(mask, size):
     rows, cols = np.where(mask)
     if len(rows) == 0:
@@ -34,6 +35,7 @@ def calculate_yolo_bbox(mask, size):
     x_center = (x_min + w / 2.0) / size[0]
     y_center = (y_min + h / 2.0) / size[1]
     return f"{x_center:.6f} {y_center:.6f} {(w / size[0]):.6f} {(h / size[1]):.6f}"
+
 
 def generate_atlas_labels_for_percentiles():
     """
@@ -51,13 +53,17 @@ def generate_atlas_labels_for_percentiles():
     # Use percentiles from config (single source of truth with abide_download.py)
     atlas_labels = {}
 
-    logger.info(f"Pre-calculating atlas bounding boxes for {len(ALFF_SLICE_PERCENTILES)} percentile slices (atlas z_dim={atlas_z_dim})...")
+    logger.info(
+        f"Pre-calculating atlas bounding boxes for {len(ALFF_SLICE_PERCENTILES)} percentile slices (atlas z_dim={atlas_z_dim})..."
+    )
 
     for idx, p in enumerate(ALFF_SLICE_PERCENTILES):
         z = int(atlas_z_dim * p)  # Atlas z-index for this percentile
 
         if z >= atlas_z_dim:
-            logger.warning(f"Percentile {p} maps to z={z} which exceeds atlas z_dim={atlas_z_dim}")
+            logger.warning(
+                f"Percentile {p} maps to z={z} which exceeds atlas z_dim={atlas_z_dim}"
+            )
             continue
 
         bboxes = []
@@ -80,6 +86,7 @@ def generate_atlas_labels_for_percentiles():
             logger.debug(f"Percentile {p} (idx={idx}, z={z}): {len(bboxes)} boxes")
 
     return atlas_labels
+
 
 def main():
     if not DATA_FINAL.exists():
@@ -130,12 +137,16 @@ def main():
                 continue
 
         # Generate labels for each subject
-        for subject_id, slice_list in tqdm(subject_slices.items(), desc=f"Subjects in {split}"):
+        for subject_id, slice_list in tqdm(
+            subject_slices.items(), desc=f"Subjects in {split}"
+        ):
             # Sort by z-index to map to percentiles
             slice_list_sorted = sorted(slice_list, key=lambda x: x[0])
 
             if len(slice_list_sorted) != len(ALFF_SLICE_PERCENTILES):
-                logger.warning(f"{subject_id}: Expected {len(ALFF_SLICE_PERCENTILES)} slices, got {len(slice_list_sorted)}")
+                logger.warning(
+                    f"{subject_id}: Expected {len(ALFF_SLICE_PERCENTILES)} slices, got {len(slice_list_sorted)}"
+                )
                 continue
 
             # Map each slice to its corresponding percentile index (0-6)
@@ -146,12 +157,21 @@ def main():
                         f.write("\n".join(atlas_anno[percentile_idx]))
                     total_labels += 1
                 else:
-                    logger.warning(f"No annotations for percentile index {percentile_idx}")
+                    logger.warning(
+                        f"No annotations for percentile index {percentile_idx}"
+                    )
 
             total_images += len(slice_list_sorted)
 
-    logger.info(f"Annotation complete. Created {total_labels} labels for {total_images} images across all splits.")
-    logger.info(f"Coverage: {100 * total_labels / total_images:.1f}%" if total_images > 0 else "No images found")
+    logger.info(
+        f"Annotation complete. Created {total_labels} labels for {total_images} images across all splits."
+    )
+    logger.info(
+        f"Coverage: {100 * total_labels / total_images:.1f}%"
+        if total_images > 0
+        else "No images found"
+    )
+
 
 if __name__ == "__main__":
     main()

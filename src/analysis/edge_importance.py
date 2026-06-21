@@ -41,16 +41,15 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from src.core.config import LOBE_NAMES, NUM_LOBES
+from src.core.config import NUM_LOBES, REGION_LABELS
 from src.core.plotting import ColorPalette
 
 palette = ColorPalette()
 
 logger = logging.getLogger(__name__)
 
-REGION_LABELS: list[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
-
 # ── GradientEdgeAttributor ─────────────────────────────────────────────────────
+
 
 class GradientEdgeAttributor:
     """
@@ -95,15 +94,17 @@ class GradientEdgeAttributor:
         target_logits = out[:, self.target_class].sum()
         target_logits.backward()
 
-        grads = e_attr.grad                          # (E, 1) or (E,)
+        grads = e_attr.grad  # (E, 1) or (E,)
         if grads is None:
             logger.warning("GradientEdgeAttributor: edge_attr.grad is None")
             return torch.zeros(edge_attr.size(0))
 
-        grads = grads.squeeze(-1).detach().cpu()     # (E,)
+        grads = grads.squeeze(-1).detach().cpu()  # (E,)
         return grads.abs()
 
+
 # ── EdgeMaskingAnalyzer ───────────────────────────────────────────────────────
+
 
 class EdgeMaskingAnalyzer:
     """
@@ -130,7 +131,7 @@ class EdgeMaskingAnalyzer:
     ):
         self.model = model
         self.target_class = target_class
-        self.max_graphs   = max_graphs
+        self.max_graphs = max_graphs
 
     def compute_for_graph(
         self,
@@ -163,11 +164,13 @@ class EdgeMaskingAnalyzer:
             with torch.no_grad():
                 out = self.model(x, edge_index, masked_attr, batch, **kwargs)
                 prob = F.softmax(out, dim=-1)[0, self.target_class].item()
-            delta_p[e_idx] = baseline_prob - prob   # positive = important
+            delta_p[e_idx] = baseline_prob - prob  # positive = important
 
         return delta_p
 
+
 # ── _build_matrix ─────────────────────────────────────────────────────────────
+
 
 def _edge_scores_to_matrix(
     edge_index: np.ndarray,
@@ -188,18 +191,20 @@ def _edge_scores_to_matrix(
         Each cell [i, j] holds the mean score for the directed edge i→j
         (or 0 if that edge was absent).
     """
-    mat    = np.zeros((num_nodes, num_nodes))
+    mat = np.zeros((num_nodes, num_nodes))
     counts = np.zeros((num_nodes, num_nodes))
     src, dst = edge_index
     for s, d, sc in zip(src, dst, edge_scores, strict=False):
         si, di = int(s) % num_nodes, int(d) % num_nodes
-        mat[si, di]    += sc
+        mat[si, di] += sc
         counts[si, di] += 1
     with np.errstate(invalid="ignore", divide="ignore"):
         mat = np.where(counts > 0, mat / counts, 0.0)
     return mat
 
+
 # ── EdgeImportanceAnalyzer ─────────────────────────────────────────────────────
+
 
 class EdgeImportanceAnalyzer:
     """
@@ -221,7 +226,7 @@ class EdgeImportanceAnalyzer:
         device: torch.device,
         masking_max_graphs: int = 40,
     ):
-        self.model  = model
+        self.model = model
         self.test_loader = test_loader
         self.device = device
         self.masking_max_graphs = masking_max_graphs
@@ -243,7 +248,7 @@ class EdgeImportanceAnalyzer:
         logger.info("EdgeImportanceAnalyzer: starting analysis → %s", output_dir)
 
         gradient_results = self._run_gradient_attribution()
-        masking_results  = self._run_edge_masking()
+        masking_results = self._run_edge_masking()
 
         self._plot_edge_matrix(
             gradient_results["asd_matrix"],
@@ -267,15 +272,15 @@ class EdgeImportanceAnalyzer:
 
     def _run_gradient_attribution(self) -> dict[str, np.ndarray]:
         attributor = GradientEdgeAttributor(self.model, target_class=1)
-        asd_mats:  list[np.ndarray] = []
+        asd_mats: list[np.ndarray] = []
         ctrl_mats: list[np.ndarray] = []
 
         for batch in self.test_loader:
             if batch is None:
                 continue
             batch = batch.to(self.device)
-            labels      = batch.y.cpu().numpy()
-            batch_np    = batch.batch.cpu().numpy()
+            labels = batch.y.cpu().numpy()
+            batch_np = batch.batch.cpu().numpy()
             edge_idx_np = batch.edge_index.cpu().numpy()
 
             with torch.enable_grad():
@@ -292,16 +297,16 @@ class EdgeImportanceAnalyzer:
 
             for g_idx, label in enumerate(labels):
                 edge_mask = batch_np[edge_idx_np[1]] == g_idx
-                g_scores  = scores[edge_mask]
-                g_edges   = edge_idx_np[:, edge_mask]
+                g_scores = scores[edge_mask]
+                g_edges = edge_idx_np[:, edge_mask]
                 mat = _edge_scores_to_matrix(g_edges, g_scores)
                 (asd_mats if label == 1 else ctrl_mats).append(mat)
 
         results = {}
         if asd_mats:
-            results["asd_matrix"]  = np.mean(np.stack(asd_mats),  axis=0)
+            results["asd_matrix"] = np.mean(np.stack(asd_mats), axis=0)
         else:
-            results["asd_matrix"]  = np.zeros((NUM_LOBES, NUM_LOBES))
+            results["asd_matrix"] = np.zeros((NUM_LOBES, NUM_LOBES))
         if ctrl_mats:
             results["control_matrix"] = np.mean(np.stack(ctrl_mats), axis=0)
         else:
@@ -309,7 +314,8 @@ class EdgeImportanceAnalyzer:
 
         logger.info(
             "Gradient attribution: %d ASD, %d Control graphs",
-            len(asd_mats), len(ctrl_mats),
+            len(asd_mats),
+            len(ctrl_mats),
         )
         return results
 
@@ -321,7 +327,7 @@ class EdgeImportanceAnalyzer:
             target_class=1,
             max_graphs=self.masking_max_graphs,
         )
-        asd_mats:  list[np.ndarray] = []
+        asd_mats: list[np.ndarray] = []
         ctrl_mats: list[np.ndarray] = []
         processed = 0
 
@@ -329,8 +335,8 @@ class EdgeImportanceAnalyzer:
             if batch is None or processed >= self.masking_max_graphs:
                 break
             batch = batch.to(self.device)
-            labels      = batch.y.cpu().numpy()
-            batch_np    = batch.batch.cpu().numpy()
+            labels = batch.y.cpu().numpy()
+            batch_np = batch.batch.cpu().numpy()
             edge_idx_np = batch.edge_index.cpu().numpy()
 
             for g_idx, label in enumerate(labels):
@@ -339,10 +345,12 @@ class EdgeImportanceAnalyzer:
                 node_mask = batch_np == g_idx
                 edge_mask = batch_np[edge_idx_np[1]] == g_idx
 
-                g_x         = batch.x[node_mask]
+                g_x = batch.x[node_mask]
                 g_edge_attr = batch.edge_attr[edge_mask]
-                g_edge_idx  = edge_idx_np[:, edge_mask] - edge_idx_np[:, edge_mask].min()
-                g_edge_idx_t = torch.tensor(g_edge_idx, dtype=torch.long, device=self.device)
+                g_edge_idx = edge_idx_np[:, edge_mask] - edge_idx_np[:, edge_mask].min()
+                g_edge_idx_t = torch.tensor(
+                    g_edge_idx, dtype=torch.long, device=self.device
+                )
 
                 if g_edge_attr.size(0) == 0:
                     continue
@@ -353,9 +361,21 @@ class EdgeImportanceAnalyzer:
                         g_edge_idx_t,
                         g_edge_attr,
                         site_id=None,
-                        age=batch.age[g_idx:g_idx+1] if hasattr(batch, "age") else None,
-                        sex=batch.sex[g_idx:g_idx+1] if hasattr(batch, "sex") else None,
-                        fiq=batch.fiq[g_idx:g_idx+1] if hasattr(batch, "fiq") else None,
+                        age=(
+                            batch.age[g_idx : g_idx + 1]
+                            if hasattr(batch, "age")
+                            else None
+                        ),
+                        sex=(
+                            batch.sex[g_idx : g_idx + 1]
+                            if hasattr(batch, "sex")
+                            else None
+                        ),
+                        fiq=(
+                            batch.fiq[g_idx : g_idx + 1]
+                            if hasattr(batch, "fiq")
+                            else None
+                        ),
                     )
                     mat = _edge_scores_to_matrix(g_edge_idx, delta_p)
                     (asd_mats if label == 1 else ctrl_mats).append(mat)
@@ -364,12 +384,22 @@ class EdgeImportanceAnalyzer:
                     logger.warning("Masking failed for graph %d: %s", g_idx, exc)
 
         results = {}
-        results["asd_matrix"]     = np.mean(np.stack(asd_mats),  axis=0) if asd_mats  else np.zeros((NUM_LOBES, NUM_LOBES))
-        results["control_matrix"] = np.mean(np.stack(ctrl_mats), axis=0) if ctrl_mats else np.zeros((NUM_LOBES, NUM_LOBES))
+        results["asd_matrix"] = (
+            np.mean(np.stack(asd_mats), axis=0)
+            if asd_mats
+            else np.zeros((NUM_LOBES, NUM_LOBES))
+        )
+        results["control_matrix"] = (
+            np.mean(np.stack(ctrl_mats), axis=0)
+            if ctrl_mats
+            else np.zeros((NUM_LOBES, NUM_LOBES))
+        )
 
         logger.info(
             "Edge masking: %d ASD, %d Control graphs (capped at %d)",
-            len(asd_mats), len(ctrl_mats), self.masking_max_graphs,
+            len(asd_mats),
+            len(ctrl_mats),
+            self.masking_max_graphs,
         )
         return results
 
@@ -384,9 +414,13 @@ class EdgeImportanceAnalyzer:
     ) -> None:
         import seaborn as sns
 
-        short_labels = [name.replace("_", " ") if len(name) > 10 else name for name in REGION_LABELS]
+        short_labels = [
+            name.replace("_", " ") if len(name) > 10 else name for name in REGION_LABELS
+        ]
         fig, axes = plt.subplots(1, 2, figsize=(20, 8))
-        for ax, mat, group in zip(axes, [ctrl_mat, asd_mat], ["Control", "ASD"], strict=False):
+        for ax, mat, group in zip(
+            axes, [ctrl_mat, asd_mat], ["Control", "ASD"], strict=False
+        ):
             sns.heatmap(
                 mat,
                 xticklabels=short_labels,
@@ -420,7 +454,9 @@ class EdgeImportanceAnalyzer:
         diff = gradient_results["asd_matrix"] - gradient_results["control_matrix"]
         max_abs = np.abs(diff).max() or 1.0
 
-        short_labels = [name.replace("_", " ") if len(name) > 10 else name for name in REGION_LABELS]
+        short_labels = [
+            name.replace("_", " ") if len(name) > 10 else name for name in REGION_LABELS
+        ]
         fig, ax = plt.subplots(figsize=(12, 9))
         sns.heatmap(
             diff,
@@ -437,7 +473,9 @@ class EdgeImportanceAnalyzer:
         )
         ax.set_title(
             "Differential Edge Importance: ASD − Control\n(positive = more important in ASD)",
-            fontsize=14, fontweight="bold", pad=15
+            fontsize=14,
+            fontweight="bold",
+            pad=15,
         )
         ax.set_xlabel("Target Region", fontsize=11, fontweight="bold")
         ax.set_ylabel("Source Region", fontsize=11, fontweight="bold")
@@ -453,7 +491,10 @@ class EdgeImportanceAnalyzer:
             d_val = diff[row, col]
             logger.info(
                 "Top edge %d: %s → %s  Δ=%.4f",
-                rank + 1, REGION_LABELS[row], REGION_LABELS[col], d_val,
+                rank + 1,
+                REGION_LABELS[row],
+                REGION_LABELS[col],
+                d_val,
             )
 
         plt.tight_layout()

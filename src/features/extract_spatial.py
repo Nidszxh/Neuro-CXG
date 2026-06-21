@@ -2,7 +2,6 @@ import logging
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from ultralytics import YOLO
@@ -10,7 +9,6 @@ from ultralytics import YOLO
 # Setup paths and config
 from src.core.config import (
     DATA_FINAL,
-    LOBE_MAPPING,
     LOBE_NAMES,
     MASTER_MANIFEST,
     NODE_FEATURES_3D,
@@ -26,56 +24,8 @@ logger = logging.getLogger(__name__)
 # --- CONFIG ---
 MODEL_PATH = YOLO_WEIGHTS_PATH
 SPLIT_ROOT = DATA_FINAL
-MANIFEST_PATH = MASTER_MANIFEST
 OUTPUT_PATH = NODE_FEATURES_3D
 
-def _load_atlas_lobe_fallbacks() -> dict:
-    """Load atlas-derived lobe centroids/sizes (native atlas coordinate space)."""
-    try:
-        from src.features.extract_spatial_atlas import compute_roi_sizes, load_centroids
-        centroids = load_centroids()
-        roi_sizes = compute_roi_sizes()
-    except Exception as exc:
-        logger.warning(
-            "Atlas fallback unavailable for missing YOLO regions (%s); using zeros.",
-            exc,
-        )
-        return dict.fromkeys(range(NUM_LOBES), (0.0, 0.0, 0.0, 0.0))
-
-    fallback = {}
-    missing_roi_ids = set()
-    for lobe_id in range(NUM_LOBES):
-        coords = []
-        sizes = []
-        for roi_idx_0 in LOBE_MAPPING.get(lobe_id, []):
-            roi_id = int(roi_idx_0) + 1
-            c = centroids.get(roi_id)
-            if c is None:
-                missing_roi_ids.add(roi_id)
-                continue
-            coords.append((float(c.get("x", 0.0)), float(c.get("y", 0.0)), float(c.get("z", 0.0))))
-            sizes.append(float(roi_sizes.get(roi_id, 1.0)))
-
-        if coords:
-            arr = np.array(coords, dtype=float)
-            fallback[lobe_id] = (
-                float(arr[:, 0].mean()),
-                float(arr[:, 1].mean()),
-                float(arr[:, 2].mean()),
-                float(np.mean(sizes)) if sizes else 0.0,
-            )
-        else:
-            fallback[lobe_id] = (0.0, 0.0, 0.0, 0.0)
-
-    if missing_roi_ids:
-        missing_sorted = sorted(missing_roi_ids)
-        logger.warning(
-            "Atlas fallback missing %d ROI centroid ids (showing up to 12): %s",
-            len(missing_sorted),
-            missing_sorted[:12],
-        )
-
-    return fallback
 
 def _compute_missing_lobe_fallbacks(raw_df: pd.DataFrame) -> tuple[dict, set]:
     """Compute scale-matched fallback features for missing YOLO lobes.
@@ -125,9 +75,12 @@ def _compute_missing_lobe_fallbacks(raw_df: pd.DataFrame) -> tuple[dict, set]:
 
     return fallback, missing_set
 
+
 def extract_spatial():
     if not MODEL_PATH.exists():
-        logger.error(f"Model weights not found at {MODEL_PATH}. Rerun YOLO training first.")
+        logger.error(
+            f"Model weights not found at {MODEL_PATH}. Rerun YOLO training first."
+        )
         return
 
     model = YOLO(MODEL_PATH)
@@ -142,9 +95,14 @@ def extract_spatial():
             logger.info(f"Processing {split} set...")
             # Use config confidence threshold (not hardcoded 0.35)
             from src.core.config import YOLO_CONF_THRESHOLD
-            results = model(str(img_dir), stream=True, conf=YOLO_CONF_THRESHOLD, verbose=False)
 
-            for res in tqdm(results, desc=f"Inference {split}", disable=not sys.stdout.isatty()):
+            results = model(
+                str(img_dir), stream=True, conf=YOLO_CONF_THRESHOLD, verbose=False
+            )
+
+            for res in tqdm(
+                results, desc=f"Inference {split}", disable=not sys.stdout.isatty()
+            ):
                 try:
                     file_name = Path(res.path).stem
                     try:
@@ -186,7 +144,9 @@ def extract_spatial():
 
     logger.info(f"Total detections: {len(raw_df)}")
     logger.info(f"Unique subjects: {raw_df['subject_id'].nunique()}")
-    logger.info(f"Unique ROI classes detected: {sorted(raw_df['roi_class'].unique().tolist())}")
+    logger.info(
+        f"Unique ROI classes detected: {sorted(raw_df['roi_class'].unique().tolist())}"
+    )
     logger.info("Aggregating 2D detections into 3D lobe nodes...")
 
     processed_subjects = []
@@ -207,8 +167,10 @@ def extract_spatial():
         )
 
     for sub_id in tqdm(
-        subject_ids, desc="Building Subject Nodes",
-        miniters=max(1, len(subject_ids) // 20), mininterval=10.0
+        subject_ids,
+        desc="Building Subject Nodes",
+        miniters=max(1, len(subject_ids) // 20),
+        mininterval=10.0,
     ):
         sub_group = raw_df[raw_df["subject_id"] == sub_id]
 
@@ -217,14 +179,18 @@ def extract_spatial():
         detected_regions = sub_group["roi_class"].nunique()
         if detected_regions < MIN_REQUIRED_REGIONS:
             filtered_count += 1
-            logger.debug(f"Subject {sub_id}: only {detected_regions}/{NUM_LOBES} regions detected (REJECTED)")
+            logger.debug(
+                f"Subject {sub_id}: only {detected_regions}/{NUM_LOBES} regions detected (REJECTED)"
+            )
             continue
 
         # Track whether subject has complete detection (all 12 regions)
         is_complete = detected_regions == NUM_LOBES
         if not is_complete:
             partial_count += 1
-            logger.debug(f"Subject {sub_id}: {detected_regions}/{NUM_LOBES} regions detected (PARTIAL - kept for ranking)")
+            logger.debug(
+                f"Subject {sub_id}: {detected_regions}/{NUM_LOBES} regions detected (PARTIAL - kept for ranking)"
+            )
 
         subject_row = {"subject_id": sub_id, "spatial_complete": is_complete}
 
@@ -239,7 +205,9 @@ def extract_spatial():
             # For globally missing lobes (e.g., class never detected), use an
             # explicit zero fallback and mark `<Lobe>_spatial_missing=1`.
             if len(lobe_data) == 0:
-                fb_x, fb_y, fb_z, fb_size = fallback_by_lobe.get(lobe_id, (0.0, 0.0, 0.0, 0.0))
+                fb_x, fb_y, fb_z, fb_size = fallback_by_lobe.get(
+                    lobe_id, (0.0, 0.0, 0.0, 0.0)
+                )
                 if is_global_spatial_missing:
                     logger.debug(
                         "Subject %s: Region %s globally missing; using zero fallback + spatial missing mask",
@@ -261,7 +229,9 @@ def extract_spatial():
                 subject_row[f"{lobe_name}_x"] = lobe_data["x"].mean()
                 subject_row[f"{lobe_name}_y"] = lobe_data["y"].mean()
                 subject_row[f"{lobe_name}_z_depth"] = lobe_data["z"].mean()
-                subject_row[f"{lobe_name}_size"] = lobe_data["w"].mean() * lobe_data["h"].mean()
+                subject_row[f"{lobe_name}_size"] = (
+                    lobe_data["w"].mean() * lobe_data["h"].mean()
+                )
                 subject_row[spatial_missing_key] = 0
 
         # Append if region aggregation succeeded (processing didn't encounter corruption)
@@ -269,12 +239,22 @@ def extract_spatial():
             processed_subjects.append(subject_row)
 
     logger.info(f"Subjects processed: {len(subject_ids)}")
-    logger.info(f"Subjects filtered (< {MIN_REQUIRED_REGIONS} regions): {filtered_count}")
+    logger.info(
+        f"Subjects filtered (< {MIN_REQUIRED_REGIONS} regions): {filtered_count}"
+    )
     logger.info(f"Subjects with partial detection (9-11 regions): {partial_count}")
-    logger.info(f"Subjects with complete detection (all {NUM_LOBES} regions): {len(processed_subjects) - partial_count}")
-    logger.info(f"Subjects kept (>= {MIN_REQUIRED_REGIONS} regions): {len(processed_subjects)}")
-    logger.info("Missing YOLO regions are imputed with scale-matched lobe priors (not zeros).")
-    logger.warning(f"RELAXED FILTER: Subjects with >= {MIN_REQUIRED_REGIONS} regions kept. Final filtering to complete {NUM_LOBES}-region subjects happens in variance ranking stage.")
+    logger.info(
+        f"Subjects with complete detection (all {NUM_LOBES} regions): {len(processed_subjects) - partial_count}"
+    )
+    logger.info(
+        f"Subjects kept (>= {MIN_REQUIRED_REGIONS} regions): {len(processed_subjects)}"
+    )
+    logger.info(
+        "Missing YOLO regions are imputed with scale-matched lobe priors (not zeros)."
+    )
+    logger.warning(
+        f"RELAXED FILTER: Subjects with >= {MIN_REQUIRED_REGIONS} regions kept. Final filtering to complete {NUM_LOBES}-region subjects happens in variance ranking stage."
+    )
 
     final_df = pd.DataFrame(processed_subjects)
 
@@ -285,32 +265,36 @@ def extract_spatial():
             f"Check YOLO model quality or detection confidence threshold."
         )
         # Create empty output with proper schema
-        manifest = pd.read_csv(MANIFEST_PATH)
+        manifest = pd.read_csv(MASTER_MANIFEST)
         manifest["subject_id"] = manifest["subject_id"].astype(str)
 
         # Create minimal schema for empty output (includes spatial_complete + spatial missing mask columns)
-        empty_cols = ["subject_id", "spatial_complete"] + [
-            f"{lobe}_{feat}"
-            for lobe in LOBE_NAMES.values()
-            for feat in ["x", "y", "z_depth", "size"]
-        ] + [
-            f"{lobe}_spatial_missing"
-            for lobe in LOBE_NAMES.values()
-        ]
+        empty_cols = (
+            ["subject_id", "spatial_complete"]
+            + [
+                f"{lobe}_{feat}"
+                for lobe in LOBE_NAMES.values()
+                for feat in ["x", "y", "z_depth", "size"]
+            ]
+            + [f"{lobe}_spatial_missing" for lobe in LOBE_NAMES.values()]
+        )
         final_df = pd.DataFrame(columns=empty_cols)
         output_df = pd.merge(final_df, manifest, on="subject_id", how="inner")
     else:
-        manifest = pd.read_csv(MANIFEST_PATH)
+        manifest = pd.read_csv(MASTER_MANIFEST)
         manifest["subject_id"] = manifest["subject_id"].astype(str)
         output_df = pd.merge(final_df, manifest, on="subject_id", how="inner")
 
     lobe_cols = [
-        col for col in output_df.columns if any(col.startswith(f"{lobe}_") for lobe in LOBE_NAMES.values())
+        col
+        for col in output_df.columns
+        if any(col.startswith(f"{lobe}_") for lobe in LOBE_NAMES.values())
     ]
 
     # Count only anatomical features (x, y, z_depth, size) - exclude spatial_missing
     anatomical_cols = [
-        col for col in lobe_cols
+        col
+        for col in lobe_cols
         if any(feat in col for feat in ["_x", "_y", "_z_depth", "_size"])
     ]
     expected_anatomical = NUM_LOBES * NUM_SPATIAL_FEATURES
@@ -328,13 +312,17 @@ def extract_spatial():
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     output_df.to_csv(OUTPUT_PATH, index=False)
 
-    logger.info(f"Success: {len(output_df)} subjects with {NUM_LOBES}-node architecture")
+    logger.info(
+        f"Success: {len(output_df)} subjects with {NUM_LOBES}-node architecture"
+    )
     logger.info(f"{NUM_SPATIAL_FEATURES} spatial features per lobe")
     logger.info(f"Saved to {OUTPUT_PATH}")
+
 
 import hashlib
 
 EXPECTED_YOLO_MD5 = "5d59f2e558381dc6736a60cf0cc620e4"
+
 
 def verify_yolo_weights():
     if not MODEL_PATH.exists():
@@ -343,11 +331,16 @@ def verify_yolo_weights():
     with open(MODEL_PATH, "rb") as f:
         file_hash = hashlib.md5(f.read()).hexdigest()
     if file_hash != EXPECTED_YOLO_MD5:
-        logger.warning(f"YOLO weights MD5 mismatch! Expected {EXPECTED_YOLO_MD5}, got {file_hash}")
-        logger.warning("This introduces upstream non-determinism. Use the official versioned weights.")
+        logger.warning(
+            f"YOLO weights MD5 mismatch! Expected {EXPECTED_YOLO_MD5}, got {file_hash}"
+        )
+        logger.warning(
+            "This introduces upstream non-determinism. Use the official versioned weights."
+        )
         return False
     logger.info("YOLO weights checksum verified.")
     return True
+
 
 if __name__ == "__main__":
     verify_yolo_weights()

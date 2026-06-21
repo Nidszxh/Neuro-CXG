@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import torch
 
@@ -26,9 +25,6 @@ from src.core.config import (
     get_active_checkpoint_dir,
 )
 from src.models.causal_gnn import CausalBrainGNN
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +113,9 @@ def load_model(
 
     saved_lin_in = state.get("lin_in.weight")
     if saved_lin_in is None:
-        raise KeyError(f"Checkpoint missing required key: lin_in.weight ({checkpoint_path})")
+        raise KeyError(
+            f"Checkpoint missing required key: lin_in.weight ({checkpoint_path})"
+        )
 
     saved_in_features = int(saved_lin_in.shape[1])
     node_emb_dim = max(saved_in_features - GNN_IN_CHANNELS - site_dim, 0)
@@ -139,6 +137,7 @@ def load_model(
 
     if attach_scaler:
         from src.models.training_utils import attach_feature_scaler_from_checkpoint
+
         attach_feature_scaler_from_checkpoint(model, ckpt, expected_dim=GNN_IN_CHANNELS)
 
     model.eval()

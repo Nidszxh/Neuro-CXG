@@ -12,6 +12,7 @@ from src.core.config import (
 
 logger = logging.getLogger(__name__)
 
+
 def main():
     # 1. Load YOLO26n
     model = YOLO(YOLO_MODEL_SIZE)
@@ -25,7 +26,7 @@ def main():
         project=str(RESULTS_DIR / "experiments" / "detection"),
         name=YOLO_PROJECT_NAME,
         exist_ok=True,
-        **YOLO_TRAIN_CONFIG  # All training hyperparameters from config
+        **YOLO_TRAIN_CONFIG,  # All training hyperparameters from config
     )
 
     # Optional: evaluate test split after training if defined in brain.yaml
@@ -35,6 +36,7 @@ def main():
         logger.warning("Post-training validation skipped: %s", e)
 
     logger.info("Training Complete. Model aligned for consistent lobe detection.")
+
 
 if __name__ == "__main__":
     main()

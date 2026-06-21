@@ -5,6 +5,7 @@ Implements fast DeLong's method for comparing correlated ROC AUCs.
 Reference: Sun & Xu (2014) "Fast Implementation of DeLong's Algorithm for Comparing
            the Areas Under Correlated ROC Curves", IEEE Signal Processing Letters
 """
+
 import logging
 
 import numpy as np
@@ -12,13 +13,6 @@ from scipy import stats
 from sklearn.metrics import roc_auc_score
 
 logger = logging.getLogger(__name__)
-
-
-def _compute_ground_truth_statistics(y_true: np.ndarray) -> tuple[np.ndarray, int]:
-    """Compute ground truth order statistics for DeLong test."""
-    n_pos = int(np.sum(y_true == 1))
-    order = np.argsort(y_true, kind="quicksort")
-    return order, n_pos
 
 
 def _bootstrap_auc_comparison(y_true, y_pred1, y_pred2, n_bootstrap=1000, seed=42):
@@ -66,31 +60,6 @@ def _bootstrap_auc_comparison(y_true, y_pred1, y_pred2, n_bootstrap=1000, seed=4
     return log_pval, z
 
 
-def _fast_delong(
-    predictions_sorted_transposed: np.ndarray, n_pos: int
-) -> tuple[np.ndarray, np.ndarray]:
-    """Fast DeLong covariance computation."""
-    n_models = predictions_sorted_transposed.shape[0]
-    n_neg = predictions_sorted_transposed.shape[1] - n_pos
-
-    pos_preds = predictions_sorted_transposed[:, :n_pos]
-    neg_preds = predictions_sorted_transposed[:, n_pos:]
-
-    # Compute AUCs
-    aucs = np.empty(n_models)
-    for i in range(n_models):
-        numerator = np.sum(pos_preds[i].reshape(-1, 1) > neg_preds[i].reshape(1, -1))
-        aucs[i] = numerator / (n_pos * n_neg)
-
-    # Simplified variance estimation
-    var_aucs = np.var(aucs) / n_models
-    se = np.sqrt(var_aucs)
-
-    # Create covariance matrix
-    cov = np.eye(n_models) * (se ** 2)
-    return aucs, cov
-
-
 def delong_roc_test(
     y_true: np.ndarray,
     y_pred1: np.ndarray,
@@ -107,50 +76,6 @@ def delong_roc_test(
         (log10(p_value), z_statistic)
     """
     return _bootstrap_auc_comparison(y_true, y_pred1, y_pred2)
-
-
-def compare_models_auc(
-    y_true: np.ndarray,
-    model_scores: dict,
-    reference_model: str = "GNN (Ours)",
-) -> dict:
-    """Compare multiple models' AUCs using DeLong test."""
-    results = {"models": {}, "comparisons": [], "aucs": {}}
-
-    for name, scores in model_scores.items():
-        try:
-            auc = roc_auc_score(y_true, scores)
-            results["aucs"][name] = auc
-        except Exception as e:
-            logger.warning(f"Cannot compute AUC for {name}: {e}")
-            continue
-
-    model_names = list(model_scores.keys())
-    for name in model_names:
-        if name == reference_model:
-            continue
-        try:
-            log_pval, z = delong_roc_test(
-                y_true,
-                np.array(model_scores[reference_model]),
-                np.array(model_scores[name]),
-            )
-            pval = 10**log_pval if log_pval < 0 else 1.0
-            results["comparisons"].append({
-                "model1": reference_model,
-                "model2": name,
-                "auc1": results["aucs"][reference_model],
-                "auc2": results["aucs"][name],
-                "diff": results["aucs"][reference_model] - results["aucs"][name],
-                "z": z,
-                "p_value": pval,
-                "log10_p": log_pval,
-                "significant": pval < 0.05,
-            })
-        except Exception as e:
-            logger.warning(f"DeLong test failed for {name} vs {reference_model}: {e}")
-
-    return results
 
 
 def compute_auc_confidence_interval(
@@ -173,7 +98,6 @@ def compute_auc_confidence_interval(
         (auc, lower_bound, upper_bound)
     """
     rng = np.random.default_rng(seed)
-    len(y_true)
     auc = roc_auc_score(y_true, y_pred)
 
     # Stratified bootstrap
@@ -203,34 +127,3 @@ def compute_auc_confidence_interval(
     ub = np.percentile(aucs, 100 * (1 - alpha / 2))
 
     return auc, lb, ub
-
-
-def wilson_score_interval(n_success: int, n_total: int, confidence: float = 0.95) -> tuple[float, float, float]:
-    """
-    Wilson score confidence interval for a proportion (accuracy).
-
-    Better than Wald interval for small samples and near-boundary probabilities.
-    Formula: p ± z * sqrt(p*(1-p)/n + z²/(4n²)) / (1 + z²/n)
-
-    Args:
-        n_success: Number of correct predictions
-        n_total: Total sample size
-        confidence: Confidence level (default 0.95 for 95% CI)
-
-    Returns:
-        Tuple of (proportion, lower_bound, upper_bound)
-    """
-    if n_total == 0:
-        return 0.0, 0.0, 1.0
-
-    p = n_success / n_total
-    z = stats.norm.ppf((1 + confidence) / 2)
-
-    denominator = 1 + z**2 / n_total
-    center = p + z**2 / (2 * n_total)
-    spread = z * np.sqrt(p * (1 - p) / n_total + z**2 / (4 * n_total**2))
-
-    lb = (center - spread) / denominator
-    ub = (center + spread) / denominator
-
-    return p, max(0.0, lb), min(1.0, ub)

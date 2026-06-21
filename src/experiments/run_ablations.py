@@ -81,9 +81,13 @@ def _build_criterion(labels) -> nn.Module:
         pos_weight = None
         if USE_CLASS_WEIGHTS:
             pos_weight = float(n_control / n_asd)
-        return FocalLoss(alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA, pos_weight=pos_weight)
+        return FocalLoss(
+            alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA, pos_weight=pos_weight
+        )
     else:
         return nn.CrossEntropyLoss(weight=class_weight_tensor)
+
+
 from src.models.factory import build_model
 from src.models.gnn_model import _set_global_seed
 from src.models.training_utils import make_loader, train_fold_with_onecycle
@@ -100,14 +104,10 @@ for _grp, _feats in FEATURE_GROUPS.items():
     _GROUP_SLICES[_grp] = slice(_offset, _offset + len(_feats))
     _offset += len(_feats)
 
-TEMPORAL_SLICE   = _GROUP_SLICES["temporal"]    # indices 0:8 (8 features)
-FREQUENCY_SLICE  = _GROUP_SLICES["frequency"]   # indices 8:18 (10 features)
-INTERNAL_SLICE   = _GROUP_SLICES["internal"]    # indices 18:20 (2 features)
-SPATIAL_SLICE    = _GROUP_SLICES["spatial"]     # indices 20:24 (4 features)
-
 # ─────────────────────────────────────────────────────────────────────────────
 # DATASET WRAPPER FOR FEATURE MASKING
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class MaskedDataset:
     """
@@ -141,9 +141,11 @@ class MaskedDataset:
     def get(self, idx):
         return self[idx]
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # FLAT MLP MODEL (ABLATION A)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class FlatMLP(nn.Module):
     """
@@ -195,9 +197,11 @@ class FlatMLP(nn.Module):
         x_flat = x.view(batch_size, self.num_nodes * x.shape[-1])
         return self.net(x_flat)
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # GRAPH REBUILD FOR ABLATION D
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def build_pearson_graphs(output_dir: Path) -> bool:
     """
@@ -225,8 +229,15 @@ def build_pearson_graphs(output_dir: Path) -> bool:
 
     manifest = pd.read_csv(MASTER_MANIFEST)
     success, failed = 0, 0
-    for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Building Pearson graphs"):
-        result = cc_mod.construct_graph(row["subject_id"], row["split"], method="lagged_pearson", output_dir=output_dir)
+    for _, row in tqdm(
+        manifest.iterrows(), total=len(manifest), desc="Building Pearson graphs"
+    ):
+        result = cc_mod.construct_graph(
+            row["subject_id"],
+            row["split"],
+            method="lagged_pearson",
+            output_dir=output_dir,
+        )
         if result:
             success += 1
         else:
@@ -235,9 +246,11 @@ def build_pearson_graphs(output_dir: Path) -> bool:
     logger.info(f"  Built {success}/{success+failed} graphs in {output_dir}")
     return success > 0
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # GRAPH REBUILD FOR ABLATION D2 (Ridge Granger)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def build_ridge_granger_graphs(output_dir: Path) -> bool:
     """
@@ -264,8 +277,15 @@ def build_ridge_granger_graphs(output_dir: Path) -> bool:
 
     manifest = pd.read_csv(MASTER_MANIFEST)
     success, failed = 0, 0
-    for _, row in tqdm(manifest.iterrows(), total=len(manifest), desc="Building Ridge Granger graphs"):
-        result = cc_mod.construct_graph(row["subject_id"], row["split"], method="ridge_granger", output_dir=output_dir)
+    for _, row in tqdm(
+        manifest.iterrows(), total=len(manifest), desc="Building Ridge Granger graphs"
+    ):
+        result = cc_mod.construct_graph(
+            row["subject_id"],
+            row["split"],
+            method="ridge_granger",
+            output_dir=output_dir,
+        )
         if result:
             success += 1
         else:
@@ -274,9 +294,11 @@ def build_ridge_granger_graphs(output_dir: Path) -> bool:
     logger.info(f"  Built {success}/{success+failed} graphs in {output_dir}")
     return success > 0
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CORE TRAINING RUNNER
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def run_kfold(
     dataset,
@@ -348,11 +370,13 @@ def run_kfold(
     criterion = _build_criterion(labels)
 
     for fold, (train_idx, val_idx) in enumerate(cv_splits):
-        _set_global_seed(42)  # deterministic initialization per fold (like main pipeline)
+        _set_global_seed(
+            42
+        )  # deterministic initialization per fold (like main pipeline)
         t0 = time.time()
 
         train_data = [dataset[i] for i in train_idx if dataset[i] is not None]
-        val_data   = [dataset[i] for i in val_idx   if dataset[i] is not None]
+        val_data = [dataset[i] for i in val_idx if dataset[i] is not None]
 
         if not train_data or not val_data:
             logger.warning(f"  Fold {fold}: insufficient data, skipping")
@@ -361,17 +385,24 @@ def run_kfold(
         # Use fold-specific harmonized features if requested (like main pipeline)
         if use_fold_specific_harmonization:
             from src.features.graph_factory import ABIDECausalDataset
+
             fold_temporal_path = HARMONIZED_FOLDS_DIR / f"harmonized_fold_{fold}.csv"
-            logger.info(f"  Fold {fold}: Using fold-specific harmonized features: {fold_temporal_path.name}")
-            fold_ds = ABIDECausalDataset(split='train', temporal_features_path=fold_temporal_path)
+            logger.info(
+                f"  Fold {fold}: Using fold-specific harmonized features: {fold_temporal_path.name}"
+            )
+            fold_ds = ABIDECausalDataset(
+                split="train", temporal_features_path=fold_temporal_path
+            )
             train_data = [fold_ds[i] for i in train_idx if fold_ds[i] is not None]
             val_data = [fold_ds[i] for i in val_idx if fold_ds[i] is not None]
             if not train_data or not val_data:
-                logger.warning(f"  Fold {fold}: insufficient data after harmonization reload, skipping")
+                logger.warning(
+                    f"  Fold {fold}: insufficient data after harmonization reload, skipping"
+                )
                 continue
 
         train_loader = make_loader(train_data, batch_size=GNN_BATCH_SIZE, shuffle=True)
-        val_loader   = make_loader(val_data,   batch_size=GNN_BATCH_SIZE)
+        val_loader = make_loader(val_data, batch_size=GNN_BATCH_SIZE)
 
         model = model_factory().to(DEVICE)
 
@@ -393,7 +424,7 @@ def run_kfold(
         )
 
         auc = best_metrics["auc"]
-        f1  = best_metrics["f1"]
+        f1 = best_metrics["f1"]
         fold_aucs.append(auc)
         fold_f1s.append(f1)
 
@@ -407,10 +438,12 @@ def run_kfold(
         return {}
 
     mean_auc = float(np.mean(fold_aucs))
-    std_auc  = float(np.std(fold_aucs))
-    mean_f1  = float(np.mean(fold_f1s))
+    std_auc = float(np.std(fold_aucs))
+    mean_f1 = float(np.mean(fold_f1s))
 
-    logger.info(f"\n  ╔══ RESULT: AUC = {mean_auc:.4f} ± {std_auc:.4f}  |  F1 = {mean_f1:.4f} ══╗")
+    logger.info(
+        f"\n  ╔══ RESULT: AUC = {mean_auc:.4f} ± {std_auc:.4f}  |  F1 = {mean_f1:.4f} ══╗"
+    )
     logger.info(f"  Per-fold AUCs: {[round(a, 4) for a in fold_aucs]}")
 
     return {
@@ -422,16 +455,20 @@ def run_kfold(
         "n_subjects": len(labels),
     }
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # INDIVIDUAL ABLATION RUNNERS
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _gnn_factory_default(**override_kwargs):
     """Return a factory function that creates CausalBrainGNN with optional overrides."""
+
     def factory():
         return build_model(device=DEVICE, **override_kwargs)
 
     return factory
+
 
 def run_ablation_a(base_ds) -> dict:
     """A — FlatMLP: no graph structure, flattened node features only."""
@@ -446,6 +483,7 @@ def run_ablation_a(base_ds) -> dict:
 
     return run_kfold(base_ds, mlp_factory, ablation_name="A (FlatMLP, no graph)")
 
+
 def run_ablation_b(base_ds) -> dict:
     """B — Spatial only: zero temporal + frequency + internal features (4 spatial features)."""
     masked_ds = MaskedDataset(base_ds, keep_groups=["spatial"])
@@ -457,6 +495,7 @@ def run_ablation_b(base_ds) -> dict:
     )
     return run_kfold(masked_ds, factory, ablation_name="B (Spatial only, 4 features)")
 
+
 def run_ablation_c(base_ds) -> dict:
     """C — Temporal+Spatial (12 features, no frequency): zero frequency+internal, keep temporal+spatial."""
     masked_ds = MaskedDataset(base_ds, keep_groups=["temporal", "spatial"])
@@ -466,7 +505,10 @@ def run_ablation_c(base_ds) -> dict:
         use_grl=False,
         edge_gate=True,
     )
-    return run_kfold(masked_ds, factory, ablation_name="C (Temporal+Spatial, no frequency)")
+    return run_kfold(
+        masked_ds, factory, ablation_name="C (Temporal+Spatial, no frequency)"
+    )
+
 
 def run_ablation_d() -> dict:
     """D — Lagged Pearson edges: rebuild graphs with 'lagged_pearson' method."""
@@ -474,16 +516,24 @@ def run_ablation_d() -> dict:
 
     # Check if already built
     n_existing = sum(1 for _ in pearson_dir.glob("*.pt")) if pearson_dir.exists() else 0
-    n_granger  = sum(1 for _ in CAUSAL_GRAPHS_DIR.glob("*.pt")) if CAUSAL_GRAPHS_DIR.exists() else 0
+    n_granger = (
+        sum(1 for _ in CAUSAL_GRAPHS_DIR.glob("*.pt"))
+        if CAUSAL_GRAPHS_DIR.exists()
+        else 0
+    )
 
     if n_existing < max(1, n_granger // 2):
-        logger.info(f"  Pearson graphs: {n_existing} found, Granger graphs: {n_granger}")
+        logger.info(
+            f"  Pearson graphs: {n_existing} found, Granger graphs: {n_granger}"
+        )
         ok = build_pearson_graphs(pearson_dir)
         if not ok:
             logger.error("  Graph rebuild failed — skipping ablation D")
             return {}
     else:
-        logger.info(f"  Reusing {n_existing} existing lagged-Pearson graphs in {pearson_dir}")
+        logger.info(
+            f"  Reusing {n_existing} existing lagged-Pearson graphs in {pearson_dir}"
+        )
 
     # Create dataset pointing to Pearson graph directory
     from src.features.graph_factory import ABIDECausalDataset
@@ -507,11 +557,13 @@ def run_ablation_d() -> dict:
         edge_gate=True,
     )
     return run_kfold(
-        pearl_ds, factory,
+        pearl_ds,
+        factory,
         ablation_name="D (Lagged Pearson edges)",
         use_grl=True,
         grl_alpha_max=GNN_GRL_ALPHA_MAX,
     )
+
 
 def run_ablation_e(base_ds) -> dict:
     """E — No site embeddings, no demographics conditioning."""
@@ -523,113 +575,17 @@ def run_ablation_e(base_ds) -> dict:
     )
     return run_kfold(base_ds, factory, ablation_name="E (No site/demographics)")
 
-def run_ablation_f() -> dict:
-    """F — Random topology: Same node features, random edge connections (same edge count).
-
-    Tests whether graph topology matters or just having any graph structure.
-    If AUC ~ FlatMLP (0.7245) → topology doesn't matter, just node features.
-    If AUC > FlatMLP but < Main (0.8651) → topology helps but specific edges matter.
-    """
-
-    from src.features.graph_factory import ABIDECausalDataset
-
-    class RandomTopologyDataset(ABIDECausalDataset):
-        def __init__(self, split: str = "train", seed: int = 42):
-            self._rng = np.random.RandomState(seed)
-            super().__init__(split=split)
-
-        def get(self, idx: int):
-            data = super().get(idx)
-            if data is None:
-                return None
-            edge_index = data.edge_index
-            num_edges = edge_index.shape[1]
-            if num_edges < 2:
-                return data
-            src, dst = edge_index[0].numpy(), edge_index[1].numpy()
-            perm = self._rng.permutation(num_edges)
-            new_src = src[perm]
-            new_dst = dst[perm]
-            new_edge_index = torch.stack([torch.from_numpy(new_src), torch.from_numpy(new_dst)])
-            new_edge_attr = data.edge_attr[perm]
-            data.edge_index = new_edge_index
-            data.edge_attr = new_edge_attr
-            return data
-
-    try:
-        random_ds = RandomTopologyDataset(split="train")
-    except Exception as e:
-        logger.error(f"  Failed to create random topology dataset: {e}")
-        return {}
-
-    factory = _gnn_factory_default(
-        use_site_embedding=True,
-        use_demographics=True,
-        use_grl=True,
-        grl_alpha=GNN_GRL_ALPHA,
-        edge_gate=True,
-    )
-    return run_kfold(
-        random_ds, factory, ablation_name="F (Random topology)",
-        use_grl=True, grl_alpha_max=GNN_GRL_ALPHA_MAX,
-        use_fold_specific_harmonization=True,
-    )
-
-def run_ablation_g() -> dict:
-    """G — Identity edges: fully connected graph with uniform weights.
-
-    Tests whether message-passing benefit comes from specific causal edges
-    or just from having a connected graph structure.
-    If AUC ~ FlatMLP (0.7245) → specific edges matter.
-    If AUC >> FlatMLP but < Main → topology helps, specific causal weights matter.
-    """
-    from src.features.graph_factory import ABIDECausalDataset
-
-    class IdentityEdgesDataset(ABIDECausalDataset):
-        def get(self, idx: int):
-            data = super().get(idx)
-            if data is None:
-                return None
-            num_nodes = NUM_LOBES
-            src_nodes = []
-            dst_nodes = []
-            for s in range(num_nodes):
-                for d in range(num_nodes):
-                    if s != d:
-                        src_nodes.append(s)
-                        dst_nodes.append(d)
-            new_edge_index = torch.tensor([src_nodes, dst_nodes], dtype=torch.long)
-            num_edges = new_edge_index.shape[1]
-            new_edge_attr = torch.ones(num_edges, 1, dtype=torch.float32)
-            data.edge_index = new_edge_index
-            data.edge_attr = new_edge_attr
-            return data
-
-    try:
-        identity_ds = IdentityEdgesDataset(split="train")
-    except Exception as e:
-        logger.error(f"  Failed to create identity edges dataset: {e}")
-        return {}
-
-    factory = _gnn_factory_default(
-        use_site_embedding=True,
-        use_demographics=True,
-        use_grl=True,
-        grl_alpha=GNN_GRL_ALPHA,
-        edge_gate=True,
-    )
-    return run_kfold(
-        identity_ds, factory, ablation_name="G (Identity edges)",
-        use_grl=True, grl_alpha_max=GNN_GRL_ALPHA_MAX,
-        use_fold_specific_harmonization=True,
-    )
 
 def run_ablation_d2() -> dict:
     """D2 — Ridge Granger edges: rebuild graphs with 'ridge_granger' method and stronger GRL."""
     ridge_granger_dir = DATA_PROCESSED / "causal_graphs_ridge_granger"
 
     # Check if already built
-    n_existing = sum(1 for _ in ridge_granger_dir.glob("*.pt")) if ridge_granger_dir.exists() else 0
+    n_existing = (
+        sum(1 for _ in ridge_granger_dir.glob("*.pt"))
+        if ridge_granger_dir.exists()
+        else 0
+    )
 
     if n_existing < 100:
         logger.info(f"  Ridge Granger graphs: {n_existing} found, building...")
@@ -638,7 +594,9 @@ def run_ablation_d2() -> dict:
             logger.error("  Graph rebuild failed — skipping ablation D2")
             return {}
     else:
-        logger.info(f"  Reusing {n_existing} existing ridge-granger graphs in {ridge_granger_dir}")
+        logger.info(
+            f"  Reusing {n_existing} existing ridge-granger graphs in {ridge_granger_dir}"
+        )
 
     # Create dataset pointing to Ridge Granger graph directory
     from src.features.graph_factory import ABIDECausalDataset
@@ -663,15 +621,18 @@ def run_ablation_d2() -> dict:
         edge_gate=True,
     )
     return run_kfold(
-        ridge_ds, factory,
+        ridge_ds,
+        factory,
         ablation_name="D2 (Ridge Granger edges)",
         use_grl=True,
         grl_alpha_max=GNN_GRL_ALPHA_MAX,
     )
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # RESULTS SUMMARY
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def print_summary(results: dict[str, dict], baseline_auc: float = 0.63) -> None:
     logger.info("\n" + "=" * 70)
@@ -688,9 +649,7 @@ def print_summary(results: dict[str, dict], baseline_auc: float = 0.63) -> None:
         std = res["std_auc"]
         delta = auc - baseline_auc
         sign = "+" if delta >= 0 else ""
-        logger.info(
-            f"  {res['ablation']:<43} {auc:.4f}±{std:.4f} {sign}{delta:+.4f}"
-        )
+        logger.info(f"  {res['ablation']:<43} {auc:.4f}±{std:.4f} {sign}{delta:+.4f}")
 
     logger.info("-" * 72)
     logger.info(f"  {'Baseline GNN (full)':<43} {baseline_auc:.4f}  (reference)")
@@ -698,6 +657,7 @@ def print_summary(results: dict[str, dict], baseline_auc: float = 0.63) -> None:
 
     # Save to CSV
     import pandas as pd
+
     rows = [
         {
             "ablation": r.get("ablation", k),
@@ -714,24 +674,39 @@ def print_summary(results: dict[str, dict], baseline_auc: float = 0.63) -> None:
         pd.DataFrame(rows).to_csv(out_csv, index=False)
         logger.info(f"\n  Results saved → {out_csv}")
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 
-ABLATION_MAP = {"A": "FlatMLP (no graph)", "B": "Spatial only", "C": "Temporal (no freq)",
-                 "D": "Lagged Pearson", "D2": "Ridge Granger", "E": "No site/demographics"}
+ABLATION_MAP = {
+    "A": "FlatMLP (no graph)",
+    "B": "Spatial only",
+    "C": "Temporal (no freq)",
+    "D": "Lagged Pearson",
+    "D2": "Ridge Granger",
+    "E": "No site/demographics",
+}
+
 
 def main():
     parser = argparse.ArgumentParser(description="Ablation study runner")
     parser.add_argument(
-        "--ablations", nargs="+", default=list(ABLATION_MAP.keys()),
+        "--ablations",
+        nargs="+",
+        default=list(ABLATION_MAP.keys()),
         choices=list(ABLATION_MAP.keys()),
-        help="Which ablations to run (default: all A-E)"
+        help="Which ablations to run (default: all A-E)",
     )
-    parser.add_argument("--baseline-auc", type=float, default=0.63,
-                        help="Baseline AUC for comparison (default: 0.63)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Print plan without training")
+    parser.add_argument(
+        "--baseline-auc",
+        type=float,
+        default=0.63,
+        help="Baseline AUC for comparison (default: 0.63)",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print plan without training"
+    )
     args = parser.parse_args()
 
     logger.info("\n" + "=" * 70)
@@ -747,6 +722,7 @@ def main():
 
     # Load base training dataset once (shared by A/B/C/E)
     from src.features.graph_factory import ABIDECausalDataset
+
     logger.info("\nLoading base training dataset...")
     base_ds = ABIDECausalDataset(split="train")
     logger.info(f"  Loaded {len(base_ds)} training subjects")
@@ -771,13 +747,8 @@ def main():
     if "E" in args.ablations:
         results["E"] = run_ablation_e(base_ds)
 
-    # if "F" in args.ablations:
-    #     results["F"] = run_ablation_f()
-
-    # if "G" in args.ablations:
-    #     results["G"] = run_ablation_g()
-
     print_summary(results, baseline_auc=args.baseline_auc)
+
 
 if __name__ == "__main__":
     main()

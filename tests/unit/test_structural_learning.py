@@ -15,8 +15,8 @@ import torch.nn as nn
 from torch_geometric.data import Batch, Data
 
 from src.analysis.edge_importance import GradientEdgeAttributor
-from src.models.losses import EdgeStructureContrastiveLoss
 from src.models.training_utils import (
+    EdgeStructureContrastiveLoss,
     _apply_structural_dropout,
     make_loader,
     train_one_epoch_with_accumulation,

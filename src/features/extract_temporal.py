@@ -12,6 +12,14 @@ from tqdm import tqdm
 
 torch.set_num_threads(min(4, torch.get_num_threads()))
 
+
+# np.trapezoid is numpy>=2.0 (np.trapz removed); np.trapz covers numpy 1.26.4.
+def _trapezoid(*args, **kwargs):
+    if hasattr(np, "trapezoid"):
+        return np.trapezoid(*args, **kwargs)
+    return np.trapz(*args, **kwargs)
+
+
 # Setup paths and config
 from src.core.config import (
     ACTIVE_FREQ_BANDS,
@@ -37,6 +45,7 @@ _NYQUIST_NOTE_EMITTED = False
 # FREQUENCY-DOMAIN FEATURE EXTRACTION
 # ============================================================================
 
+
 def _get_zero_features(bands: dict[str, tuple[float, float]]) -> dict[str, float]:
     """Return zeroed feature dict for edge cases."""
     features = {}
@@ -47,6 +56,7 @@ def _get_zero_features(bands: dict[str, tuple[float, float]]) -> dict[str, float
     features["phase_std"] = 0.0
     return features
 
+
 def _get_unreliable_bands(fs: float) -> set[str]:
     """Return bands that should be zeroed for the given sampling rate."""
     nyquist = fs / 2.0
@@ -55,6 +65,7 @@ def _get_unreliable_bands(fs: float) -> set[str]:
         if high >= nyquist:
             unreliable.add(band_name)
     return unreliable
+
 
 def extract_band_power(
     ts: np.ndarray, fs: float = 0.5, bands: dict[str, tuple[float, float]] = None
@@ -123,9 +134,15 @@ def extract_band_power(
     try:
         nperseg = min(256, len(ts_centered))
         freqs, psd = welch(
-            ts_centered, fs=fs, nperseg=nperseg, noverlap=nperseg // 2, window="hann", scaling="density"
+            ts_centered,
+            fs=fs,
+            nperseg=nperseg,
+            noverlap=nperseg // 2,
+            window="hann",
+            scaling="density",
         )
-    except Exception:
+    except (ValueError, np.linalg.LinAlgError) as e:
+        logger.warning(f"Welch PSD computation failed: {e}")
         return _get_zero_features(bands)
 
     # Initialize feature dictionary
@@ -141,7 +158,7 @@ def extract_band_power(
             continue
 
         # Total power in band
-        band_power = np.trapezoid(psd[band_mask], freqs[band_mask])
+        band_power = _trapezoid(psd[band_mask], freqs[band_mask])
         features[f"{band_name}_power"] = float(band_power)
 
         # Peak frequency
@@ -160,47 +177,17 @@ def extract_band_power(
         instantaneous_phase = np.angle(analytic_signal)
         phase_std = np.std(np.diff(instantaneous_phase))
         features["phase_std"] = float(phase_std)
-    except Exception:
+    except (ValueError, np.linalg.LinAlgError) as e:
+        logger.warning(f"Hilbert transform failed: {e}")
         features["phase_std"] = 0.0
 
     return features
 
-def extract_frequency_features_batch(ts_matrix: np.ndarray, fs: float = 0.5) -> np.ndarray:
-    """
-    Extract frequency features for multiple ROIs in parallel.
-
-    Args:
-        ts_matrix: Time series matrix (shape: [timepoints, n_rois])
-        fs: Sampling frequency in Hz
-
-    Returns:
-        Feature matrix (shape: [n_rois, 12])
-        Columns: [delta_power, delta_peak, theta_power, theta_peak, ..., spectral_entropy, phase_std]
-    """
-    n_rois = ts_matrix.shape[1]
-    feature_names = []
-    for band in ACTIVE_FREQ_BANDS:
-        feature_names.extend([f"{band}_power", f"{band}_peak_freq"])
-    feature_names.extend(["spectral_entropy", "phase_std"])
-    n_features = len(feature_names)
-
-    # Initialize output matrix
-    feature_matrix = np.zeros((n_rois, n_features))
-
-    # Extract features for each ROI
-    for roi_idx in range(n_rois):
-        ts = ts_matrix[:, roi_idx]
-        features_dict = extract_band_power(ts, fs=fs)
-
-        # Convert dictionary to array (preserve order)
-        for feat_idx, feat_name in enumerate(feature_names):
-            feature_matrix[roi_idx, feat_idx] = features_dict[feat_name]
-
-    return feature_matrix
 
 # ============================================================================
 # TIME-DOMAIN FEATURE EXTRACTION
 # ============================================================================
+
 
 def calculate_psd(ts: np.ndarray, tr: float) -> float:
     """
@@ -227,6 +214,7 @@ def calculate_psd(ts: np.ndarray, tr: float) -> float:
     # Soft-compress heavy-tailed PSD values while preserving rank information.
     return float(np.log1p(psd_mean))
 
+
 def calculate_autocorr(ts: np.ndarray, lag: int = 1) -> float:
     """Autocorrelation at specified lag (default lag=1 for temporal persistence)."""
     if len(ts) < lag + 1:
@@ -236,32 +224,10 @@ def calculate_autocorr(ts: np.ndarray, lag: int = 1) -> float:
     c_lag = np.dot(ts[:-lag], ts[lag:]) / len(ts)
     return float(c_lag / c0) if c0 > 0 else 0.0
 
-def calculate_band_power(ts: np.ndarray, tr: float, freq_band: tuple) -> float:
-    """
-    Compute relative power in specific frequency band using Welch's method.
 
-    Frequency bands for brain analysis:
-    - Delta (0.5-4 Hz): Deep sleep, unconscious processes
-    - Theta (4-8 Hz): Drowsiness, creativity, meditation
-    - Alpha (8-13 Hz): Relaxation, attention
-    - Beta (13-30 Hz): Active thinking, problem solving
-    """
-    if len(ts) < 10 or np.std(ts) < 1e-6:
-        return 0.0
-
-    fs = 1.0 / tr
-    freqs, psd = welch(ts, fs=fs, nperseg=min(len(ts), 64))
-
-    band_mask = (freqs >= freq_band[0]) & (freqs <= freq_band[1])
-    if not np.any(band_mask):
-        return 0.0
-
-    band_power = np.trapezoid(psd[band_mask], freqs[band_mask])
-    total_power = np.trapezoid(psd, freqs)
-
-    return float(band_power / total_power) if total_power > 0 else 0.0
-
-def extract_single_roi_features(ts: np.ndarray, tr: float, include_frequency: bool = True):
+def extract_single_roi_features(
+    ts: np.ndarray, tr: float, include_frequency: bool = True
+):
     """
     Computes temporal metrics for one ROI.
 
@@ -311,13 +277,16 @@ def extract_single_roi_features(ts: np.ndarray, tr: float, include_frequency: bo
         for feat_name in FEATURE_GROUPS["frequency"]:
             if feat_name.endswith("_peak"):
                 band = feat_name[:-5]
-                frequency_values.append(float(freq_features.get(f"{band}_peak_freq", 0.0)))
+                frequency_values.append(
+                    float(freq_features.get(f"{band}_peak_freq", 0.0))
+                )
             else:
                 frequency_values.append(float(freq_features.get(feat_name, 0.0)))
 
         return base_features + frequency_values
 
     return base_features
+
 
 def _extract_temporal_vectorized(
     ts_data: np.ndarray,
@@ -354,7 +323,9 @@ def _extract_temporal_vectorized(
     mean_vals = np.mean(ts_clean, axis=0)
     std_vals = np.std(ts_clean, axis=0)
     skew_vals = np.clip(skew(ts_clean, bias=False, axis=0), -clip_bounds, clip_bounds)
-    kurt_vals = np.clip(kurtosis(ts_clean, bias=False, axis=0), -clip_bounds, clip_bounds)
+    kurt_vals = np.clip(
+        kurtosis(ts_clean, bias=False, axis=0), -clip_bounds, clip_bounds
+    )
 
     ts_centered = ts_clean - mean_vals
     psd_vals = _compute_psd_vectorized(ts_centered, tr)
@@ -364,16 +335,19 @@ def _extract_temporal_vectorized(
     range_vals = np.ptp(ts_clean, axis=0)
     autocorr_vals = _compute_autocorr_vectorized(ts_clean)
 
-    base_features = np.stack([
-        mean_vals,
-        std_vals,
-        skew_vals,
-        kurt_vals,
-        psd_vals,
-        mssd_vals,
-        range_vals,
-        autocorr_vals,
-    ], axis=1)
+    base_features = np.stack(
+        [
+            mean_vals,
+            std_vals,
+            skew_vals,
+            kurt_vals,
+            psd_vals,
+            mssd_vals,
+            range_vals,
+            autocorr_vals,
+        ],
+        axis=1,
+    )
 
     output_features = base_features.copy()
 
@@ -400,13 +374,19 @@ def _extract_temporal_vectorized(
         try:
             nperseg = min(256, n_timepoints)
             freqs_full, psd_full = welch(
-                ts_clean, fs=fs, nperseg=nperseg, noverlap=nperseg // 2,
-                window="hann", scaling="density", axis=0
+                ts_clean,
+                fs=fs,
+                nperseg=nperseg,
+                noverlap=nperseg // 2,
+                window="hann",
+                scaling="density",
+                axis=0,
             )
-        except Exception:
+        except (ValueError, np.linalg.LinAlgError) as e:
+            logger.warning(f"Vectorized Welch PSD failed: {e}")
             return np.zeros((n_rois, features_per_roi))
 
-        total_power = np.trapezoid(psd_full, freqs_full, axis=0)
+        total_power = _trapezoid(psd_full, freqs_full, axis=0)
         total_power = np.where(total_power > 0, total_power, 1.0)
 
         ordered_bands = ["delta", "theta", "alpha", "beta", "gamma"]
@@ -417,19 +397,28 @@ def _extract_temporal_vectorized(
             if low >= high:
                 continue
             band_mask = (freqs_full >= low) & (freqs_full < high)
-            band_power = np.trapezoid(psd_full[band_mask, :], freqs_full[band_mask], axis=0)
+            band_power = _trapezoid(
+                psd_full[band_mask, :], freqs_full[band_mask], axis=0
+            )
             freq_feature_arr[:, idx] = band_power / total_power
 
-            freq_feature_arr[:, idx + n_bands] = _compute_peak_freqs_vectorized(psd_full, freqs_full, band_mask)
+            freq_feature_arr[:, idx + n_bands] = _compute_peak_freqs_vectorized(
+                psd_full, freqs_full, band_mask
+            )
 
-        freq_feature_arr[:, 2 * n_bands] = _compute_spectral_entropy_vectorized(psd_full, total_power)
-        freq_feature_arr[:, 2 * n_bands + 1] = _compute_phase_std_vectorized(ts_clean, bad_rois)
+        freq_feature_arr[:, 2 * n_bands] = _compute_spectral_entropy_vectorized(
+            psd_full, total_power
+        )
+        freq_feature_arr[:, 2 * n_bands + 1] = _compute_phase_std_vectorized(
+            ts_clean, bad_rois
+        )
 
         output_features = np.concatenate([base_features, freq_feature_arr], axis=1)
 
     output_features[:, bad_rois] = 0.0
 
     return output_features
+
 
 def _compute_psd_vectorized(ts_centered: np.ndarray, tr: float) -> np.ndarray:
     """Vectorized PSD: mean power in 0.01-0.1 Hz band via FFT."""
@@ -445,6 +434,7 @@ def _compute_psd_vectorized(ts_centered: np.ndarray, tr: float) -> np.ndarray:
     psd_mean = np.where(np.isfinite(psd_mean) & (psd_mean > 0), psd_mean, 0.0)
     return psd_mean
 
+
 def _compute_autocorr_vectorized(ts: np.ndarray, lag: int = 1) -> np.ndarray:
     """Vectorized autocorrelation at lag-1 across all ROIs."""
     n_timepoints, n_rois = ts.shape
@@ -452,11 +442,12 @@ def _compute_autocorr_vectorized(ts: np.ndarray, lag: int = 1) -> np.ndarray:
         return np.zeros(n_rois)
 
     ts_centered = ts - np.mean(ts, axis=0, keepdims=True)
-    c0 = np.sum(ts_centered ** 2, axis=0) / n_timepoints
+    c0 = np.sum(ts_centered**2, axis=0) / n_timepoints
     c_lag = np.sum(ts_centered[:-lag, :] * ts_centered[lag:, :], axis=0) / n_timepoints
 
     c0 = np.where(c0 > 0, c0, 1.0)
     return c_lag / c0
+
 
 def _compute_peak_freqs_vectorized(
     psd_full: np.ndarray,
@@ -474,6 +465,7 @@ def _compute_peak_freqs_vectorized(
     peak_freqs = np.where(np.isfinite(peak_freqs), peak_freqs, 0.0)
     return peak_freqs
 
+
 def _compute_spectral_entropy_vectorized(
     psd_full: np.ndarray,
     total_power: np.ndarray,
@@ -484,6 +476,7 @@ def _compute_spectral_entropy_vectorized(
     spectral_entropy = -np.nansum(psd_norm * np.log(psd_norm + 1e-10), axis=0)
     spectral_entropy = np.where(np.isfinite(spectral_entropy), spectral_entropy, 0.0)
     return spectral_entropy
+
 
 def _compute_phase_std_vectorized(ts: np.ndarray, bad_rois: np.ndarray) -> np.ndarray:
     """Vectorized instantaneous phase std via Hilbert transform.
@@ -499,8 +492,11 @@ def _compute_phase_std_vectorized(ts: np.ndarray, bad_rois: np.ndarray) -> np.nd
         analytic = hilbert(ts[:, valid], axis=0)
         instantaneous_phase = np.angle(analytic)
         phase_std[valid] = np.std(instantaneous_phase, axis=0)
-        phase_std[valid] = np.where(np.isfinite(phase_std[valid]), phase_std[valid], 0.0)
+        phase_std[valid] = np.where(
+            np.isfinite(phase_std[valid]), phase_std[valid], 0.0
+        )
     return phase_std
+
 
 def _process_single_subject(
     sub_id: str,
@@ -539,17 +535,26 @@ def _process_single_subject(
             return None
 
         try:
-            roi_features = _extract_temporal_vectorized(ts_data, tr, add_frequency=add_frequency)
-            if roi_features.shape[0] != max_rois or roi_features.shape[1] != features_per_roi:
+            roi_features = _extract_temporal_vectorized(
+                ts_data, tr, add_frequency=add_frequency
+            )
+            if (
+                roi_features.shape[0] != max_rois
+                or roi_features.shape[1] != features_per_roi
+            ):
                 raise ValueError(f"Shape mismatch: {roi_features.shape}")
-        except Exception:
+        except (ValueError, np.linalg.LinAlgError) as e:
+            logger.warning(f"Vectorized extraction failed for subject {sub_id}: {e}")
             roi_features = np.zeros((max_rois, features_per_roi))
             for i in range(max_rois):
                 roi_signal = ts_data[:, i]
                 try:
-                    roi_feats = extract_single_roi_features(roi_signal, tr, include_frequency=add_frequency)
+                    roi_feats = extract_single_roi_features(
+                        roi_signal, tr, include_frequency=add_frequency
+                    )
                     roi_features[i] = roi_feats
-                except Exception:
+                except (ValueError, np.linalg.LinAlgError) as e2:
+                    logger.warning(f"ROI {i} extraction failed: {e2}")
                     roi_features[i] = [0.0] * features_per_roi
 
         subject_features = [sub_id]
@@ -558,8 +563,10 @@ def _process_single_subject(
 
         return subject_features
 
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to process subject {sub_id}: {e}")
         return None
+
 
 def main(add_frequency: bool = True, n_jobs: int = -1, use_gpu: bool = False) -> None:
     """Extract temporal features for all subjects.
@@ -588,7 +595,9 @@ def main(add_frequency: bool = True, n_jobs: int = -1, use_gpu: bool = False) ->
         len(FEATURE_GROUPS["frequency"]) if add_frequency else 0
     )
     gpu_info = "GPU" if use_gpu else "CPU"
-    logger.info(f"Extracting temporal features for {len(manifest)} subjects (n_jobs={n_jobs}, device={gpu_info})...")
+    logger.info(
+        f"Extracting temporal features for {len(manifest)} subjects (n_jobs={n_jobs}, device={gpu_info})..."
+    )
     logger.info(
         f"Features per ROI: {features_per_roi} ({'with' if add_frequency else 'without'} frequency features)"
     )
@@ -611,7 +620,9 @@ def main(add_frequency: bool = True, n_jobs: int = -1, use_gpu: bool = False) ->
         delayed(_process_single_subject)(
             sub_id, split, tr, ts_path, features_per_roi, add_frequency, use_gpu
         )
-        for sub_id, split, tr, ts_path in tqdm(subject_tasks, desc="Processing", mininterval=10.0)
+        for sub_id, split, tr, ts_path in tqdm(
+            subject_tasks, desc="Processing", mininterval=10.0
+        )
     )
 
     all_subject_data = [r for r in results if r is not None]
@@ -641,6 +652,7 @@ def main(add_frequency: bool = True, n_jobs: int = -1, use_gpu: bool = False) ->
     except Exception as e:
         logger.error(f"Failed to save temporal features: {e}")
 
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Temporal feature extraction")
     parser.add_argument(
@@ -655,9 +667,20 @@ def _parse_args() -> argparse.Namespace:
         default=False,
         help="Disable frequency features (default keeps frequency features enabled)",
     )
-    parser.add_argument("--n-jobs", type=int, default=-1, help="Number of parallel workers (-1=all cores)")
-    parser.add_argument("--use-gpu", action="store_true", default=False, help="Use GPU acceleration if available")
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=-1,
+        help="Number of parallel workers (-1=all cores)",
+    )
+    parser.add_argument(
+        "--use-gpu",
+        action="store_true",
+        default=False,
+        help="Use GPU acceleration if available",
+    )
     return parser.parse_args()
+
 
 if __name__ == "__main__":
     args = _parse_args()

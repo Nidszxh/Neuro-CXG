@@ -86,6 +86,7 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 # EXPERIMENT 1: CROSS-SITE GENERALISATION
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @torch.no_grad()
 def _collect_predictions(model, loader, device=DEVICE):
     """Collect (probs, labels, site_ids) from a DataLoader."""
@@ -95,15 +96,19 @@ def _collect_predictions(model, loader, device=DEVICE):
         if data is None:
             continue
         data = data.to(device)
-        out = model.forward_batch(data) if hasattr(model, "forward_batch") else model(
-            data.x,
-            data.edge_index,
-            data.edge_attr,
-            data.batch,
-            getattr(data, "site_id", None),
-            getattr(data, "age", None),
-            getattr(data, "sex", None),
-            getattr(data, "fiq", None),
+        out = (
+            model.forward_batch(data)
+            if hasattr(model, "forward_batch")
+            else model(
+                data.x,
+                data.edge_index,
+                data.edge_attr,
+                data.batch,
+                getattr(data, "site_id", None),
+                getattr(data, "age", None),
+                getattr(data, "sex", None),
+                getattr(data, "fiq", None),
+            )
         )
         probs = torch.softmax(out, dim=1)[:, 1].cpu().numpy()
         labels = data.y.cpu().numpy()
@@ -114,9 +119,12 @@ def _collect_predictions(model, loader, device=DEVICE):
         all_sites.append(sites)
     if not all_probs:
         return np.array([]), np.array([]), np.array([])
-    return (np.concatenate(all_probs),
-            np.concatenate(all_labels),
-            np.concatenate(all_sites))
+    return (
+        np.concatenate(all_probs),
+        np.concatenate(all_labels),
+        np.concatenate(all_sites),
+    )
+
 
 def experiment_cross_site_auc() -> pd.DataFrame:
     """
@@ -151,7 +159,11 @@ def experiment_cross_site_auc() -> pd.DataFrame:
         return pd.DataFrame()
 
     checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=True)
-    state_dict = checkpoint.get("model_state", checkpoint) if isinstance(checkpoint, dict) else checkpoint
+    state_dict = (
+        checkpoint.get("model_state", checkpoint)
+        if isinstance(checkpoint, dict)
+        else checkpoint
+    )
     site_dim = GNN_SITE_EMBEDDING_DIM if GNN_USE_SITE_EMBEDDING else 0
     saved_in_features = state_dict["lin_in.weight"].shape[1]
     node_emb_dim = saved_in_features - GNN_IN_CHANNELS - site_dim
@@ -171,8 +183,12 @@ def experiment_cross_site_auc() -> pd.DataFrame:
     if unexpected:
         logger.warning("Checkpoint unexpected keys: %s", unexpected)
 
-    attach_feature_scaler_from_checkpoint(model, checkpoint, expected_dim=GNN_IN_CHANNELS)
-    decision_threshold = float(checkpoint.get("threshold", 0.5)) if isinstance(checkpoint, dict) else 0.5
+    attach_feature_scaler_from_checkpoint(
+        model, checkpoint, expected_dim=GNN_IN_CHANNELS
+    )
+    decision_threshold = (
+        float(checkpoint.get("threshold", 0.5)) if isinstance(checkpoint, dict) else 0.5
+    )
     if not np.isfinite(decision_threshold):
         decision_threshold = 0.5
 
@@ -203,19 +219,27 @@ def experiment_cross_site_auc() -> pd.DataFrame:
     logger.info("  " + "-" * 62)
 
     for site_idx in sorted(np.unique(site_ids).astype(int)):
-        mask = (site_ids == site_idx)
+        mask = site_ids == site_idx
         site_labels = labels[mask]
-        site_probs  = probs[mask]
-        site_name   = idx_to_site.get(site_idx, f"site_{site_idx}")
+        site_probs = probs[mask]
+        site_name = idx_to_site.get(site_idx, f"site_{site_idx}")
         n = mask.sum()
         n_ctrl = (site_labels == 0).sum()
-        n_asd  = (site_labels == 1).sum()
+        n_asd = (site_labels == 1).sum()
 
         if n < 5 or len(np.unique(site_labels)) < 2:
             note = "📌 too few / single class"
             auc_str = "—"
-            rows.append({"site": site_name, "n": n, "n_control": n_ctrl,
-                         "n_asd": n_asd, "auc": float("nan"), "note": "skip"})
+            rows.append(
+                {
+                    "site": site_name,
+                    "n": n,
+                    "n_control": n_ctrl,
+                    "n_asd": n_asd,
+                    "auc": float("nan"),
+                    "note": "skip",
+                }
+            )
         else:
             site_auc = roc_auc_score(site_labels, site_probs)
             auc_str = f"{site_auc:.4f}"
@@ -225,10 +249,20 @@ def experiment_cross_site_auc() -> pd.DataFrame:
                 note = "⚠  site-driven failure"
             else:
                 note = ""
-            rows.append({"site": site_name, "n": n, "n_control": n_ctrl,
-                         "n_asd": n_asd, "auc": site_auc, "note": note})
+            rows.append(
+                {
+                    "site": site_name,
+                    "n": n,
+                    "n_control": n_ctrl,
+                    "n_asd": n_asd,
+                    "auc": site_auc,
+                    "note": note,
+                }
+            )
 
-        logger.info(f"  {site_name:<25} {n:>5} {n_ctrl:>5} {n_asd:>5} {auc_str:>7}  {note}")
+        logger.info(
+            f"  {site_name:<25} {n:>5} {n_ctrl:>5} {n_asd:>5} {auc_str:>7}  {note}"
+        )
 
     df = pd.DataFrame(rows)
     out_csv = RESULTS_DIR / "cross_site_auc.csv"
@@ -245,6 +279,7 @@ def experiment_cross_site_auc() -> pd.DataFrame:
         )
 
     return df
+
 
 def _apply_site_robustness_gate(site_auc_df: pd.DataFrame) -> dict[str, object]:
     """Apply configurable site-robustness gate to cross-site AUC output."""
@@ -272,9 +307,13 @@ def _apply_site_robustness_gate(site_auc_df: pd.DataFrame) -> dict[str, object]:
         policy = "warn"
         result["policy"] = policy
 
-    evaluable = site_auc_df.dropna(subset=["auc"]) if not site_auc_df.empty else pd.DataFrame()
+    evaluable = (
+        site_auc_df.dropna(subset=["auc"]) if not site_auc_df.empty else pd.DataFrame()
+    )
     n_eval = int(len(evaluable))
-    n_weak = int((evaluable["auc"] < SITE_ROBUSTNESS_MIN_SITE_AUC).sum()) if n_eval else 0
+    n_weak = (
+        int((evaluable["auc"] < SITE_ROBUSTNESS_MIN_SITE_AUC).sum()) if n_eval else 0
+    )
     weak_frac = float(n_weak / max(n_eval, 1))
 
     result.update(
@@ -320,9 +359,11 @@ def _apply_site_robustness_gate(site_auc_df: pd.DataFrame) -> dict[str, object]:
     logger.info("Site robustness gate passed")
     return result
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # EXPERIMENT 2: SUBJECT COUNT AUDIT
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def experiment_subject_count_audit() -> pd.DataFrame:
     """
@@ -373,7 +414,11 @@ def experiment_subject_count_audit() -> pd.DataFrame:
     # Stage 2: All 12 regions detected
     if NODE_FEATURES_3D.exists():
         nf3d = pd.read_csv(NODE_FEATURES_3D)
-        counts["2_all12_detected"] = len(nf3d["subject_id"].unique()) if "subject_id" in nf3d.columns else len(nf3d)
+        counts["2_all12_detected"] = (
+            len(nf3d["subject_id"].unique())
+            if "subject_id" in nf3d.columns
+            else len(nf3d)
+        )
     else:
         counts["2_all12_detected"] = 0
         logger.warning(f"  node_features_3d.csv not found: {NODE_FEATURES_3D}")
@@ -393,14 +438,22 @@ def experiment_subject_count_audit() -> pd.DataFrame:
     # Stage 4: Temporal features CSV
     if NODE_ATTRIBUTES_TEMPORAL.exists():
         temp = pd.read_csv(NODE_ATTRIBUTES_TEMPORAL)
-        counts["4_temporal_features"] = len(temp["subject_id"].unique()) if "subject_id" in temp.columns else len(temp)
+        counts["4_temporal_features"] = (
+            len(temp["subject_id"].unique())
+            if "subject_id" in temp.columns
+            else len(temp)
+        )
     else:
         counts["4_temporal_features"] = 0
 
     # Stage 5: Harmonized features CSV
     if NODE_ATTRIBUTES_HARMONIZED.exists():
         harm = pd.read_csv(NODE_ATTRIBUTES_HARMONIZED)
-        counts["5_harmonized"] = len(harm["subject_id"].unique()) if "subject_id" in harm.columns else len(harm)
+        counts["5_harmonized"] = (
+            len(harm["subject_id"].unique())
+            if "subject_id" in harm.columns
+            else len(harm)
+        )
     else:
         counts["5_harmonized"] = 0
 
@@ -413,6 +466,7 @@ def experiment_subject_count_audit() -> pd.DataFrame:
     # Stage 7: Train dataset loadable
     try:
         from src.features.graph_factory import ABIDECausalDataset
+
         train_ds = ABIDECausalDataset(split="train")
         counts["7_train_dataset"] = len(train_ds)
     except Exception as e:
@@ -427,10 +481,12 @@ def experiment_subject_count_audit() -> pd.DataFrame:
     rows = []
     for stage, count in counts.items():
         drop = (prev - count) if (prev is not None and prev > 0) else 0
-        pct  = (drop / max(prev, 1) * 100) if prev else 0
+        pct = (drop / max(prev, 1) * 100) if prev else 0
         flag = "  ←  ⚠ BOTTLENECK" if drop > 50 and pct > 20 else ""
         logger.info(f"  {stage:<35} {count:>7}  {drop:>7}  {pct:>6.1f}%{flag}")
-        rows.append({"stage": stage, "count": count, "drop": drop, "loss_pct": round(pct, 1)})
+        rows.append(
+            {"stage": stage, "count": count, "drop": drop, "loss_pct": round(pct, 1)}
+        )
         prev = count
 
     df = pd.DataFrame(rows)
@@ -448,9 +504,11 @@ def experiment_subject_count_audit() -> pd.DataFrame:
 
     return df
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # EXPERIMENT 3: ATLAS-CENTROID SPATIAL BASELINE
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _compute_atlas_centroids() -> np.ndarray | None:
     """
@@ -460,6 +518,7 @@ def _compute_atlas_centroids() -> np.ndarray | None:
     Returns None if neither source is available.
     """
     import json
+
     centroid_path = DATA_METADATA / "roi_centroids.json"
 
     def _normalize_roi_centroids(payload) -> dict[int, list[float]]:
@@ -475,7 +534,11 @@ def _compute_atlas_centroids() -> np.ndarray | None:
                     continue
                 coords = [entry.get("x"), entry.get("y"), entry.get("z")]
                 if all(value is not None for value in coords):
-                    normalized[int(roi_id)] = [float(coords[0]), float(coords[1]), float(coords[2])]
+                    normalized[int(roi_id)] = [
+                        float(coords[0]),
+                        float(coords[1]),
+                        float(coords[2]),
+                    ]
             return normalized
 
         if isinstance(payload, dict):
@@ -486,10 +549,24 @@ def _compute_atlas_centroids() -> np.ndarray | None:
                     coords = [entry.get("x"), entry.get("y"), entry.get("z")]
                     if roi_id is None and str(key).isdigit():
                         roi_id = int(key)
-                    if roi_id is not None and all(value is not None for value in coords):
-                        normalized[int(roi_id)] = [float(coords[0]), float(coords[1]), float(coords[2])]
-                elif isinstance(entry, (list, tuple)) and len(entry) >= 3 and str(key).isdigit():
-                    normalized[int(key)] = [float(entry[0]), float(entry[1]), float(entry[2])]
+                    if roi_id is not None and all(
+                        value is not None for value in coords
+                    ):
+                        normalized[int(roi_id)] = [
+                            float(coords[0]),
+                            float(coords[1]),
+                            float(coords[2]),
+                        ]
+                elif (
+                    isinstance(entry, (list, tuple))
+                    and len(entry) >= 3
+                    and str(key).isdigit()
+                ):
+                    normalized[int(key)] = [
+                        float(entry[0]),
+                        float(entry[1]),
+                        float(entry[2]),
+                    ]
             return normalized
 
         return normalized
@@ -504,7 +581,9 @@ def _compute_atlas_centroids() -> np.ndarray | None:
             # roi_indices are 0-based; ROI centroids may be 1-based or 0-based.
             coords = []
             for roi_idx in roi_indices:
-                entry = roi_cents.get(int(roi_idx + 1), roi_cents.get(int(roi_idx), None))
+                entry = roi_cents.get(
+                    int(roi_idx + 1), roi_cents.get(int(roi_idx), None)
+                )
                 if entry is not None:
                     coords.append(entry[:3])
             if coords:
@@ -516,9 +595,9 @@ def _compute_atlas_centroids() -> np.ndarray | None:
                 if NUM_SPATIAL_FEATURES > 3:
                     lobe_centroids[lobe_id, 3] = float(len(coords))  # size proxy
                 if NUM_SPATIAL_FEATURES > 4:
-                    lobe_centroids[lobe_id, 4] = 0.0                 # conf_std = 0
+                    lobe_centroids[lobe_id, 4] = 0.0  # conf_std = 0
                 if NUM_SPATIAL_FEATURES > 5:
-                    lobe_centroids[lobe_id, 5] = 1.0                 # detection_count = 1
+                    lobe_centroids[lobe_id, 5] = 1.0  # detection_count = 1
         return lobe_centroids
 
     # Attempt to compute from atlas NIfTI if nibabel is available
@@ -526,6 +605,7 @@ def _compute_atlas_centroids() -> np.ndarray | None:
         import nibabel as nib
 
         from src.core.config import ATLAS_PATH
+
         if ATLAS_PATH.exists():
             logger.info(f"  Computing centroids from AAL3 atlas: {ATLAS_PATH}")
             img = nib.load(str(ATLAS_PATH))
@@ -535,7 +615,7 @@ def _compute_atlas_centroids() -> np.ndarray | None:
             # Compute voxel centroid for each ROI, then map to world space
             roi_mni: dict[int, list[float]] = {}
             for roi_id_1based in range(1, 171):
-                mask = (data_arr == roi_id_1based)
+                mask = data_arr == roi_id_1based
                 if not mask.any():
                     continue
                 voxels = np.argwhere(mask)
@@ -543,7 +623,9 @@ def _compute_atlas_centroids() -> np.ndarray | None:
                 world_xyz = nib.affines.apply_affine(affine, vox_centroid)
                 roi_mni[roi_id_1based - 1] = list(world_xyz)  # 0-based key
 
-            lobe_centroids = np.zeros((NUM_LOBES, NUM_SPATIAL_FEATURES), dtype=np.float32)
+            lobe_centroids = np.zeros(
+                (NUM_LOBES, NUM_SPATIAL_FEATURES), dtype=np.float32
+            )
             for lobe_id, roi_indices in LOBE_MAPPING.items():
                 coords = [roi_mni[r] for r in roi_indices if r in roi_mni]
                 if coords:
@@ -564,21 +646,27 @@ def _compute_atlas_centroids() -> np.ndarray | None:
 
     return None
 
+
 class AtlasCentroidDataset:
     """
     Wraps ABIDECausalDataset and replaces per-subject YOLO spatial features with
     fixed atlas-derived centroids (same for every subject in the same lobe).
     """
+
     _SPATIAL_START: int = GNN_IN_CHANNELS - NUM_SPATIAL_FEATURES  # e.g. 22
 
     def __init__(self, base_dataset, atlas_centroids: np.ndarray):
         self.ds = base_dataset
         # atlas_centroids: (NUM_LOBES, NUM_SPATIAL_FEATURES), normalised
         self._centroids = torch.tensor(atlas_centroids, dtype=torch.float32)
-        logger.info("  AtlasCentroidDataset: spatial features replaced with atlas centroids")
-        logger.info(f"  Centroid range: x=[{atlas_centroids[:,0].min():.1f}, {atlas_centroids[:,0].max():.1f}]  "
-                    f"y=[{atlas_centroids[:,1].min():.1f}, {atlas_centroids[:,1].max():.1f}]  "
-                    f"z=[{atlas_centroids[:,2].min():.1f}, {atlas_centroids[:,2].max():.1f}]")
+        logger.info(
+            "  AtlasCentroidDataset: spatial features replaced with atlas centroids"
+        )
+        logger.info(
+            f"  Centroid range: x=[{atlas_centroids[:,0].min():.1f}, {atlas_centroids[:,0].max():.1f}]  "
+            f"y=[{atlas_centroids[:,1].min():.1f}, {atlas_centroids[:,1].max():.1f}]  "
+            f"z=[{atlas_centroids[:,2].min():.1f}, {atlas_centroids[:,2].max():.1f}]"
+        )
 
     def __len__(self):
         return len(self.ds)
@@ -594,6 +682,7 @@ class AtlasCentroidDataset:
 
     def get(self, idx):
         return self[idx]
+
 
 def experiment_atlas_centroid_baseline() -> dict:
     """
@@ -616,7 +705,9 @@ def experiment_atlas_centroid_baseline() -> dict:
     for col in range(3):  # x, y, z
         rng = atlas_centroids[:, col].max() - atlas_centroids[:, col].min()
         if rng > 0:
-            atlas_centroids[:, col] = (atlas_centroids[:, col] - atlas_centroids[:, col].mean()) / (rng / 2)
+            atlas_centroids[:, col] = (
+                atlas_centroids[:, col] - atlas_centroids[:, col].mean()
+            ) / (rng / 2)
 
     from src.features.graph_factory import ABIDECausalDataset
 
@@ -663,7 +754,9 @@ def experiment_atlas_centroid_baseline() -> dict:
             n_control = max(int((labels_arr == 0).sum()), 1)
             n_asd = max(int((labels_arr == 1).sum()), 1)
             pos_weight = float(n_control / n_asd)
-        criterion = FocalLoss(alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA, pos_weight=pos_weight)
+        criterion = FocalLoss(
+            alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA, pos_weight=pos_weight
+        )
     else:
         criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
     skf = StratifiedKFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
@@ -680,11 +773,19 @@ def experiment_atlas_centroid_baseline() -> dict:
         vl = make_loader(vd, batch_size=GNN_BATCH_SIZE)
         model = gnn_factory().to(DEVICE)
         _, best_metrics, _ = train_fold_with_onecycle(
-            model=model, train_loader=tl, val_loader=vl,
-            criterion=criterion, device=DEVICE, epochs=GNN_EPOCHS,
-            max_lr=GNN_ONECYCLE_MAX_LR, patience=GNN_EARLY_STOPPING_PATIENCE,
+            model=model,
+            train_loader=tl,
+            val_loader=vl,
+            criterion=criterion,
+            device=DEVICE,
+            epochs=GNN_EPOCHS,
+            max_lr=GNN_ONECYCLE_MAX_LR,
+            patience=GNN_EARLY_STOPPING_PATIENCE,
             min_epochs_before_stopping=GNN_MIN_EPOCHS_BEFORE_STOPPING,
-            use_grl=True, grl_weight=0.2, fold=fold, weight_decay=GNN_WEIGHT_DECAY,
+            use_grl=True,
+            grl_weight=0.2,
+            fold=fold,
+            weight_decay=GNN_WEIGHT_DECAY,
         )
         auc = best_metrics["auc"]
         fold_aucs.append(auc)
@@ -695,7 +796,7 @@ def experiment_atlas_centroid_baseline() -> dict:
         return {}
 
     mean_auc = float(np.mean(fold_aucs))
-    std_auc  = float(np.std(fold_aucs))
+    std_auc = float(np.std(fold_aucs))
     logger.info(f"\n  Atlas-centroid AUC: {mean_auc:.4f} ± {std_auc:.4f}")
     logger.info("  Baseline (YOLO)   : 0.6300  (reference)")
     delta = mean_auc - 0.63
@@ -715,6 +816,7 @@ def experiment_atlas_centroid_baseline() -> dict:
         "fold_aucs": fold_aucs,
     }
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
@@ -725,12 +827,15 @@ EXP_MAP = {
     "3": "Atlas-centroid spatial baseline",
 }
 
+
 def main():
     parser = argparse.ArgumentParser(description="Data quality experiments")
     parser.add_argument(
-        "--experiments", nargs="+", default=list(EXP_MAP.keys()),
+        "--experiments",
+        nargs="+",
+        default=list(EXP_MAP.keys()),
         choices=list(EXP_MAP.keys()),
-        help="Which experiments to run (default: all)"
+        help="Which experiments to run (default: all)",
     )
     args = parser.parse_args()
 
@@ -742,7 +847,9 @@ def main():
 
     if "1" in args.experiments:
         all_results["cross_site"] = experiment_cross_site_auc()
-        all_results["site_robustness_gate"] = _apply_site_robustness_gate(all_results["cross_site"])
+        all_results["site_robustness_gate"] = _apply_site_robustness_gate(
+            all_results["cross_site"]
+        )
 
     if "2" in args.experiments:
         all_results["subject_audit"] = experiment_subject_count_audit()
@@ -754,6 +861,7 @@ def main():
     logger.info("DATA QUALITY EXPERIMENTS COMPLETE")
     logger.info(f"Results saved to: {RESULTS_DIR}")
     logger.info("=" * 70)
+
 
 if __name__ == "__main__":
     main()

@@ -21,12 +21,14 @@ palette = ColorPalette()
 # Captum for interpretability
 try:
     from captum.attr import IntegratedGradients
+
     CAPTUM_AVAILABLE = True
 except ImportError:
     CAPTUM_AVAILABLE = False
     logging.warning("Captum not installed. Install with: pip install captum")
 
 logger = logging.getLogger(__name__)
+
 
 class FeatureAttributionAnalyzer:
     """
@@ -41,7 +43,7 @@ class FeatureAttributionAnalyzer:
         model: torch.nn.Module,
         test_loader: torch.utils.data.DataLoader,
         feature_names: list[str],
-        device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        device: str | torch.device = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         """
         Initialize analyzer.
@@ -70,7 +72,9 @@ class FeatureAttributionAnalyzer:
         logger.info(f"  Device: {device}")
         logger.info(f"  Features: {len(feature_names)}")
 
-    def _get_wrapper_for_batch(self, edge_index, edge_attr, batch, age=None, sex=None, fiq=None):
+    def _get_wrapper_for_batch(
+        self, edge_index, edge_attr, batch, age=None, sex=None, fiq=None
+    ):
         """
         Create a forward function for a specific batch.
 
@@ -115,7 +119,9 @@ class FeatureAttributionAnalyzer:
         all_predictions = []
         failed_count = 0
 
-        for batch_idx, data in enumerate(tqdm(self.test_loader, desc="Computing attributions")):
+        for batch_idx, data in enumerate(
+            tqdm(self.test_loader, desc="Computing attributions")
+        ):
             if data is None:
                 continue
 
@@ -152,9 +158,16 @@ class FeatureAttributionAnalyzer:
                     age = data.age if hasattr(data, "age") else None
                     sex = data.sex if hasattr(data, "sex") else None
                     fiq = data.fiq if hasattr(data, "fiq") else None
-                    batch_wrapper = self._get_wrapper_for_batch(edge_index, edge_attr, batch_tensor, age, sex, fiq)
+                    batch_wrapper = self._get_wrapper_for_batch(
+                        edge_index, edge_attr, batch_tensor, age, sex, fiq
+                    )
                     ig = IntegratedGradients(batch_wrapper)
-                    attr = ig.attribute(input_features, baselines=baseline, target=target, n_steps=n_steps)
+                    attr = ig.attribute(
+                        input_features,
+                        baselines=baseline,
+                        target=target,
+                        n_steps=n_steps,
+                    )
                 else:
                     input_features = data.x.clone().detach().requires_grad_(True)
                     out = self.model(
@@ -176,7 +189,9 @@ class FeatureAttributionAnalyzer:
                     loss.backward()
                     attr = input_features.grad.abs()
 
-                num_graphs = batch_tensor.max().item() + 1 if batch_tensor.max() >= 0 else 1
+                num_graphs = (
+                    batch_tensor.max().item() + 1 if batch_tensor.max() >= 0 else 1
+                )
                 attr_reshaped = attr.reshape(num_graphs, NUM_LOBES, self.feature_dim)
 
                 all_attributions.append(attr_reshaped.cpu().detach().numpy())
@@ -195,10 +210,14 @@ class FeatureAttributionAnalyzer:
                     traceback.print_exc()
                 continue
 
-        logger.info(f"Successfully computed {len(all_attributions)} batch attributions, {failed_count} failed")
+        logger.info(
+            f"Successfully computed {len(all_attributions)} batch attributions, {failed_count} failed"
+        )
 
         if len(all_attributions) == 0:
-            logger.error("No attributions computed. Check model forward pass and data format.")
+            logger.error(
+                "No attributions computed. Check model forward pass and data format."
+            )
             raise ValueError(
                 "No attributions could be computed for any batch in the test set. "
                 "This may indicate that the model forward pass is failing."
@@ -250,7 +269,12 @@ class FeatureAttributionAnalyzer:
             ax=ax,
         )
 
-        ax.set_title("Feature Importance by Brain Lobe (Integrated Gradients)", fontsize=14, pad=20, fontweight="bold")
+        ax.set_title(
+            "Feature Importance by Brain Lobe (Integrated Gradients)",
+            fontsize=14,
+            pad=20,
+            fontweight="bold",
+        )
         ax.set_xlabel("Brain Lobe", fontsize=14, fontweight="bold")
         ax.set_ylabel("Node Feature", fontsize=14, fontweight="bold")
 
@@ -282,7 +306,11 @@ class FeatureAttributionAnalyzer:
         if temporal_indices is None:
             temporal_indices = list(range(NUM_TEMPORAL_FEATURES))
         if spatial_indices is None:
-            spatial_indices = list(range(NUM_TEMPORAL_FEATURES, NUM_TEMPORAL_FEATURES + NUM_SPATIAL_FEATURES))
+            spatial_indices = list(
+                range(
+                    NUM_TEMPORAL_FEATURES, NUM_TEMPORAL_FEATURES + NUM_SPATIAL_FEATURES
+                )
+            )
 
         temporal_contrib = mean_attr[:, temporal_indices].mean()
         spatial_contrib = mean_attr[:, spatial_indices].mean()
@@ -293,8 +321,11 @@ class FeatureAttributionAnalyzer:
 
         if output_path is not None:
             fig, ax = plt.subplots(figsize=(8, 6))
-            ax.bar(["Temporal", "Spatial"], [temporal_pct, spatial_pct],
-                        color=[palette.TEMPORAL, palette.SPATIAL])
+            ax.bar(
+                ["Temporal", "Spatial"],
+                [temporal_pct, spatial_pct],
+                color=[palette.TEMPORAL, palette.SPATIAL],
+            )
             ax.set_ylabel("Contribution (%)")
             ax.set_title("Temporal vs Spatial Feature Contribution")
             for i, v in enumerate([temporal_pct, spatial_pct]):
@@ -368,6 +399,7 @@ class FeatureAttributionAnalyzer:
         plt.close()
 
         logger.info(f"Per-class heatmaps saved to {output_path}")
+
 
 if __name__ == "__main__":
     logger.info("Feature attribution module is intended to be imported.")

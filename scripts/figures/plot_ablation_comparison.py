@@ -3,10 +3,12 @@ Ablation Study Comparison Figure
 ================================
 
 Generates publication-quality bar chart comparing all ablation experiments.
+Reads data from results/experiments/ablations/ablation_summary.json when available.
 
 Output: results/paper_figures/ablations/ablation_comparison.png
 """
 
+import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -27,6 +29,46 @@ ABLATION_DATA = {
     "Baseline LR": {"auc": 0.6171, "std": 0.0425, "f1": 0.5725},
 }
 
+ABLATION_SUMMARY_PATH = (
+    Path(__file__).parent.parent.parent
+    / "results" / "experiments" / "ablations" / "ablation_summary.json"
+)
+
+
+def _load_ablation_data() -> dict:
+    """Load ablation data from JSON, falling back to hardcoded defaults."""
+    if not ABLATION_SUMMARY_PATH.exists():
+        return ABLATION_DATA
+
+    try:
+        with open(ABLATION_SUMMARY_PATH) as f:
+            raw = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return ABLATION_DATA
+
+    # Map JSON keys to display labels
+    key_map = {
+        "Baseline GNN (full)": "Full Model",
+        "A (FlatMLP, no graph)": "A: FlatMLP",
+        "B (Spatial only, 4 features)": "B: Spatial Only",
+        "C (Temporal+Spatial, no frequency)": "C: No Freq",
+        "D (Lagged Pearson edges)": "D: Pearson Edges",
+        "D2 (Ridge Granger edges)": "D2: Ridge Granger",
+        "E (No site/demographics)": "E: No Conditioning",
+    }
+
+    merged = {}
+    for json_key, display_label in key_map.items():
+        if json_key in raw:
+            merged[display_label] = {
+                "auc": raw[json_key]["test_auc"],
+                "std": raw[json_key]["std"],
+                "f1": 0.0,
+            }
+
+    return merged if merged else ABLATION_DATA
+
+
 BASELINE_AUC = 0.8587
 
 
@@ -38,11 +80,13 @@ def generate_ablation_figure(output_dir: Path | None = None, dpi: int = 300) -> 
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    data = _load_ablation_data()
+
     fig, ax = plt.subplots(figsize=(12, 7))
 
-    experiments = list(ABLATION_DATA.keys())
-    aucs = [ABLATION_DATA[e]["auc"] for e in experiments]
-    stds = [ABLATION_DATA[e]["std"] for e in experiments]
+    experiments = list(data.keys())
+    aucs = [data[e]["auc"] for e in experiments]
+    stds = [data[e]["std"] for e in experiments]
 
     colors = []
     for e in experiments:

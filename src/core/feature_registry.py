@@ -64,17 +64,32 @@ ALFF_SLICE_PERCENTILES = [0.13, 0.20, 0.26, 0.33, 0.40, 0.46, 0.53]
 
 # --- FEATURE REGISTRY (The Golden Standard) ---
 # Explicit feature definitions. GNN_IN_CHANNELS is calculated dynamically from this.
-_BASE_TEMPORAL_FEATURES = ["mean", "std", "skew", "kurt", "psd", "mssd", "range", "autocorr"]
+_BASE_TEMPORAL_FEATURES = [
+    "mean",
+    "std",
+    "skew",
+    "kurt",
+    "psd",
+    "mssd",
+    "range",
+    "autocorr",
+]
 _RUNTIME_FREQ_FEATURES = [
-    f"{band}_{suffix}"
-    for band in ACTIVE_FREQ_BANDS
-    for suffix in ("power", "peak")
+    f"{band}_{suffix}" for band in ACTIVE_FREQ_BANDS for suffix in ("power", "peak")
 ]
 FEATURE_GROUPS = {
     "temporal": _BASE_TEMPORAL_FEATURES,
     "frequency": _RUNTIME_FREQ_FEATURES + ["spectral_entropy", "phase_std"],
-    "internal": ["coherence", "spatial_variance"],  # NEW: PCA/ReHo features from Phase 2
-    "spatial": ["x", "y", "z_depth", "size"],  # conf_std/detection_count excluded (site leakage)
+    "internal": [
+        "coherence",
+        "spatial_variance",
+    ],  # NEW: PCA/ReHo features from Phase 2
+    "spatial": [
+        "x",
+        "y",
+        "z_depth",
+        "size",
+    ],  # conf_std/detection_count excluded (site leakage)
 }
 
 NUM_FREQUENCY_FEATURES = len(FEATURE_GROUPS["frequency"])

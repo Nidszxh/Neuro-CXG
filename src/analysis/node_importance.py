@@ -34,15 +34,15 @@ import torch
 import torch.nn.functional as F
 
 from src.core.atlas_config import NETWORK_NAMES, NETWORK_TO_LOBES, NUM_NETWORKS
-from src.core.config import LOBE_NAMES, NUM_LOBES
+from src.core.config import NUM_LOBES, REGION_LABELS
 from src.core.plotting import ColorPalette, apply_professional_style
 
 palette = ColorPalette()
 
 logger = logging.getLogger(__name__)
 
-REGION_LABELS: list[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
 NETWORK_LABELS: list[str] = [NETWORK_NAMES[i] for i in range(NUM_NETWORKS)]
+
 
 def _aggregate_to_networks(lobe_scores: np.ndarray) -> np.ndarray:
     """
@@ -64,7 +64,9 @@ def _aggregate_to_networks(lobe_scores: np.ndarray) -> np.ndarray:
             network_scores[net_idx] = np.mean(lobe_scores[valid_lobes])
     return network_scores
 
+
 # ── AttentionWeightExtractor ───────────────────────────────────────────────────
+
 
 class AttentionWeightExtractor:
     """
@@ -106,6 +108,7 @@ class AttentionWeightExtractor:
                         alpha = getattr(_module, "_alpha", None)
                         if alpha is not None:
                             self._attention[i] = alpha.detach().cpu()
+
                     return hook
 
                 self._hooks.append(conv.register_forward_hook(make_hook(idx)))
@@ -126,7 +129,9 @@ class AttentionWeightExtractor:
             h.remove()
         self._hooks.clear()
 
+
 # ── GradCAMGraphExplainer ──────────────────────────────────────────────────────
+
 
 class GradCAMGraphExplainer:
     """
@@ -218,17 +223,17 @@ class GradCAMGraphExplainer:
         for key in ("conv1", "conv2", "conv3"):
             if key not in self._activations or key not in self._gradients:
                 continue
-            act = self._activations[key].detach().cpu()   # (N, C)
-            grad = self._gradients[key].detach().cpu()    # (N, C)
+            act = self._activations[key].detach().cpu()  # (N, C)
+            grad = self._gradients[key].detach().cpu()  # (N, C)
             # Per-channel importance weights (global average pooling over nodes)
-            weights = grad.mean(dim=0, keepdim=True)      # (1, C)
-            cam = (weights * act).sum(dim=1)              # (N,)
-            cam = F.relu(cam)                             # Retain positive influence
+            weights = grad.mean(dim=0, keepdim=True)  # (1, C)
+            cam = (weights * act).sum(dim=1)  # (N,)
+            cam = F.relu(cam)  # Retain positive influence
             node_scores = node_scores + cam
             layer_count += 1
 
         if layer_count > 0:
-            node_scores = node_scores / layer_count       # average across layers
+            node_scores = node_scores / layer_count  # average across layers
 
         return node_scores
 
@@ -238,7 +243,9 @@ class GradCAMGraphExplainer:
             h.remove()
         self._hooks.clear()
 
+
 # ── NodeImportanceAnalyzer ─────────────────────────────────────────────────────
+
 
 class NodeImportanceAnalyzer:
     """
@@ -286,16 +293,18 @@ class NodeImportanceAnalyzer:
         logger.info("NodeImportanceAnalyzer: starting analysis → %s", output_dir)
 
         gradcam_results = self._run_gradcam()
-        attn_results    = self._run_attention_extraction()
+        attn_results = self._run_attention_extraction()
 
         # Plot GradCAM
         self._plot_gradcam(gradcam_results, output_dir / "node_importance_gradcam.png")
 
         # Plot attention weights per layer
-        self._plot_attention(attn_results, output_dir / "attention_weights_by_layer.png")
+        self._plot_attention(
+            attn_results, output_dir / "attention_weights_by_layer.png"
+        )
 
         # Compute and plot ASD-Control difference
-        asd_scores  = gradcam_results.get("asd_mean",     np.zeros(NUM_LOBES))
+        asd_scores = gradcam_results.get("asd_mean", np.zeros(NUM_LOBES))
         ctrl_scores = gradcam_results.get("control_mean", np.zeros(NUM_LOBES))
         diff = asd_scores - ctrl_scores
         top_regions = np.argsort(np.abs(diff))[::-1]
@@ -311,32 +320,39 @@ class NodeImportanceAnalyzer:
 
         logger.info("Top differentially-important regions (ASD - Control):")
         for rank, idx in enumerate(top_regions[:5]):
-            logger.info(
-                "  %d. %s  Δ=%.4f", rank + 1, REGION_LABELS[idx], diff[idx]
-            )
+            logger.info("  %d. %s  Δ=%.4f", rank + 1, REGION_LABELS[idx], diff[idx])
 
         self._plot_diff_bar(diff, output_dir / "node_importance_asd_vs_control.png")
 
         combined = {
-            "gradcam":   {**gradcam_results, "diff": diff},
+            "gradcam": {**gradcam_results, "diff": diff},
             "attention": attn_results,
         }
 
         # Task 3: Network-level attribution (DD-011)
-        asd_net  = _aggregate_to_networks(asd_scores)
+        asd_net = _aggregate_to_networks(asd_scores)
         ctrl_net = _aggregate_to_networks(ctrl_scores)
         net_diff = asd_net - ctrl_net
-        combined["gradcam"]["asd_network_mean"]     = asd_net
+        combined["gradcam"]["asd_network_mean"] = asd_net
         combined["gradcam"]["control_network_mean"] = ctrl_net
-        combined["gradcam"]["network_diff"]          = net_diff
+        combined["gradcam"]["network_diff"] = net_diff
 
         logger.info("Network-level GradCAM (ASD - Control):")
         for ni in range(NUM_NETWORKS):
-            logger.info("  %s: Δ=%.4f (ASD=%.4f, Ctrl=%.4f)",
-                        NETWORK_LABELS[ni], net_diff[ni], asd_net[ni], ctrl_net[ni])
+            logger.info(
+                "  %s: Δ=%.4f (ASD=%.4f, Ctrl=%.4f)",
+                NETWORK_LABELS[ni],
+                net_diff[ni],
+                asd_net[ni],
+                ctrl_net[ni],
+            )
 
-        self._plot_network_diff(net_diff, asd_net, ctrl_net,
-                                output_dir / "node_importance_network_level.png")
+        self._plot_network_diff(
+            net_diff,
+            asd_net,
+            ctrl_net,
+            output_dir / "node_importance_network_level.png",
+        )
         return combined
 
     # ── GradCAM pass ───────────────────────────────────────────────────────────
@@ -346,7 +362,7 @@ class NodeImportanceAnalyzer:
         explainer = GradCAMGraphExplainer(self.model, target_class=1)
         self.model.eval()
 
-        asd_scores:     list[np.ndarray] = []
+        asd_scores: list[np.ndarray] = []
         control_scores: list[np.ndarray] = []
 
         for batch in self.test_loader:
@@ -361,23 +377,23 @@ class NodeImportanceAnalyzer:
                     batch.edge_index,
                     batch.edge_attr,
                     batch.batch,
-                    site_id=None,          # attribution mode: no site embedding
-                    age=batch.age  if hasattr(batch, "age")  else None,
-                    sex=batch.sex  if hasattr(batch, "sex")  else None,
-                    fiq=batch.fiq  if hasattr(batch, "fiq")  else None,
+                    site_id=None,  # attribution mode: no site embedding
+                    age=batch.age if hasattr(batch, "age") else None,
+                    sex=batch.sex if hasattr(batch, "sex") else None,
+                    fiq=batch.fiq if hasattr(batch, "fiq") else None,
                 )
 
             node_scores = node_scores.numpy()
             # Split scores back into individual graphs
             batch_numpy = batch.batch.cpu().numpy()
             for graph_idx, label in enumerate(labels):
-                mask = (batch_numpy == graph_idx)
-                g_scores = node_scores[mask]               # (num_lobes,)
+                mask = batch_numpy == graph_idx
+                g_scores = node_scores[mask]  # (num_lobes,)
                 if len(g_scores) != NUM_LOBES:
                     continue
                 # Zero out attributions for atlas-gap / zero-signal nodes so that
                 # uninformative zero-padded lobes don't distort importance rankings.
-                if hasattr(batch, 'zero_lobe_mask'):
+                if hasattr(batch, "zero_lobe_mask"):
                     zlm = batch.zero_lobe_mask[mask].cpu().numpy().astype(bool)
                     if zlm.any():
                         g_scores = g_scores.copy()
@@ -392,14 +408,15 @@ class NodeImportanceAnalyzer:
         results: dict[str, np.ndarray] = {}
         if asd_scores:
             results["asd_mean"] = np.mean(np.stack(asd_scores), axis=0)
-            results["asd_std"]  = np.std(np.stack(asd_scores),  axis=0)
+            results["asd_std"] = np.std(np.stack(asd_scores), axis=0)
         if control_scores:
             results["control_mean"] = np.mean(np.stack(control_scores), axis=0)
-            results["control_std"]  = np.std(np.stack(control_scores),  axis=0)
+            results["control_std"] = np.std(np.stack(control_scores), axis=0)
 
         logger.info(
             "GradCAM: collected %d ASD, %d Control graphs",
-            len(asd_scores), len(control_scores),
+            len(asd_scores),
+            len(control_scores),
         )
 
         # Warn when all scores are near-zero — a typical sign of a saturated /
@@ -407,7 +424,9 @@ class NodeImportanceAnalyzer:
         # back-propagated gradients collapse to zero.
         if results:
             all_means = [v for k, v in results.items() if k.endswith("_mean")]
-            global_max = float(max(arr.max() for arr in all_means)) if all_means else 0.0
+            global_max = (
+                float(max(arr.max() for arr in all_means)) if all_means else 0.0
+            )
             if global_max < 1e-5:
                 logger.warning(
                     "GradCAM scores are effectively zero (max=%.2e). "
@@ -428,8 +447,8 @@ class NodeImportanceAnalyzer:
 
         # We accumulate *edge* attention weights keyed by (layer, edge_idx)
         # Summarise per destination node (average attention flowing into each region)
-        asd_node_attn:     dict[int, list[np.ndarray]] = {i: [] for i in range(NUM_LOBES)}
-        ctrl_node_attn:    dict[int, list[np.ndarray]] = {i: [] for i in range(NUM_LOBES)}
+        asd_node_attn: dict[int, list[np.ndarray]] = {i: [] for i in range(NUM_LOBES)}
+        ctrl_node_attn: dict[int, list[np.ndarray]] = {i: [] for i in range(NUM_LOBES)}
 
         with torch.no_grad():
             for batch in self.test_loader:
@@ -455,24 +474,24 @@ class NodeImportanceAnalyzer:
                     extractor.clear()
                     continue
                 last_layer_key = max(attn_by_layer.keys())
-                alpha = attn_by_layer[last_layer_key]      # (E, heads) or (E,)
+                alpha = attn_by_layer[last_layer_key]  # (E, heads) or (E,)
                 if alpha.dim() > 1:
-                    alpha = alpha.mean(dim=-1)             # (E,)
+                    alpha = alpha.mean(dim=-1)  # (E,)
                 alpha = alpha.cpu().numpy()
 
                 edge_index_np = batch.edge_index.cpu().numpy()
-                batch_np      = batch.batch.cpu().numpy()
+                batch_np = batch.batch.cpu().numpy()
 
                 for graph_idx, label in enumerate(labels):
-                    edge_mask = (batch_np[edge_index_np[1]] == graph_idx)
+                    edge_mask = batch_np[edge_index_np[1]] == graph_idx
                     dst_nodes = edge_index_np[1, edge_mask] % NUM_LOBES
-                    e_alpha   = alpha[edge_mask]
+                    e_alpha = alpha[edge_mask]
 
                     node_attn = np.zeros(NUM_LOBES)
-                    counts    = np.zeros(NUM_LOBES)
+                    counts = np.zeros(NUM_LOBES)
                     for dst, a in zip(dst_nodes, e_alpha, strict=False):
                         node_attn[dst] += a
-                        counts[dst]    += 1
+                        counts[dst] += 1
                     with np.errstate(invalid="ignore", divide="ignore"):
                         node_attn = np.where(counts > 0, node_attn / counts, 0.0)
 
@@ -488,7 +507,7 @@ class NodeImportanceAnalyzer:
             return np.array([np.mean(v) if v else 0.0 for v in storage.values()])
 
         return {
-            "asd_mean":     _agg(asd_node_attn),
+            "asd_mean": _agg(asd_node_attn),
             "control_mean": _agg(ctrl_node_attn),
         }
 
@@ -496,19 +515,39 @@ class NodeImportanceAnalyzer:
 
     def _plot_gradcam(self, results: dict, save_path: Path) -> None:
         """Side-by-side bar plot of GradCAM scores for ASD vs Control."""
-        asd     = results.get("asd_mean",     np.zeros(NUM_LOBES))
-        ctrl    = results.get("control_mean", np.zeros(NUM_LOBES))
-        asd_sd  = results.get("asd_std",      np.zeros(NUM_LOBES))
-        ctrl_sd = results.get("control_std",  np.zeros(NUM_LOBES))
+        asd = results.get("asd_mean", np.zeros(NUM_LOBES))
+        ctrl = results.get("control_mean", np.zeros(NUM_LOBES))
+        asd_sd = results.get("asd_std", np.zeros(NUM_LOBES))
+        ctrl_sd = results.get("control_std", np.zeros(NUM_LOBES))
 
         x = np.arange(NUM_LOBES)
         w = 0.35
         fig, ax = plt.subplots(figsize=(14, 7))
 
-        bars1 = ax.bar(x - w / 2, ctrl, w, label="Control", color=palette.CONTROL,
-               yerr=ctrl_sd, capsize=4, alpha=0.85, ecolor="#333333", error_kw={'linewidth': 1.5})
-        bars2 = ax.bar(x + w / 2, asd, w, label="ASD",     color=palette.ASD,
-               yerr=asd_sd,  capsize=4, alpha=0.85, ecolor="#333333", error_kw={'linewidth': 1.5})
+        bars1 = ax.bar(
+            x - w / 2,
+            ctrl,
+            w,
+            label="Control",
+            color=palette.CONTROL,
+            yerr=ctrl_sd,
+            capsize=4,
+            alpha=0.85,
+            ecolor="#333333",
+            error_kw={"linewidth": 1.5},
+        )
+        bars2 = ax.bar(
+            x + w / 2,
+            asd,
+            w,
+            label="ASD",
+            color=palette.ASD,
+            yerr=asd_sd,
+            capsize=4,
+            alpha=0.85,
+            ecolor="#333333",
+            error_kw={"linewidth": 1.5},
+        )
 
         for bar in bars1:
             bar.set_edgecolor("#333333")
@@ -518,10 +557,18 @@ class NodeImportanceAnalyzer:
             bar.set_linewidth(1.2)
 
         ax.set_xticks(x)
-        short_labels = [name.replace("_", "\n") if len(name) > 12 else name for name in REGION_LABELS]
+        short_labels = [
+            name.replace("_", "\n") if len(name) > 12 else name
+            for name in REGION_LABELS
+        ]
         ax.set_xticklabels(short_labels, rotation=50, ha="right", fontsize=9)
         ax.set_ylabel("GradCAM Importance Score", fontsize=12, fontweight="bold")
-        ax.set_title("Node Importance by Brain Region (GradCAM)", fontsize=14, fontweight="bold", pad=20)
+        ax.set_title(
+            "Node Importance by Brain Region (GradCAM)",
+            fontsize=14,
+            fontweight="bold",
+            pad=20,
+        )
         fig.subplots_adjust(bottom=0.25)
         ax.legend(fontsize=11, framealpha=0.95, fancybox=True, loc="upper right")
         ax.grid(axis="y", alpha=0.25, linestyle="-", linewidth=0.5)
@@ -536,13 +583,16 @@ class NodeImportanceAnalyzer:
 
     def _plot_attention(self, results: dict, save_path: Path) -> None:
         """Heatmap of node-level attention weights for ASD vs Control."""
-        asd  = results.get("asd_mean",     np.zeros(NUM_LOBES))
+        asd = results.get("asd_mean", np.zeros(NUM_LOBES))
         ctrl = results.get("control_mean", np.zeros(NUM_LOBES))
-        mat  = np.stack([ctrl, asd])        # (2, NUM_LOBES)
+        mat = np.stack([ctrl, asd])  # (2, NUM_LOBES)
 
         fig, ax = plt.subplots(figsize=(16, 5))
         import seaborn as sns
-        short_labels = [name.replace("_", " ") if len(name) > 10 else name for name in REGION_LABELS]
+
+        short_labels = [
+            name.replace("_", " ") if len(name) > 10 else name for name in REGION_LABELS
+        ]
         sns.heatmap(
             mat,
             xticklabels=short_labels,
@@ -557,7 +607,12 @@ class NodeImportanceAnalyzer:
         )
         plt.setp(ax.get_xticklabels(), rotation=50, ha="right", fontsize=9)
         plt.setp(ax.get_yticklabels(), fontsize=11, fontweight="bold")
-        ax.set_title("Mean GAT Attention Weight per Brain Region", fontsize=14, fontweight="bold", pad=20)
+        ax.set_title(
+            "Mean GAT Attention Weight per Brain Region",
+            fontsize=14,
+            fontweight="bold",
+            pad=20,
+        )
         ax.set_xlabel("Brain Region", fontsize=12, fontweight="bold")
         ax.set_ylabel("Diagnosis Group", fontsize=12, fontweight="bold")
 
@@ -574,7 +629,7 @@ class NodeImportanceAnalyzer:
     def _plot_diff_bar(self, diff: np.ndarray, save_path: Path) -> None:
         """Horizontal bar chart of ASD - Control GradCAM score difference."""
         order = np.argsort(diff)
-        sorted_diff   = diff[order]
+        sorted_diff = diff[order]
         sorted_labels = [REGION_LABELS[i].replace("_", " ") for i in order]
         colors = [palette.ASD if v > 0 else palette.CONTROL for v in sorted_diff]
 
@@ -587,15 +642,24 @@ class NodeImportanceAnalyzer:
         ax.set_xlabel("ΔImportance (ASD − Control)", fontsize=12, fontweight="bold")
         ax.set_title(
             "Differential Node Importance: ASD vs Control (GradCAM)",
-            fontsize=13, fontweight="bold", pad=15
+            fontsize=13,
+            fontweight="bold",
+            pad=15,
         )
 
         from matplotlib.patches import Patch
+
         legend_elements = [
             Patch(facecolor=palette.ASD, edgecolor="#333333", label="Higher in ASD"),
-            Patch(facecolor=palette.CONTROL, edgecolor="#333333", label="Higher in Control"),
+            Patch(
+                facecolor=palette.CONTROL,
+                edgecolor="#333333",
+                label="Higher in Control",
+            ),
         ]
-        ax.legend(handles=legend_elements, loc="lower right", fontsize=10, framealpha=0.95)
+        ax.legend(
+            handles=legend_elements, loc="lower right", fontsize=10, framealpha=0.95
+        )
         ax.grid(axis="x", alpha=0.3, linestyle="-", linewidth=0.5)
         apply_professional_style(ax)
         plt.tight_layout()
@@ -614,15 +678,35 @@ class NodeImportanceAnalyzer:
         x = np.arange(NUM_NETWORKS)
         w = 0.30
         fig, ax = plt.subplots(figsize=(10, 6))
-        ax.bar(x - w / 2, ctrl_net, w, label="Control", color=palette.CONTROL, alpha=0.85, edgecolor="#333333", linewidth=1)
-        ax.bar(x + w / 2, asd_net,  w, label="ASD",     color=palette.ASD, alpha=0.85, edgecolor="#333333", linewidth=1)
+        ax.bar(
+            x - w / 2,
+            ctrl_net,
+            w,
+            label="Control",
+            color=palette.CONTROL,
+            alpha=0.85,
+            edgecolor="#333333",
+            linewidth=1,
+        )
+        ax.bar(
+            x + w / 2,
+            asd_net,
+            w,
+            label="ASD",
+            color=palette.ASD,
+            alpha=0.85,
+            edgecolor="#333333",
+            linewidth=1,
+        )
 
         ax.set_xticks(x)
         ax.set_xticklabels(NETWORK_LABELS, fontsize=11, fontweight="bold")
         ax.set_ylabel("Mean GradCAM Importance", fontsize=12, fontweight="bold")
         ax.set_title(
             "Network-Level Node Importance: ASD vs Control",
-            fontsize=14, fontweight="bold", pad=15
+            fontsize=14,
+            fontweight="bold",
+            pad=15,
         )
         ax.legend(fontsize=11, framealpha=0.95, fancybox=True, loc="upper right")
         ax.grid(axis="y", alpha=0.3, linestyle="-", linewidth=0.5)
@@ -631,8 +715,15 @@ class NodeImportanceAnalyzer:
         for ni in range(NUM_NETWORKS):
             delta = net_diff[ni]
             ypos = max(asd_net[ni], ctrl_net[ni]) + 0.003
-            ax.text(x[ni], ypos, f"Δ{delta:+.3f}", ha="center", fontsize=10, fontweight="bold",
-                    color=palette.ASD if delta > 0 else palette.CONTROL)
+            ax.text(
+                x[ni],
+                ypos,
+                f"Δ{delta:+.3f}",
+                ha="center",
+                fontsize=10,
+                fontweight="bold",
+                color=palette.ASD if delta > 0 else palette.CONTROL,
+            )
 
         fig.subplots_adjust(left=0.15)
         plt.tight_layout()

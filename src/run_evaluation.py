@@ -66,6 +66,7 @@ from sklearn.svm import SVC
 from torch_geometric.loader import DataLoader
 
 from src.core.config import (
+    DEVICE,
     EVAL_FIXED_THRESHOLD,
     EVAL_THRESHOLD_POLICY,
     GNN_BATCH_SIZE,
@@ -103,55 +104,68 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 OUTPUT_DIR = RESULTS_DIR / "evaluation"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 @torch.no_grad()
-def _predict_probs(model: CausalBrainGNN, loader: DataLoader) -> tuple[np.ndarray, np.ndarray]:
+def _predict_probs(
+    model: CausalBrainGNN, loader: DataLoader
+) -> tuple[np.ndarray, np.ndarray]:
     """Return (probs, labels) arrays — probs are ASD probability (class 1)."""
     all_probs, all_labels = [], []
     for batch in loader:
         if batch is None:
             continue
         batch = batch.to(DEVICE)
-        out = model.forward_batch(batch) if hasattr(model, "forward_batch") else model(
-            batch.x,
-            batch.edge_index,
-            batch.edge_attr,
-            batch.batch,
-            site_id=batch.site_id if hasattr(batch, "site_id") else None,
-            age=batch.age if hasattr(batch, "age") else None,
-            sex=batch.sex if hasattr(batch, "sex") else None,
-            fiq=batch.fiq if hasattr(batch, "fiq") else None,
+        out = (
+            model.forward_batch(batch)
+            if hasattr(model, "forward_batch")
+            else model(
+                batch.x,
+                batch.edge_index,
+                batch.edge_attr,
+                batch.batch,
+                site_id=batch.site_id if hasattr(batch, "site_id") else None,
+                age=batch.age if hasattr(batch, "age") else None,
+                sex=batch.sex if hasattr(batch, "sex") else None,
+                fiq=batch.fiq if hasattr(batch, "fiq") else None,
+            )
         )
         probs = torch.softmax(out, dim=1)[:, 1].cpu().numpy()
         all_probs.append(probs)
         all_labels.append(batch.y.cpu().numpy())
     return np.concatenate(all_probs), np.concatenate(all_labels)
 
-def _full_metrics(probs: np.ndarray, labels: np.ndarray, threshold: float = 0.5) -> dict:
+
+def _full_metrics(
+    probs: np.ndarray, labels: np.ndarray, threshold: float = 0.5
+) -> dict:
     """Compute the full metric suite from probability scores."""
     preds = (probs >= threshold).astype(int)
     cm = confusion_matrix(labels, preds, labels=[0, 1])
     tn, fp, fn, tp = cm.ravel() if cm.size == 4 else (0, 0, 0, 0)
-    sensitivity  = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    specificity  = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
     return {
-        "auc":         float(roc_auc_score(labels, probs)),
-        "auprc":       float(average_precision_score(labels, probs)),
-        "f1":          float(f1_score(labels, preds, zero_division=0)),
-        "accuracy":    float(accuracy_score(labels, preds)),
+        "auc": float(roc_auc_score(labels, probs)),
+        "auprc": float(average_precision_score(labels, probs)),
+        "f1": float(f1_score(labels, preds, zero_division=0)),
+        "accuracy": float(accuracy_score(labels, preds)),
         "sensitivity": float(sensitivity),
         "specificity": float(specificity),
-        "tp": int(tp), "tn": int(tn), "fp": int(fp), "fn": int(fn),
-        "n_total":     len(labels),
-        "n_asd":       int(labels.sum()),
-        "n_control":   int((labels == 0).sum()),
+        "tp": int(tp),
+        "tn": int(tn),
+        "fp": int(fp),
+        "fn": int(fn),
+        "n_total": len(labels),
+        "n_asd": int(labels.sum()),
+        "n_control": int((labels == 0).sum()),
     }
+
 
 def _bootstrap_ci(
     probs: np.ndarray,
@@ -172,15 +186,15 @@ def _bootstrap_ci(
 
     # Stratified bootstrap: resample ASD and Control indices separately so that
     # both classes are always represented in every bootstrap sample.
-    idx_asd  = np.where(labels == 1)[0]
+    idx_asd = np.where(labels == 1)[0]
     idx_ctrl = np.where(labels == 0)[0]
 
     for _ in range(n_bootstrap):
-        boot_asd  = rng.choice(idx_asd,  size=len(idx_asd),  replace=True)
+        boot_asd = rng.choice(idx_asd, size=len(idx_asd), replace=True)
         boot_ctrl = rng.choice(idx_ctrl, size=len(idx_ctrl), replace=True)
         idx = np.concatenate([boot_asd, boot_ctrl])
         bp, bl = probs[idx], labels[idx]
-        if bl.min() == bl.max():   # degenerate bootstrap: skip
+        if bl.min() == bl.max():  # degenerate bootstrap: skip
             continue
         m = _full_metrics(bp, bl, threshold=threshold)
         aucs.append(m["auc"])
@@ -197,19 +211,23 @@ def _bootstrap_ci(
         return (float(np.quantile(a, lo)), float(np.quantile(a, hi)))
 
     return {
-        "auc":         _ci(aucs),
-        "auprc":       _ci(auprcs),
-        "f1":          _ci(f1s),
-        "accuracy":    _ci(accs),
+        "auc": _ci(aucs),
+        "auprc": _ci(auprcs),
+        "f1": _ci(f1s),
+        "accuracy": _ci(accs),
         "sensitivity": _ci(senss),
         "specificity": _ci(specs),
     }
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 1: ENSEMBLE TEST-SET EVALUATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run_ensemble_evaluation(test_graphs: list, output_dir: Path, enable_calibration: bool = False) -> dict:
+
+def run_ensemble_evaluation(
+    test_graphs: list, output_dir: Path, enable_calibration: bool = False
+) -> dict:
     """
     AUC-weighted ensemble of the 5 fold checkpoints evaluated on the test set.
     Returns a dict with metrics, CIs, and per-fold breakdown.
@@ -219,10 +237,16 @@ def run_ensemble_evaluation(test_graphs: list, output_dir: Path, enable_calibrat
     logger.info("=" * 60)
 
     loader = make_loader(test_graphs, batch_size=GNN_BATCH_SIZE, shuffle=False)
-    calibration_graphs = None  # disabled by default: calibration degrades AUC (0.8650 -> 0.8403)
+    calibration_graphs = (
+        None  # disabled by default: calibration degrades AUC (0.8650 -> 0.8403)
+    )
     if enable_calibration:
         calibration_graphs = load_last_fold_val_graphs()
-    calibration_loader = make_loader(calibration_graphs, batch_size=GNN_BATCH_SIZE, shuffle=False) if calibration_graphs else None
+    calibration_loader = (
+        make_loader(calibration_graphs, batch_size=GNN_BATCH_SIZE, shuffle=False)
+        if calibration_graphs
+        else None
+    )
 
     fold_ids = []
     fold_probs = []
@@ -299,14 +323,22 @@ def run_ensemble_evaluation(test_graphs: list, output_dir: Path, enable_calibrat
     calibrators: dict[int, LogisticRegression] = {}
     if calibration_graphs and fold_cal_probs and cal_labels is not None:
         cal_site_ids = site_ids_from_graphs(calibration_graphs)
-        ens_cal_probs_raw = np.average(np.stack(fold_cal_probs, axis=0), axis=0, weights=weights)
-        calibrators = fit_per_site_calibrators(ens_cal_probs_raw, cal_labels, cal_site_ids)
+        ens_cal_probs_raw = np.average(
+            np.stack(fold_cal_probs, axis=0), axis=0, weights=weights
+        )
+        calibrators = fit_per_site_calibrators(
+            ens_cal_probs_raw, cal_labels, cal_site_ids
+        )
 
         if calibrators:
-            ens_cal_probs = apply_per_site_calibration(ens_cal_probs_raw, cal_site_ids, calibrators)
+            ens_cal_probs = apply_per_site_calibration(
+                ens_cal_probs_raw, cal_site_ids, calibrators
+            )
             f1_threshold = optimal_threshold(ens_cal_probs, cal_labels)[0]
             test_site_ids = site_ids_from_graphs(test_graphs)
-            ens_probs = apply_per_site_calibration(ens_probs_raw, test_site_ids, calibrators)
+            ens_probs = apply_per_site_calibration(
+                ens_probs_raw, test_site_ids, calibrators
+            )
             calibration_applied = True
             logger.info(
                 "  Per-site Platt calibration applied for %d sites (threshold=%.4f)",
@@ -314,20 +346,30 @@ def run_ensemble_evaluation(test_graphs: list, output_dir: Path, enable_calibrat
                 f1_threshold,
             )
         else:
-            logger.info("  Per-site calibration skipped: insufficient per-site calibration data")
+            logger.info(
+                "  Per-site calibration skipped: insufficient per-site calibration data"
+            )
 
     # Compute both operating points, then select the reporting policy.
     f1_metrics = _full_metrics(ens_probs, labels, threshold=f1_threshold)
-    youden_thr     = youden_threshold(ens_probs, labels)[0]
+    youden_thr = youden_threshold(ens_probs, labels)[0]
     youden_metrics = _full_metrics(ens_probs, labels, threshold=youden_thr)
     logger.info(
         "  Youden threshold: %.4f  →  Sens=%.4f  Spec=%.4f  F1=%.4f",
-        youden_thr, youden_metrics["sensitivity"], youden_metrics["specificity"],
+        youden_thr,
+        youden_metrics["sensitivity"],
+        youden_metrics["specificity"],
         youden_metrics["f1"],
     )
 
     from src.models.evaluation import resolve_threshold
-    threshold, _ = resolve_threshold(ens_probs, labels, policy=EVAL_THRESHOLD_POLICY, fixed_value=EVAL_FIXED_THRESHOLD)
+
+    threshold, _ = resolve_threshold(
+        ens_probs,
+        labels,
+        policy=EVAL_THRESHOLD_POLICY,
+        fixed_value=EVAL_FIXED_THRESHOLD,
+    )
     metrics = _full_metrics(ens_probs, labels, threshold=threshold)
     metrics = dict(metrics)
     metrics["threshold"] = threshold
@@ -350,24 +392,25 @@ def run_ensemble_evaluation(test_graphs: list, output_dir: Path, enable_calibrat
     _print_metrics_table(metrics, ci, per_fold)
 
     result = {
-        "ensemble_metrics":  metrics,
-        "ensemble_ci_95":    ci,
+        "ensemble_metrics": metrics,
+        "ensemble_ci_95": ci,
         "threshold_policy": policy,
         "ensemble_threshold": threshold,
         "per_site_calibration": {
             "applied": calibration_applied,
             "num_sites": len(calibrators),
         },
-        "f1_threshold":       f1_threshold,
-        "f1_metrics":         f1_metrics,
-        "youden_threshold":   youden_thr,
-        "youden_metrics":     youden_metrics,
-        "fold_aucs":         fold_aucs,
-        "per_fold_metrics":  per_fold,
-        "ensemble_probs":    ens_probs.tolist(),
-        "labels":            labels.tolist(),
+        "f1_threshold": f1_threshold,
+        "f1_metrics": f1_metrics,
+        "youden_threshold": youden_thr,
+        "youden_metrics": youden_metrics,
+        "fold_aucs": fold_aucs,
+        "per_fold_metrics": per_fold,
+        "ensemble_probs": ens_probs.tolist(),
+        "labels": labels.tolist(),
     }
     return result
+
 
 def run_paired_ttest(ensemble_result: dict, output_dir: Path) -> dict:
     """
@@ -386,6 +429,7 @@ def run_paired_ttest(ensemble_result: dict, output_dir: Path) -> dict:
         return {"skipped": True, "reason": "insufficient_folds"}
 
     from scipy import stats
+
     t_stat, p_value = stats.ttest_rel(val_aucs, test_aucs)
 
     logger.info("  Fold-level validation AUCs: %s", [f"{x:.4f}" for x in val_aucs])
@@ -393,8 +437,14 @@ def run_paired_ttest(ensemble_result: dict, output_dir: Path) -> dict:
     logger.info("  Mean val AUC: %.4f  ± %.4f", np.mean(val_aucs), np.std(val_aucs))
     logger.info("  Mean test AUC: %.4f  ± %.4f", np.mean(test_aucs), np.std(test_aucs))
     logger.info("  Paired t-test: t=%.3f, p=%.4f", t_stat, p_value)
-    logger.info("  Interpretation: %s",
-                "SIGNIFICANT difference (p<0.05)" if p_value < 0.05 else "No significant difference (p≥0.05)")
+    logger.info(
+        "  Interpretation: %s",
+        (
+            "SIGNIFICANT difference (p<0.05)"
+            if p_value < 0.05
+            else "No significant difference (p≥0.05)"
+        ),
+    )
 
     result = {
         "val_aucs": val_aucs,
@@ -406,6 +456,7 @@ def run_paired_ttest(ensemble_result: dict, output_dir: Path) -> dict:
         "significant": p_value < 0.05,
     }
     return result
+
 
 def _print_metrics_table(
     metrics: dict,
@@ -419,21 +470,32 @@ def _print_metrics_table(
     logger.info("─" * len(hdr))
     for key in ("auc", "auprc", "f1", "accuracy", "sensitivity", "specificity"):
         lo, hi = ci.get(key, (float("nan"), float("nan")))
-        logger.info(
-            "  %-12s %8.4f   [%.4f, %.4f]", key.title(), metrics[key], lo, hi
-        )
+        logger.info("  %-12s %8.4f   [%.4f, %.4f]", key.title(), metrics[key], lo, hi)
     logger.info("─" * len(hdr))
-    logger.info("  n_total=%d  n_asd=%d  n_control=%d", metrics["n_total"], metrics["n_asd"], metrics["n_control"])
+    logger.info(
+        "  n_total=%d  n_asd=%d  n_control=%d",
+        metrics["n_total"],
+        metrics["n_asd"],
+        metrics["n_control"],
+    )
     logger.info("  Selected threshold: %.4f", metrics.get("threshold", 0.5))
 
     if per_fold:
         logger.info("\n  Per-fold AUC on test set:")
         for pf in per_fold:
-            logger.info("    Fold %d  AUC=%.4f  F1=%.4f  Acc=%.4f", pf["fold"], pf["auc"], pf["f1"], pf["accuracy"])
+            logger.info(
+                "    Fold %d  AUC=%.4f  F1=%.4f  Acc=%.4f",
+                pf["fold"],
+                pf["auc"],
+                pf["f1"],
+                pf["accuracy"],
+            )
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 2: PERMUTATION SIGNIFICANCE TESTING
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def run_permutation_test(
     ens_probs: np.ndarray,
@@ -458,7 +520,7 @@ def run_permutation_test(
 
     rng = np.random.default_rng(seed)
     observed_auc = roc_auc_score(labels, ens_probs)
-    null_aucs    = np.empty(n_permutations)
+    null_aucs = np.empty(n_permutations)
 
     # Determine site groups for within-site permutation
     if within_site and site_ids is not None and len(site_ids) == len(labels):
@@ -482,17 +544,41 @@ def run_permutation_test(
     p_value = max(p_value, 1.0 / n_permutations)
 
     logger.info("  Observed AUC : %.4f", observed_auc)
-    logger.info("  Null AUC     : %.4f ± %.4f  (mean ± std)", null_aucs.mean(), null_aucs.std())
-    logger.info("  p-value      : %.4f  (%s)", p_value, "✓ significant" if p_value < 0.05 else "✗ not significant")
+    logger.info(
+        "  Null AUC     : %.4f ± %.4f  (mean ± std)", null_aucs.mean(), null_aucs.std()
+    )
+    logger.info(
+        "  p-value      : %.4f  (%s)",
+        p_value,
+        "✓ significant" if p_value < 0.05 else "✗ not significant",
+    )
 
     # Save null distribution plot
     try:
         import matplotlib.pyplot as plt
+
         fig, ax = plt.subplots(figsize=(8, 5))
-        ax.hist(null_aucs, bins=50, color=palette.CONTROL, alpha=0.7, edgecolor="white", label="Null distribution")
-        ax.axvline(observed_auc, color=palette.ASD, lw=2.5, label=f"Observed AUC={observed_auc:.4f}")
-        ax.axvline(np.percentile(null_aucs, 95), color=palette.AMBER, lw=1.5, ls="--",
-                   label="95th percentile of null")
+        ax.hist(
+            null_aucs,
+            bins=50,
+            color=palette.CONTROL,
+            alpha=0.7,
+            edgecolor="white",
+            label="Null distribution",
+        )
+        ax.axvline(
+            observed_auc,
+            color=palette.ASD,
+            lw=2.5,
+            label=f"Observed AUC={observed_auc:.4f}",
+        )
+        ax.axvline(
+            np.percentile(null_aucs, 95),
+            color=palette.AMBER,
+            lw=1.5,
+            ls="--",
+            label="95th percentile of null",
+        )
         ax.set(
             title=f"Permutation Test (n={n_permutations})\np={p_value:.4f}",
             xlabel="AUC",
@@ -510,17 +596,19 @@ def run_permutation_test(
         logger.warning("  Permutation plot failed: %s", e)
 
     return {
-        "observed_auc":   observed_auc,
-        "null_auc_mean":  float(null_aucs.mean()),
-        "null_auc_std":   float(null_aucs.std()),
-        "p_value":        p_value,
-        "significant":    p_value < 0.05,
+        "observed_auc": observed_auc,
+        "null_auc_mean": float(null_aucs.mean()),
+        "null_auc_std": float(null_aucs.std()),
+        "p_value": p_value,
+        "significant": p_value < 0.05,
         "n_permutations": n_permutations,
     }
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 3: SUBGROUP ANALYSIS
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def run_subgroup_analysis(
     test_graphs: list,
@@ -546,7 +634,7 @@ def run_subgroup_analysis(
     # First, collect labels from test graphs
     loader = make_loader(test_graphs, batch_size=1, shuffle=False)
     for batch in loader:
-        if hasattr(batch, 'y') and batch.y is not None:
+        if hasattr(batch, "y") and batch.y is not None:
             all_labels.append(batch.y.item())
     labels_np = np.array(all_labels)
 
@@ -560,10 +648,14 @@ def run_subgroup_analysis(
 
         try:
             model = load_model(fold_id=fold_id, device=DEVICE)
-            probs_f, _ = _predict_probs(model, make_loader(test_graphs, batch_size=1, shuffle=False))
+            probs_f, _ = _predict_probs(
+                model, make_loader(test_graphs, batch_size=1, shuffle=False)
+            )
             if probs_f is not None and len(probs_f) > 0:
                 fold_probs_list.append(probs_f)
-                fold_weights.append(fold_aucs[fold_id] if fold_id < len(fold_aucs) else 0.5)
+                fold_weights.append(
+                    fold_aucs[fold_id] if fold_id < len(fold_aucs) else 0.5
+                )
             del model
         except FileNotFoundError:
             continue
@@ -577,9 +669,17 @@ def run_subgroup_analysis(
     for g in test_graphs:
         if g is None:
             continue
-        age_raw  = float(g.age.item())  if hasattr(g, "age")  and g.age is not None  else 0.0
-        sex_raw  = float(g.sex.item())  if hasattr(g, "sex")  and g.sex is not None  else 0.0
-        site_raw = int(g.site_id.item()) if hasattr(g, "site_id") and g.site_id is not None else -1
+        age_raw = (
+            float(g.age.item()) if hasattr(g, "age") and g.age is not None else 0.0
+        )
+        sex_raw = (
+            float(g.sex.item()) if hasattr(g, "sex") and g.sex is not None else 0.0
+        )
+        site_raw = (
+            int(g.site_id.item())
+            if hasattr(g, "site_id") and g.site_id is not None
+            else -1
+        )
         # De-normalise age: age = age_norm * 20 + 15
         age_actual = age_raw * 20.0 + 15.0
         # De-normalise sex: sex = sex_norm + 1.5  (1=male, 2=female)
@@ -609,13 +709,18 @@ def run_subgroup_analysis(
         auc = _safe_auc(ens_probs[idx], labels_np[idx])
         n_asd = int(labels_np[idx].sum())
         subgroup_results[f"sex_{sex_name}"] = {
-            "n": len(idx), "n_asd": n_asd, "n_control": len(idx) - n_asd, "auc": auc
+            "n": len(idx),
+            "n_asd": n_asd,
+            "n_control": len(idx) - n_asd,
+            "auc": auc,
         }
-        logger.info("  Sex %-8s  n=%-4d  n_asd=%-3d  AUC=%.4f", sex_name, len(idx), n_asd, auc)
+        logger.info(
+            "  Sex %-8s  n=%-4d  n_asd=%-3d  AUC=%.4f", sex_name, len(idx), n_asd, auc
+        )
 
     # ── Age subgroups ─────────────────────────────────────────────────────────
     for age_label, age_mask in [
-        ("Age<15",  np.array(age_list) < 15),
+        ("Age<15", np.array(age_list) < 15),
         ("Age>=15", np.array(age_list) >= 15),
     ]:
         idx = np.where(age_mask)[0]
@@ -624,24 +729,42 @@ def run_subgroup_analysis(
         auc = _safe_auc(ens_probs[idx], labels_np[idx])
         n_asd = int(labels_np[idx].sum())
         subgroup_results[f"age_{age_label}"] = {
-            "n": len(idx), "n_asd": n_asd, "n_control": len(idx) - n_asd, "auc": auc
+            "n": len(idx),
+            "n_asd": n_asd,
+            "n_control": len(idx) - n_asd,
+            "auc": auc,
         }
-        logger.info("  %-12s        n=%-4d  n_asd=%-3d  AUC=%.4f", age_label, len(idx), n_asd, auc)
+        logger.info(
+            "  %-12s        n=%-4d  n_asd=%-3d  AUC=%.4f",
+            age_label,
+            len(idx),
+            n_asd,
+            auc,
+        )
 
     # ── Site subgroups (top-5) ────────────────────────────────────────────────
-    site_arr      = np.array(site_list)
+    site_arr = np.array(site_list)
     unique_sites, site_counts = np.unique(site_arr[site_arr >= 0], return_counts=True)
-    top5_sites    = unique_sites[np.argsort(site_counts)[::-1][:5]]
+    top5_sites = unique_sites[np.argsort(site_counts)[::-1][:5]]
     for site_id in top5_sites:
-        idx   = np.where(site_arr == site_id)[0]
+        idx = np.where(site_arr == site_id)[0]
         if len(idx) < 5:
             continue
-        auc   = _safe_auc(ens_probs[idx], labels_np[idx])
+        auc = _safe_auc(ens_probs[idx], labels_np[idx])
         n_asd = int(labels_np[idx].sum())
         subgroup_results[f"site_{site_id}"] = {
-            "n": len(idx), "n_asd": n_asd, "n_control": len(idx) - n_asd, "auc": auc
+            "n": len(idx),
+            "n_asd": n_asd,
+            "n_control": len(idx) - n_asd,
+            "auc": auc,
         }
-        logger.info("  Site %-4d          n=%-4d  n_asd=%-3d  AUC=%.4f", site_id, len(idx), n_asd, auc)
+        logger.info(
+            "  Site %-4d          n=%-4d  n_asd=%-3d  AUC=%.4f",
+            site_id,
+            len(idx),
+            n_asd,
+            auc,
+        )
 
     # ── Plot ──────────────────────────────────────────────────────────────────
     _plot_subgroups(subgroup_results, output_dir / "subgroup_analysis.png")
@@ -655,22 +778,21 @@ def run_subgroup_analysis(
     logger.info("    Corrected alpha: %.4f", corrected_alpha)
 
     for _name, res in subgroup_results.items():
-        is_significant = res.get("auc", 0) > 0.5 and (
-            res.get("auc", 0) - 0.5 > 0.1
-        )
+        is_significant = res.get("auc", 0) > 0.5 and (res.get("auc", 0) - 0.5 > 0.1)
         res["significant_corrected"] = is_significant
         res["corrected_alpha"] = corrected_alpha
 
     return subgroup_results
+
 
 def _plot_subgroups(subgroups: dict, save_path: Path) -> None:
     try:
         import matplotlib.pyplot as plt
 
         labels_plot = list(subgroups.keys())
-        aucs_plot   = [subgroups[k]["auc"] for k in labels_plot]
-        ns_plot     = [subgroups[k]["n"]   for k in labels_plot]
-        colors      = []
+        aucs_plot = [subgroups[k]["auc"] for k in labels_plot]
+        ns_plot = [subgroups[k]["n"] for k in labels_plot]
+        colors = []
         for k in labels_plot:
             if k.startswith("sex"):
                 colors.append(palette.PINK)
@@ -686,15 +808,25 @@ def _plot_subgroups(subgroups: dict, save_path: Path) -> None:
 
         for _i, (bar, auc, n) in enumerate(zip(bars, aucs_plot, ns_plot, strict=False)):
             if not np.isnan(auc):
-                ax.text(auc + 0.02, bar.get_y() + bar.get_height() / 2,
-                        f"{auc:.3f}  (n={n})", va="center", fontsize=9)
+                ax.text(
+                    auc + 0.02,
+                    bar.get_y() + bar.get_height() / 2,
+                    f"{auc:.3f}  (n={n})",
+                    va="center",
+                    fontsize=9,
+                )
 
         ax.set_yticks(y)
         ax.set_yticklabels(labels_plot, fontsize=10)
         ax.set_xlabel("AUC", fontsize=12, fontweight="bold")
-        ax.set_title("Subgroup Analysis — AUC by Sex / Age / Site", fontsize=13, fontweight="bold")
+        ax.set_title(
+            "Subgroup Analysis — AUC by Sex / Age / Site",
+            fontsize=13,
+            fontweight="bold",
+        )
         ax.set_xlim(0.3, 1.05)
         from matplotlib.patches import Patch
+
         legend_elems = [
             Patch(fc="#9b59b6", label="Sex"),
             Patch(fc="#27ae60", label="Age group"),
@@ -709,14 +841,21 @@ def _plot_subgroups(subgroups: dict, save_path: Path) -> None:
     except Exception as e:
         logger.warning("  Subgroup plot failed: %s", e)
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 4: BASELINE COMPARISON
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class FlatMLP(nn.Module):
     """Simple 3-layer MLP on flattened 12 × 24 = 288 node features."""
 
-    def __init__(self, in_dim: int = NUM_LOBES * GNN_IN_CHANNELS, hidden: int = 128, dropout: float = 0.4):
+    def __init__(
+        self,
+        in_dim: int = NUM_LOBES * GNN_IN_CHANNELS,
+        hidden: int = 128,
+        dropout: float = 0.4,
+    ):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(in_dim, hidden),
@@ -731,30 +870,35 @@ class FlatMLP(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
+
 def _collect_flat_features(graphs: list) -> tuple[np.ndarray, np.ndarray]:
     """Flatten node feature matrices (12 × 24) → 288-dim vector per subject."""
     X, y = [], []
     for g in graphs:
         if g is None:
             continue
-        x_np = g.x.cpu().numpy().flatten()       # (336,)
+        x_np = g.x.cpu().numpy().flatten()  # (336,)
         X.append(x_np)
         y.append(int(g.y.item()))
     return np.array(X, dtype=np.float32), np.array(y, dtype=np.int32)
 
-def _train_mlp(X_train, y_train, X_test, y_test, epochs=80, lr=1e-3, seed=42) -> tuple[float, np.ndarray]:
+
+def _train_mlp(
+    X_train, y_train, X_test, y_test, epochs=80, lr=1e-3, seed=42
+) -> tuple[float, np.ndarray]:
     """Train a flat MLP and return test AUC and probabilities."""
     torch.manual_seed(seed)
     model = FlatMLP(in_dim=X_train.shape[1]).to(DEVICE)
-    opt   = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
 
     X_tr = torch.tensor(X_train, dtype=torch.float32).to(DEVICE)
     y_tr = torch.tensor(y_train, dtype=torch.long).to(DEVICE)
-    X_te = torch.tensor(X_test,  dtype=torch.float32).to(DEVICE)
+    X_te = torch.tensor(X_test, dtype=torch.float32).to(DEVICE)
 
     from torch.utils.data import DataLoader as TDL
     from torch.utils.data import TensorDataset
-    ds     = TensorDataset(X_tr, y_tr)
+
+    ds = TensorDataset(X_tr, y_tr)
     loader = TDL(ds, batch_size=32, shuffle=True)
 
     model.train()
@@ -769,6 +913,7 @@ def _train_mlp(X_train, y_train, X_test, y_test, epochs=80, lr=1e-3, seed=42) ->
         probs = torch.softmax(model(X_te), dim=1)[:, 1].cpu().numpy()
     return float(roc_auc_score(y_test, probs)), probs
 
+
 def _print_baseline_table(baselines: dict[str, float]) -> None:
     """Print baseline comparison table."""
     logger.info("\n  Baseline Comparison:")
@@ -778,16 +923,20 @@ def _print_baseline_table(baselines: dict[str, float]) -> None:
         logger.info(f"    {name:<25} AUC: {auc:.4f}{marker}")
     logger.info("  " + "-" * 40)
 
+
 def _plot_baselines(baselines: dict[str, float], save_path: Path) -> None:
     """Plot baseline comparison bar chart."""
     try:
         import matplotlib.pyplot as plt
+
         names = list(baselines.keys())
         fig, ax = plt.subplots(figsize=(10, max(4, len(names) * 0.5)))
         aucs = list(baselines.values())
         colors = [palette.GREEN if "Ours" in n else palette.CONTROL for n in names]
         y = range(len(names))
-        bars = ax.barh(y, aucs, color=colors, alpha=0.85, edgecolor="black", linewidth=0.5)
+        bars = ax.barh(
+            y, aucs, color=colors, alpha=0.85, edgecolor="black", linewidth=0.5
+        )
         ax.set_yticks(y)
         ax.set_yticklabels(names)
         ax.set_xlabel("AUC", fontsize=12, fontweight="bold")
@@ -798,8 +947,13 @@ def _plot_baselines(baselines: dict[str, float], save_path: Path) -> None:
 
         # Add value labels
         for bar, auc in zip(bars, aucs, strict=False):
-            ax.text(auc + 0.01, bar.get_y() + bar.get_height() / 2,
-                    f"{auc:.3f}", va="center", fontsize=10)
+            ax.text(
+                auc + 0.01,
+                bar.get_y() + bar.get_height() / 2,
+                f"{auc:.3f}",
+                va="center",
+                fontsize=10,
+            )
 
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
@@ -807,6 +961,7 @@ def _plot_baselines(baselines: dict[str, float], save_path: Path) -> None:
         logger.info(f"  Plot saved → {save_path}")
     except Exception as e:
         logger.warning(f"  Baseline plot failed: {e}")
+
 
 def run_baseline_comparison(
     train_graphs: list,
@@ -824,15 +979,34 @@ def run_baseline_comparison(
     logger.info("=" * 60)
 
     X_train, y_train = _collect_flat_features(train_graphs)
-    X_test,  y_test  = _collect_flat_features(test_graphs)
-    logger.info("  Train: %d  Test: %d  Features: %d", len(X_train), len(X_test), X_train.shape[1])
+    X_test, y_test = _collect_flat_features(test_graphs)
+    logger.info(
+        "  Train: %d  Test: %d  Features: %d",
+        len(X_train),
+        len(X_test),
+        X_train.shape[1],
+    )
 
     baselines: dict[str, float] = {}
 
     # ── SVM ───────────────────────────────────────────────────────────────────
     logger.info("  Training SVM (RBF kernel)…")
     t0 = time.time()
-    svm_pipe = Pipeline([("scaler", StandardScaler()), ("svm", SVC(kernel="rbf", probability=True, C=1.0, gamma="scale", random_state=42))])
+    svm_pipe = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            (
+                "svm",
+                SVC(
+                    kernel="rbf",
+                    probability=True,
+                    C=1.0,
+                    gamma="scale",
+                    random_state=42,
+                ),
+            ),
+        ]
+    )
     svm_pipe.fit(X_train, y_train)
     svm_probs = svm_pipe.predict_proba(X_test)[:, 1]
     baselines["SVM (RBF)"] = float(roc_auc_score(y_test, svm_probs))
@@ -842,8 +1016,13 @@ def run_baseline_comparison(
     logger.info("  Training Random Forest (200 trees)…")
     t0 = time.time()
     rf = RandomForestClassifier(
-        n_estimators=200, max_depth=6, min_samples_leaf=5, min_samples_split=10,
-        max_features='sqrt', random_state=42, n_jobs=-1,
+        n_estimators=200,
+        max_depth=6,
+        min_samples_leaf=5,
+        min_samples_split=10,
+        max_features="sqrt",
+        random_state=42,
+        n_jobs=-1,
     )
     rf.fit(X_train, y_train)
     rf_probs = rf.predict_proba(X_test)[:, 1]
@@ -864,9 +1043,9 @@ def run_baseline_comparison(
     logger.info("  MLP AUC=%.4f  (%.1fs)", baselines["Flat MLP"], time.time() - t0)
 
     # ── GNN + Literature ──────────────────────────────────────────────────────
-    baselines["GNN (Ours)"]                = gnn_ensemble_auc
-    baselines["Heinsfeld et al. 2018"]     = 0.70   # published  ABIDE-I DNN AUC
-    baselines["Ktena et al. 2018"]         = 0.69   # metric-learning GNN on ABIDE
+    baselines["GNN (Ours)"] = gnn_ensemble_auc
+    baselines["Heinsfeld et al. 2018"] = 0.70  # published  ABIDE-I DNN AUC
+    baselines["Ktena et al. 2018"] = 0.69  # metric-learning GNN on ABIDE
 
     _print_baseline_table(baselines)
     _plot_baselines(baselines, output_dir / "baseline_comparison.png")
@@ -874,9 +1053,12 @@ def run_baseline_comparison(
     # ── DeLong Tests ─────────────────────────────────────────────────
     logger.info("\n  DeLong Tests (GNN vs baselines):")
     delong_results = _run_delong_tests(
-        y_test, baselines,
+        y_test,
+        baselines,
         gnn_probs=gnn_probs,
-        svm_probs=svm_probs, rf_probs=rf_probs, mlp_probs=mlp_probs
+        svm_probs=svm_probs,
+        rf_probs=rf_probs,
+        mlp_probs=mlp_probs,
     )
 
     # AUC Confidence Interval (DeLong)
@@ -893,6 +1075,7 @@ def run_baseline_comparison(
             logger.warning("  AUC CI computation failed: %s", e)
 
     return delong_results
+
 
 def _run_delong_tests(
     y_test: np.ndarray,
@@ -943,29 +1126,40 @@ def _run_delong_tests(
             pval_corrected = min(pval * n_comparisons, 1.0)
             sig_bonf = " *" if pval_corrected < 0.05 else ""
 
-            logger.info("  GNN vs %s: z=%.2f, p=%.4f (Bonf: %.4f), ΔAUC=%+.4f%s",
-                        name, z, pval, pval_corrected, auc_delta, sig_bonf)
-            results["comparisons"].append({
-                "model1": "GNN (Ours)",
-                "model2": name,
-                "gnn_auc": float(gnn_auc),
-                "baseline_auc": float(baseline_auc),
-                "auc_delta": float(auc_delta),
-                "z": float(z),
-                "p_value": float(pval),
-                "p_value_bonferroni": float(pval_corrected),
-                "log10_p": float(log_pval),
-                "significant": pval_corrected < 0.05,
-                "n_comparisons": n_comparisons,
-            })
+            logger.info(
+                "  GNN vs %s: z=%.2f, p=%.4f (Bonf: %.4f), ΔAUC=%+.4f%s",
+                name,
+                z,
+                pval,
+                pval_corrected,
+                auc_delta,
+                sig_bonf,
+            )
+            results["comparisons"].append(
+                {
+                    "model1": "GNN (Ours)",
+                    "model2": name,
+                    "gnn_auc": float(gnn_auc),
+                    "baseline_auc": float(baseline_auc),
+                    "auc_delta": float(auc_delta),
+                    "z": float(z),
+                    "p_value": float(pval),
+                    "p_value_bonferroni": float(pval_corrected),
+                    "log10_p": float(log_pval),
+                    "significant": pval_corrected < 0.05,
+                    "n_comparisons": n_comparisons,
+                }
+            )
         except Exception as e:
             logger.warning("  DeLong test failed for GNN vs %s: %s", name, e)
 
     return results
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 5: COMPREHENSIVE RESULTS TABLE
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def save_comprehensive_results(
     ensemble_result: dict,
@@ -980,21 +1174,23 @@ def save_comprehensive_results(
     logger.info("SECTION 5 — COMPREHENSIVE RESULTS TABLE")
     logger.info("=" * 60)
 
-    m   = ensemble_result["ensemble_metrics"]
-    ci  = ensemble_result["ensemble_ci_95"]
+    m = ensemble_result["ensemble_metrics"]
+    ci = ensemble_result["ensemble_ci_95"]
     perm = permutation_result
 
     # ── Main metrics table (publication-ready) ────────────────────────────────
     rows = []
     for key in ("auc", "auprc", "f1", "accuracy", "sensitivity", "specificity"):
         lo, hi = ci.get(key, (float("nan"), float("nan")))
-        rows.append({
-            "metric":    key,
-            "value":     round(m[key], 4),
-            "ci_lower":  round(lo, 4),
-            "ci_upper":  round(hi, 4),
-            "ci_string": f"{m[key]:.4f} [{lo:.4f}, {hi:.4f}]",
-        })
+        rows.append(
+            {
+                "metric": key,
+                "value": round(m[key], 4),
+                "ci_lower": round(lo, 4),
+                "ci_upper": round(hi, 4),
+                "ci_string": f"{m[key]:.4f} [{lo:.4f}, {hi:.4f}]",
+            }
+        )
 
     df_main = pd.DataFrame(rows)
 
@@ -1003,11 +1199,13 @@ def save_comprehensive_results(
 
     # ── Subgroup ──────────────────────────────────────────────────────────────
     sg_rows = [{"subgroup": k, **v} for k, v in subgroup_result.items()]
-    df_sg   = pd.DataFrame(sg_rows)
+    df_sg = pd.DataFrame(sg_rows)
 
     # ── Baselines ─────────────────────────────────────────────────────────────
-    bl_rows = [{"method": k, "auc": v} for k, v in baseline_result.get("baselines", {}).items()]
-    df_bl   = pd.DataFrame(bl_rows).sort_values("auc", ascending=False)
+    bl_rows = [
+        {"method": k, "auc": v} for k, v in baseline_result.get("baselines", {}).items()
+    ]
+    df_bl = pd.DataFrame(bl_rows).sort_values("auc", ascending=False)
 
     # ── Save CSV ──────────────────────────────────────────────────────────────
     csv_path = output_dir / "comprehensive_results.csv"
@@ -1024,15 +1222,15 @@ def save_comprehensive_results(
 
     # ── Save JSON ─────────────────────────────────────────────────────────────
     full_results = {
-        "ensemble_metrics":  m,
-        "ensemble_ci_95":    ci,
-        "permutation_test":  perm,
+        "ensemble_metrics": m,
+        "ensemble_ci_95": ci,
+        "permutation_test": perm,
         "subgroup_analysis": subgroup_result,
         "baseline_comparison": baseline_result.get("baselines", {}),
-        "per_fold_metrics":  ensemble_result.get("per_fold_metrics", []),
+        "per_fold_metrics": ensemble_result.get("per_fold_metrics", []),
         "paired_ttest_val_vs_test": paired_ttest_result,
-        "ensemble_probs":   ensemble_result.get("ensemble_probs", []),
-        "labels":           ensemble_result.get("labels", []),
+        "ensemble_probs": ensemble_result.get("ensemble_probs", []),
+        "labels": ensemble_result.get("labels", []),
     }
     json_path = output_dir / "comprehensive_results.json"
     with open(json_path, "w") as f:
@@ -1043,20 +1241,34 @@ def save_comprehensive_results(
     logger.info("\n" + "═" * 65)
     logger.info("FINAL RESULTS SUMMARY")
     logger.info("═" * 65)
-    logger.info("  Ensemble AUC : %.4f [%.4f, %.4f]",
-                m["auc"], ci["auc"][0], ci["auc"][1])
-    logger.info("  Ensemble F1  : %.4f [%.4f, %.4f]",
-                m["f1"],  ci["f1"][0],  ci["f1"][1])
-    logger.info("  Accuracy     : %.4f [%.4f, %.4f]",
-                m["accuracy"], ci["accuracy"][0], ci["accuracy"][1])
-    logger.info("  Sensitivity  : %.4f [%.4f, %.4f]",
-                m["sensitivity"], ci["sensitivity"][0], ci["sensitivity"][1])
-    logger.info("  Specificity  : %.4f [%.4f, %.4f]",
-                m["specificity"], ci["specificity"][0], ci["specificity"][1])
+    logger.info(
+        "  Ensemble AUC : %.4f [%.4f, %.4f]", m["auc"], ci["auc"][0], ci["auc"][1]
+    )
+    logger.info("  Ensemble F1  : %.4f [%.4f, %.4f]", m["f1"], ci["f1"][0], ci["f1"][1])
+    logger.info(
+        "  Accuracy     : %.4f [%.4f, %.4f]",
+        m["accuracy"],
+        ci["accuracy"][0],
+        ci["accuracy"][1],
+    )
+    logger.info(
+        "  Sensitivity  : %.4f [%.4f, %.4f]",
+        m["sensitivity"],
+        ci["sensitivity"][0],
+        ci["sensitivity"][1],
+    )
+    logger.info(
+        "  Specificity  : %.4f [%.4f, %.4f]",
+        m["specificity"],
+        ci["specificity"][0],
+        ci["specificity"][1],
+    )
     logger.info("  AUPRC        : %.4f", m["auprc"])
-    logger.info("  p-value      : %.4f  (%s)",
-                perm.get("p_value", float("nan")),
-                "✓ significant" if perm.get("significant") else "✗ not significant")
+    logger.info(
+        "  p-value      : %.4f  (%s)",
+        perm.get("p_value", float("nan")),
+        "✓ significant" if perm.get("significant") else "✗ not significant",
+    )
     if "p_value_global" in perm and "p_value_within_site" in perm:
         logger.info(
             "  p-value(global / within-site): %.4f / %.4f",
@@ -1065,9 +1277,11 @@ def save_comprehensive_results(
         )
     logger.info("═" * 65)
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -1075,17 +1289,36 @@ def main() -> None:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
-    parser.add_argument("--no-permutation", action="store_true", default=False,
-                        help="Skip permutation significance testing.")
-    parser.add_argument("--n-permutations", type=int, default=1_000,
-                        help="Number of random label shuffles for permutation test.")
-    parser.add_argument("--no-baselines", action="store_true", default=False,
-                        help="Skip SVM / RF / MLP baseline training.")
-    parser.add_argument("--no-subgroups", action="store_true", default=False,
-                        help="Skip subgroup analysis.")
-    parser.add_argument("--enable-calibration", action="store_true", default=False,
-                        help="Enable per-site Platt calibration (default: disabled because it degrades AUC).")
-    parser.add_argument("--batch-size", type=int, default=GNN_BATCH_SIZE)
+    parser.add_argument(
+        "--no-permutation",
+        action="store_true",
+        default=False,
+        help="Skip permutation significance testing.",
+    )
+    parser.add_argument(
+        "--n-permutations",
+        type=int,
+        default=1_000,
+        help="Number of random label shuffles for permutation test.",
+    )
+    parser.add_argument(
+        "--no-baselines",
+        action="store_true",
+        default=False,
+        help="Skip SVM / RF / MLP baseline training.",
+    )
+    parser.add_argument(
+        "--no-subgroups",
+        action="store_true",
+        default=False,
+        help="Skip subgroup analysis.",
+    )
+    parser.add_argument(
+        "--enable-calibration",
+        action="store_true",
+        default=False,
+        help="Enable per-site Platt calibration (default: disabled because it degrades AUC).",
+    )
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -1097,10 +1330,10 @@ def main() -> None:
 
     # ── Load datasets ─────────────────────────────────────────────────────────
     logger.info("Loading datasets…")
-    test_dataset  = ABIDECausalDataset(split="test")
+    test_dataset = ABIDECausalDataset(split="test")
     train_dataset = ABIDECausalDataset(split="train")
-    test_graphs   = [g for g in test_dataset  if g is not None]
-    train_graphs  = [g for g in train_dataset if g is not None]
+    test_graphs = [g for g in test_dataset if g is not None]
+    train_graphs = [g for g in train_dataset if g is not None]
     logger.info("  Test: %d  Train: %d", len(test_graphs), len(train_graphs))
 
     if not test_graphs:
@@ -1108,29 +1341,41 @@ def main() -> None:
         sys.exit(1)
 
     # ── Section 1: Ensemble evaluation ────────────────────────────────────────
-    ensemble_result = run_ensemble_evaluation(test_graphs, args.output_dir, args.enable_calibration)
+    ensemble_result = run_ensemble_evaluation(
+        test_graphs, args.output_dir, args.enable_calibration
+    )
     ens_probs = np.array(ensemble_result["ensemble_probs"])
-    labels    = np.array(ensemble_result["labels"])
+    labels = np.array(ensemble_result["labels"])
 
     # ── Section 1B: Paired t-test (val AUC vs test AUC) ────────────────────────
     paired_ttest_result = run_paired_ttest(ensemble_result, args.output_dir)
 
     # ── Section 2: Permutation test ───────────────────────────────────────────
     if not args.no_permutation:
-        site_ids = np.array([
-            int(g.site_id.item())
-            if hasattr(g, "site_id") and g.site_id is not None and g.site_id.numel() > 0
-            else -1
-            for g in test_graphs
-        ])
+        site_ids = np.array(
+            [
+                (
+                    int(g.site_id.item())
+                    if hasattr(g, "site_id")
+                    and g.site_id is not None
+                    and g.site_id.numel() > 0
+                    else -1
+                )
+                for g in test_graphs
+            ]
+        )
         perm_global = run_permutation_test(
-            ens_probs, labels, n_permutations=args.n_permutations,
+            ens_probs,
+            labels,
+            n_permutations=args.n_permutations,
             output_dir=args.output_dir,
             within_site=False,
             plot_name="permutation_test_global.png",
         )
         perm_within_site = run_permutation_test(
-            ens_probs, labels, n_permutations=args.n_permutations,
+            ens_probs,
+            labels,
+            n_permutations=args.n_permutations,
             output_dir=args.output_dir,
             site_ids=site_ids,
             within_site=True,
@@ -1158,7 +1403,10 @@ def main() -> None:
         for fold_id in range(K_FOLDS):
             try:
                 model = load_model(fold_id=fold_id, device=DEVICE)
-                p, _  = _predict_probs(model, make_loader(test_graphs, batch_size=args.batch_size, shuffle=False))
+                p, _ = _predict_probs(
+                    model,
+                    make_loader(test_graphs, batch_size=GNN_BATCH_SIZE, shuffle=False),
+                )
                 fold_probs_dict[fold_id] = p
                 del model
             except FileNotFoundError:
@@ -1173,16 +1421,28 @@ def main() -> None:
     # ── Section 4: Baseline comparison ────────────────────────────────────────
     if not args.no_baselines:
         bl_result = run_baseline_comparison(
-            train_graphs, test_graphs, ensemble_result["ensemble_metrics"]["auc"],
+            train_graphs,
+            test_graphs,
+            ensemble_result["ensemble_metrics"]["auc"],
             np.array(ensemble_result.get("ensemble_probs", [])),
-            args.output_dir
+            args.output_dir,
         )
     else:
         logger.info("Skipping baseline comparison (--no-baselines)")
-        bl_result = {"baselines": {"GNN (Ours)": ensemble_result["ensemble_metrics"]["auc"]}}
+        bl_result = {
+            "baselines": {"GNN (Ours)": ensemble_result["ensemble_metrics"]["auc"]}
+        }
 
     # ── Section 5: Comprehensive results table ────────────────────────────────
-    save_comprehensive_results(ensemble_result, perm_result, sg_result, bl_result, paired_ttest_result, args.output_dir)
+    save_comprehensive_results(
+        ensemble_result,
+        perm_result,
+        sg_result,
+        bl_result,
+        paired_ttest_result,
+        args.output_dir,
+    )
+
 
 if __name__ == "__main__":
     main()

@@ -11,10 +11,12 @@ from sklearn.feature_selection import mutual_info_classif
 from sklearn.metrics import roc_auc_score
 
 # Targeted warning suppression for known harmless issues
-warnings.filterwarnings('ignore', category=DeprecationWarning, module='neuroHarmonize')
-warnings.filterwarnings('ignore', category=DeprecationWarning, module='torch_geometric')
-warnings.filterwarnings('ignore', message='.*CUDA initialization.*', category=UserWarning)
-warnings.filterwarnings('ignore', message='.*dataclass_transform.*')
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="neuroHarmonize")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="torch_geometric")
+warnings.filterwarnings(
+    "ignore", message=".*CUDA initialization.*", category=UserWarning
+)
+warnings.filterwarnings("ignore", message=".*dataclass_transform.*")
 
 # Setup paths and config
 from src.core.config import (
@@ -88,6 +90,7 @@ from src.analysis.diagnostics import CausalGraphAnalyzer, TrainingMonitor
 
 try:
     from src.analysis.feature_attribution import FeatureAttributionAnalyzer
+
     FEATURE_ANALYSIS_AVAILABLE = True
 except ImportError:
     FEATURE_ANALYSIS_AVAILABLE = False
@@ -99,16 +102,23 @@ from src.models.losses import CausalInvarianceLoss, SpatialInvarianceLoss
 
 # UTILITY FUNCTIONS
 
+
 @torch.no_grad()
 def evaluate(model, loader, threshold=0.5):
     """Compatibility wrapper around shared loader evaluation."""
     return evaluate_loader(model, loader, DEVICE, threshold=threshold)
 
+
 def _graph_site_id(graph_obj) -> int:
     """Extract integer site id from a graph sample."""
-    if hasattr(graph_obj, 'site_id') and graph_obj.site_id is not None and graph_obj.site_id.numel() > 0:
+    if (
+        hasattr(graph_obj, "site_id")
+        and graph_obj.site_id is not None
+        and graph_obj.site_id.numel() > 0
+    ):
         return int(graph_obj.site_id.view(-1)[0].item())
     return -1
+
 
 def _fit_mi_feature_selection(train_data):
     """Fit fold-internal MI feature selector on train fold only.
@@ -188,12 +198,14 @@ def _fit_mi_feature_selection(train_data):
     }
     return selected_idx.tolist(), mask, metadata
 
+
 def _apply_feature_mask(graphs, feature_mask: torch.Tensor) -> None:
     """Apply feature mask in-place without changing channel dimensionality."""
     if feature_mask is None:
         return
     for d in graphs:
         d.x = d.x * feature_mask.to(device=d.x.device, dtype=d.x.dtype).view(1, -1)
+
 
 def _fit_site_normalization_stats(train_data):
     """Fit per-site and global normalization stats on train fold only."""
@@ -216,13 +228,17 @@ def _fit_site_normalization_stats(train_data):
     global_std = global_cat.std(dim=0, keepdim=True).clamp_min(1e-6)
     return site_stats, (global_mean, global_std)
 
+
 def _apply_site_normalization(graphs, site_stats, global_stats) -> None:
     """Apply per-site normalization with fallback to global stats."""
     global_mean, global_std = global_stats
     for d in graphs:
         sid = _graph_site_id(d)
         mean, std = site_stats.get(int(sid), (global_mean, global_std))
-        d.x = (d.x - mean.to(device=d.x.device, dtype=d.x.dtype)) / std.to(device=d.x.device, dtype=d.x.dtype)
+        d.x = (d.x - mean.to(device=d.x.device, dtype=d.x.dtype)) / std.to(
+            device=d.x.device, dtype=d.x.dtype
+        )
+
 
 def _site_stats_to_serializable(site_stats):
     """Convert site stats dict to checkpoint-safe lists."""
@@ -233,7 +249,9 @@ def _site_stats_to_serializable(site_stats):
         stds[str(int(sid))] = std.squeeze(0).detach().cpu().numpy().tolist()
     return means, stds
 
+
 # MAIN TRAINING FUNCTION
+
 
 def _set_global_seed(seed: int = 42) -> None:
     """Set all random seeds for full reproducibility.
@@ -253,6 +271,7 @@ def _set_global_seed(seed: int = 42) -> None:
     torch.backends.cudnn.benchmark = False
     logger.info("Global seed set to %d (cuDNN deterministic mode enabled)", seed)
 
+
 def _compute_site_auc_values(
     probs: np.ndarray,
     labels: np.ndarray,
@@ -271,6 +290,7 @@ def _compute_site_auc_values(
             continue
         site_auc_values.append(float(roc_auc_score(labels[mask], probs[mask])))
     return site_auc_values
+
 
 def _assess_graph_degeneracy(dataset) -> dict:
     """Estimate degenerate-graph rate using unified edge/dead-lobe criterion."""
@@ -304,8 +324,11 @@ def _assess_graph_degeneracy(dataset) -> dict:
         "degenerate_graphs": degenerate_graphs,
         "degenerate_rate": degenerate_rate,
         "mean_edges": mean_edges,
-        "mean_dead_lobes": float(np.mean(dead_lobe_counts)) if dead_lobe_counts else 0.0,
+        "mean_dead_lobes": (
+            float(np.mean(dead_lobe_counts)) if dead_lobe_counts else 0.0
+        ),
     }
+
 
 def _assess_multiview_quality(multiview_dir: Path, sample_size: int = 0) -> dict:
     """Measure zero-edge rates per multiview branch.
@@ -333,7 +356,9 @@ def _assess_multiview_quality(multiview_dir: Path, sample_size: int = 0) -> dict
             continue
 
         views = payload.get("views", payload)
-        fallback_flags = payload.get("fallback_views", {}) if isinstance(payload, dict) else {}
+        fallback_flags = (
+            payload.get("fallback_views", {}) if isinstance(payload, dict) else {}
+        )
         if not isinstance(views, dict):
             continue
 
@@ -360,13 +385,9 @@ def _assess_multiview_quality(multiview_dir: Path, sample_size: int = 0) -> dict
             if view != "base" and bool(fallback_flags.get(view, False)):
                 fallback_counts[view] += 1
 
-    rates = {
-        view: (zero_counts[view] / max(checked, 1))
-        for view in view_order
-    }
+    rates = {view: (zero_counts[view] / max(checked, 1)) for view in view_order}
     fallback_rates = {
-        view: (fallback_counts[view] / max(checked, 1))
-        for view in fallback_counts
+        view: (fallback_counts[view] / max(checked, 1)) for view in fallback_counts
     }
     failing = [
         view
@@ -380,6 +401,7 @@ def _assess_multiview_quality(multiview_dir: Path, sample_size: int = 0) -> dict
         "fallback_rates": fallback_rates,
         "failing_views": failing,
     }
+
 
 def _run_training_once(
     *,
@@ -404,11 +426,11 @@ def _run_training_once(
 
     # Prime CSV/Feather caches before the dataset constructor reads them.
     _load_csv_cached(MASTER_MANIFEST)
-    _load_csv_cached(NODE_ATTRIBUTES_HARMONIZED, index_col='subject_id')
-    _load_csv_cached(NODE_FEATURES_3D, index_col='subject_id')
+    _load_csv_cached(NODE_ATTRIBUTES_HARMONIZED, index_col="subject_id")
+    _load_csv_cached(NODE_FEATURES_3D, index_col="subject_id")
 
     # Load dataset
-    dataset = ABIDECausalDataset(split='train')
+    dataset = ABIDECausalDataset(split="train")
 
     # Extract labels for stratification
     labels = []
@@ -417,7 +439,11 @@ def _run_training_once(
         data = dataset.get(i)
         if data is not None:
             labels.append(data.y.item())
-            if hasattr(data, 'site_id') and data.site_id is not None and data.site_id.numel() > 0:
+            if (
+                hasattr(data, "site_id")
+                and data.site_id is not None
+                and data.site_id.numel() > 0
+            ):
                 site_labels.append(int(data.site_id.view(-1)[0].item()))
             else:
                 site_labels.append(-1)
@@ -454,14 +480,16 @@ def _run_training_once(
 
     # Initialize tracking
     tracker = TrainingTracker(k_folds=K_FOLDS)
-    checkpoint_manager = CheckpointManager(checkpoint_dir, monitor='auc', mode='max')
+    checkpoint_manager = CheckpointManager(checkpoint_dir, monitor="auc", mode="max")
     experiment_tracker = ExperimentTracker(experiment_name=f"gnn_training_{run_name}")
     experiment_tracker.add_note("use_grl", use_grl)
     experiment_tracker.add_note("grl_alpha", float(grl_alpha))
     experiment_tracker.add_note("checkpoint_dir", str(checkpoint_dir))
 
     # Initialize training monitor for analysis
-    analysis_dir = RESULTS_TRAINING_DIR if run_post_analysis else (RESULTS_TRAINING_DIR / run_name)
+    analysis_dir = (
+        RESULTS_TRAINING_DIR if run_post_analysis else (RESULTS_TRAINING_DIR / run_name)
+    )
     analysis_dir.mkdir(parents=True, exist_ok=True)
     monitor = TrainingMonitor(analysis_dir, num_folds=K_FOLDS)
 
@@ -472,13 +500,17 @@ def _run_training_once(
     logger.info(f"Total subjects: {len(labels)} (curated ABIDE-I cohort)")
     logger.info(f"OneCycle max LR: {GNN_ONECYCLE_MAX_LR}")
     logger.info(f"Hidden channels: {GNN_HIDDEN_CHANNELS}")
-    logger.info(f"Input features: {GNN_IN_CHANNELS} (registry count={len(ALL_FEATURE_NAMES)})")
+    logger.info(
+        f"Input features: {GNN_IN_CHANNELS} (registry count={len(ALL_FEATURE_NAMES)})"
+    )
     logger.info(f"Site conditioning: {GNN_USE_SITE_EMBEDDING}")
     logger.info(f"Demographics: {GNN_USE_DEMOGRAPHICS}")
     logger.info(f"GRL enabled: {use_grl} (alpha_max={grl_alpha:.2f})")
     logger.info(f"Early stopping patience: {GNN_EARLY_STOPPING_PATIENCE}")
     if USE_FOCAL_LOSS:
-        logger.info(f"Loss: FocalLoss (α={FOCAL_LOSS_ALPHA}, γ={FOCAL_LOSS_GAMMA}, class_weights={USE_CLASS_WEIGHTS})")
+        logger.info(
+            f"Loss: FocalLoss (α={FOCAL_LOSS_ALPHA}, γ={FOCAL_LOSS_GAMMA}, class_weights={USE_CLASS_WEIGHTS})"
+        )
     else:
         logger.info(f"Loss: CrossEntropy (class_weights={USE_CLASS_WEIGHTS})")
     logger.info(f"Threshold policy: {EVAL_THRESHOLD_POLICY}")
@@ -502,13 +534,13 @@ def _run_training_once(
     logger.info(f"{'='*70}\n")
 
     # K-fold cross-validation (strict manifest-only enforcement)
-    if 'cv_fold' not in dataset.manifest.columns:
+    if "cv_fold" not in dataset.manifest.columns:
         raise ValueError(
             "cv_fold column not found in manifest. "
             "Run split.py first to generate predefined CV folds."
         )
 
-    cv_folds = dataset.manifest['cv_fold'].values
+    cv_folds = dataset.manifest["cv_fold"].values
     if cv_folds.min() < 0 or cv_folds.max() >= K_FOLDS:
         raise ValueError(
             f"Invalid cv_fold values: found [{cv_folds.min()}, {cv_folds.max()}], "
@@ -526,7 +558,8 @@ def _run_training_once(
     base_subject_ids = [str(s) for s in dataset.subject_ids]
     # Hard assertion: fold-harmonized files must exist if we reach training
     missing_fold_files = [
-        f for f in range(K_FOLDS)
+        f
+        for f in range(K_FOLDS)
         if not (HARMONIZED_FOLDS_DIR / f"harmonized_fold_{f}.csv").exists()
     ]
     if missing_fold_files:
@@ -545,9 +578,19 @@ def _run_training_once(
             fold_audit = pd.read_csv(fold_audit_path)
             required_cols = {"unseen_row_count", "val_row_count"}
             if required_cols.issubset(set(fold_audit.columns)) and not fold_audit.empty:
-                val_rows = pd.to_numeric(fold_audit["val_row_count"], errors="coerce").fillna(0).astype(int)
-                unseen_rows = pd.to_numeric(fold_audit["unseen_row_count"], errors="coerce").fillna(0).astype(int)
-                all_unseen = bool((val_rows > 0).all() and (unseen_rows == val_rows).all())
+                val_rows = (
+                    pd.to_numeric(fold_audit["val_row_count"], errors="coerce")
+                    .fillna(0)
+                    .astype(int)
+                )
+                unseen_rows = (
+                    pd.to_numeric(fold_audit["unseen_row_count"], errors="coerce")
+                    .fillna(0)
+                    .astype(int)
+                )
+                all_unseen = bool(
+                    (val_rows > 0).all() and (unseen_rows == val_rows).all()
+                )
                 if all_unseen:
                     raise RuntimeError(
                         "Detected fold_unseen_site_audit with 100% unseen validation rows in all folds. "
@@ -558,11 +601,12 @@ def _run_training_once(
         except RuntimeError:
             raise
         except Exception as exc:
-            logger.warning("Failed to parse unseen-site audit (%s): %s", fold_audit_path, exc)
+            logger.warning(
+                "Failed to parse unseen-site audit (%s): %s", fold_audit_path, exc
+            )
 
-    multiview_present = (
-        CAUSAL_GRAPHS_MULTIVIEW_DIR.exists()
-        and any(CAUSAL_GRAPHS_MULTIVIEW_DIR.glob("*/multiview_graphs.pt"))
+    multiview_present = CAUSAL_GRAPHS_MULTIVIEW_DIR.exists() and any(
+        CAUSAL_GRAPHS_MULTIVIEW_DIR.glob("*/multiview_graphs.pt")
     )
 
     multiview_available = multiview_present
@@ -603,7 +647,9 @@ def _run_training_once(
             )
 
     invariance_enabled = multiview_available and GNN_INVARIANCE_WEIGHT > 0.0
-    invariance_criterion = CausalInvarianceLoss(temperature=0.07) if invariance_enabled else None
+    invariance_criterion = (
+        CausalInvarianceLoss(temperature=0.07) if invariance_enabled else None
+    )
     if invariance_enabled:
         logger.info(
             "Multi-view causal graphs detected — enabling CausalInvarianceLoss (weight=%.3f).",
@@ -620,7 +666,9 @@ def _run_training_once(
                 "Multi-view graphs detected but disabled by quality gate — training uses single-view objective."
             )
         else:
-            logger.info("No multi-view graphs detected — training falls back to standard single-view objective.")
+            logger.info(
+                "No multi-view graphs detected — training falls back to standard single-view objective."
+            )
 
     site_auc_values = []
     unique_sites = sorted({s for s in site_labels if s >= 0})
@@ -636,13 +684,15 @@ def _run_training_once(
         logger.info(f"FOLD {fold+1}/{K_FOLDS}")
         logger.info(f"{'='*70}")
 
-        _set_global_seed(GNN_SEED)  # deterministic initialisation (same seed for all folds)
+        _set_global_seed(
+            GNN_SEED
+        )  # deterministic initialisation (same seed for all folds)
         fold_start_time = time.time()
 
         # Enforce fold-specific harmonized features (no global fallback).
         fold_temporal_path = HARMONIZED_FOLDS_DIR / f"harmonized_fold_{fold}.csv"
         candidate_dataset = ABIDECausalDataset(
-            split='train',
+            split="train",
             temporal_features_path=fold_temporal_path,
         )
         candidate_subject_ids = [str(s) for s in candidate_dataset.subject_ids]
@@ -653,7 +703,9 @@ def _run_training_once(
             )
             # Still verify no duplicate or invalid subjects
             if len(set(candidate_subject_ids)) != len(candidate_subject_ids):
-                raise ValueError(f"Fold {fold} has duplicate subjects in harmonized file")
+                raise ValueError(
+                    f"Fold {fold} has duplicate subjects in harmonized file"
+                )
         fold_dataset = candidate_dataset
         logger.info("Using fold-specific harmonized features: %s", fold_temporal_path)
 
@@ -672,12 +724,20 @@ def _run_training_once(
 
         train_labels = [d.y.item() for d in train_data]
         val_labels = [d.y.item() for d in val_data]
-        val_site_ids = np.array([
-            int(d.site_id.view(-1)[0].item()) if hasattr(d, 'site_id') and d.site_id is not None else -1
-            for d in val_data
-        ])
+        val_site_ids = np.array(
+            [
+                (
+                    int(d.site_id.view(-1)[0].item())
+                    if hasattr(d, "site_id") and d.site_id is not None
+                    else -1
+                )
+                for d in val_data
+            ]
+        )
 
-        logger.info(f"Train: Control={train_labels.count(0)}, ASD={train_labels.count(1)}")
+        logger.info(
+            f"Train: Control={train_labels.count(0)}, ASD={train_labels.count(1)}"
+        )
         logger.info(f"Val: Control={val_labels.count(0)}, ASD={val_labels.count(1)}")
 
         preprocess_mode = str(GNN_FOLD_PREPROCESSING_MODE).strip().lower()
@@ -705,13 +765,17 @@ def _run_training_once(
                     d.x = (d.x - feat_mean) / feat_std
                 for d in val_data:
                     d.x = (d.x - feat_mean) / feat_std
-                logger.info("Applied legacy fold-global feature standardization (train-fit only)")
+                logger.info(
+                    "Applied legacy fold-global feature standardization (train-fit only)"
+                )
             else:
                 feat_mean = torch.zeros((1, GNN_IN_CHANNELS), dtype=torch.float32)
                 feat_std = torch.ones((1, GNN_IN_CHANNELS), dtype=torch.float32)
         else:
             if GNN_MI_FEATURE_SELECTION_ENABLED and train_data:
-                selected_feature_idx, feature_mask, feature_selection_meta = _fit_mi_feature_selection(train_data)
+                selected_feature_idx, feature_mask, feature_selection_meta = (
+                    _fit_mi_feature_selection(train_data)
+                )
                 n_retained = int(feature_mask.sum().item())
                 logger.info(
                     "Fold %d: MI selection retained %d/%d features",
@@ -749,10 +813,14 @@ def _run_training_once(
                 feat_mean = torch.zeros((1, GNN_IN_CHANNELS), dtype=torch.float32)
                 feat_std = torch.ones((1, GNN_IN_CHANNELS), dtype=torch.float32)
             elif site_norm_mode == "within_site":
-                site_stats, (feat_mean, feat_std) = _fit_site_normalization_stats(train_data)
+                site_stats, (feat_mean, feat_std) = _fit_site_normalization_stats(
+                    train_data
+                )
                 _apply_site_normalization(train_data, site_stats, (feat_mean, feat_std))
                 _apply_site_normalization(val_data, site_stats, (feat_mean, feat_std))
-                site_feature_means, site_feature_stds = _site_stats_to_serializable(site_stats)
+                site_feature_means, site_feature_stds = _site_stats_to_serializable(
+                    site_stats
+                )
                 logger.info(
                     "Applied fold within-site normalization (train-fit only, %d site profiles)",
                     len(site_feature_means),
@@ -795,7 +863,9 @@ def _run_training_once(
             weight_asd = total / (2 * n_asd)
             torch.tensor([weight_control, weight_asd], dtype=torch.float32).to(DEVICE)
             logger.info(f"Class distribution: Control={n_control}, ASD={n_asd}")
-            logger.info(f"Class weights: Control={weight_control:.3f}, ASD={weight_asd:.3f}")
+            logger.info(
+                f"Class weights: Control={weight_control:.3f}, ASD={weight_asd:.3f}"
+            )
 
         criterion = build_criterion(
             train_labels,
@@ -843,22 +913,23 @@ def _run_training_once(
         )
 
         for entry in history:
-            if entry['epoch'] % 10 == 0:
+            if entry["epoch"] % 10 == 0:
                 monitor.log_epoch(
                     fold_id=fold,
-                    epoch=entry['epoch'],
+                    epoch=entry["epoch"],
                     metrics={
-                        'train_loss': entry['train_loss'],
-                        'val_loss': entry['val_loss'],
-                        'val_inverse_auc': 1.0 - entry['auc'],  # inverse AUC for monitoring
-                        'val_auc': entry['auc'],
-                        'val_auprc': entry['auprc'],
-                        'val_f1': entry['f1'],
-                        'val_acc': entry['acc'],
-                        'lr': entry['lr']
+                        "train_loss": entry["train_loss"],
+                        "val_loss": entry["val_loss"],
+                        "val_inverse_auc": 1.0
+                        - entry["auc"],  # inverse AUC for monitoring
+                        "val_auc": entry["auc"],
+                        "val_auprc": entry["auprc"],
+                        "val_f1": entry["f1"],
+                        "val_acc": entry["acc"],
+                        "lr": entry["lr"],
                     },
-                    grad_norm=entry.get('grad_norm', 0.0),
-                    confusion_matrix=entry['cm']
+                    grad_norm=entry.get("grad_norm", 0.0),
+                    confusion_matrix=entry["cm"],
                 )
                 logger.info(
                     f"Epoch {entry['epoch']:03d} | LR: {entry['lr']:.6f} | Loss: {entry['train_loss']:.4f} | "
@@ -868,22 +939,24 @@ def _run_training_once(
 
         model.load_state_dict(best_state)
         checkpoint_metrics = {
-            'auc': best_metrics['auc'],
-            'auprc': best_metrics['auprc'],
-            'f1': best_metrics['f1'],
-            'threshold': best_metrics['threshold'],
+            "auc": best_metrics["auc"],
+            "auprc": best_metrics["auprc"],
+            "f1": best_metrics["f1"],
+            "threshold": best_metrics["threshold"],
             # Persist fold-wise preprocessing metadata for inference-time parity.
-            'feature_mean': feat_mean.squeeze(0).cpu().numpy().tolist(),
-            'feature_std': feat_std.squeeze(0).cpu().numpy().tolist(),
-            'feature_mask': feature_mask.cpu().numpy().tolist(),
-            'selected_feature_idx': [int(i) for i in selected_feature_idx],
-            'feature_selection_meta': feature_selection_meta,
-            'site_feature_means': site_feature_means,
-            'site_feature_stds': site_feature_stds,
-            'preprocessing_mode': preprocess_mode,
-            'site_normalization_mode': site_norm_mode,
+            "feature_mean": feat_mean.squeeze(0).cpu().numpy().tolist(),
+            "feature_std": feat_std.squeeze(0).cpu().numpy().tolist(),
+            "feature_mask": feature_mask.cpu().numpy().tolist(),
+            "selected_feature_idx": [int(i) for i in selected_feature_idx],
+            "feature_selection_meta": feature_selection_meta,
+            "site_feature_means": site_feature_means,
+            "site_feature_stds": site_feature_stds,
+            "preprocessing_mode": preprocess_mode,
+            "site_normalization_mode": site_norm_mode,
         }
-        checkpoint_manager.save(model, None, best_metrics['best_epoch'], checkpoint_metrics, fold=fold)
+        checkpoint_manager.save(
+            model, None, best_metrics["best_epoch"], checkpoint_metrics, fold=fold
+        )
 
         logger.info(
             f"✓ Best fold {fold}: AUC={best_metrics['auc']:.4f}, "
@@ -891,16 +964,16 @@ def _run_training_once(
         )
 
         # Final evaluation with best checkpoint
-        final_threshold = best_metrics['threshold']
+        final_threshold = best_metrics["threshold"]
         final_metrics = evaluate(model, val_loader, threshold=final_threshold)
         site_auc_values.extend(
             _compute_site_auc_values(
-                final_metrics['probs'],
-                final_metrics['labels'],
+                final_metrics["probs"],
+                final_metrics["labels"],
                 val_site_ids,
             )
         )
-        best_epoch = best_metrics['best_epoch']
+        best_epoch = best_metrics["best_epoch"]
 
         fold_train_time = time.time() - fold_start_time
 
@@ -909,7 +982,9 @@ def _run_training_once(
         logger.info(f"  Best epoch: {best_epoch}")
         logger.info(f"  Training time: {fold_train_time:.1f}s")
         logger.info(f"  AUC: {final_metrics['auc']:.4f}")
-        logger.info(f"  F1: {final_metrics['f1']:.4f} (threshold={final_threshold:.3f})")
+        logger.info(
+            f"  F1: {final_metrics['f1']:.4f} (threshold={final_threshold:.3f})"
+        )
         logger.info(f"  Accuracy: {final_metrics['acc']:.4f}")
         logger.info("  Confusion Matrix:")
         logger.info(f"    {final_metrics['cm']}")
@@ -917,24 +992,24 @@ def _run_training_once(
         # Track results
         tracker.add_fold_result(
             fold=fold,
-            auc=final_metrics['auc'],
-            f1=final_metrics['f1'],
-            acc=final_metrics['acc'],
+            auc=final_metrics["auc"],
+            f1=final_metrics["f1"],
+            acc=final_metrics["acc"],
             threshold=final_threshold,
             best_epoch=best_epoch,
             train_time=fold_train_time,
-            val_probs=final_metrics['probs'],
-            val_labels=final_metrics['labels']
+            val_probs=final_metrics["probs"],
+            val_labels=final_metrics["labels"],
         )
         experiment_tracker.log_fold(
             fold=fold,
             metrics={
-                'auc': float(final_metrics['auc']),
-                'f1': float(final_metrics['f1']),
-                'acc': float(final_metrics['acc']),
-                'threshold': float(final_threshold),
-                'best_epoch': int(best_epoch),
-                'train_time_sec': float(fold_train_time),
+                "auc": float(final_metrics["auc"]),
+                "f1": float(final_metrics["f1"]),
+                "acc": float(final_metrics["acc"]),
+                "threshold": float(final_threshold),
+                "best_epoch": int(best_epoch),
+                "train_time_sec": float(fold_train_time),
             },
         )
 
@@ -950,14 +1025,16 @@ def _run_training_once(
     # Log cross-validation summary
     tracker.log_summary()
     summary = tracker.get_summary()
-    site_auc_variance = float(np.var(site_auc_values)) if site_auc_values else float('inf')
+    site_auc_variance = (
+        float(np.var(site_auc_values)) if site_auc_values else float("inf")
+    )
     experiment_tracker.finalize(
         {
             **summary,
-            'run_name': run_name,
-            'grl_alpha': float(grl_alpha),
-            'site_auc_variance': site_auc_variance,
-            'site_auc_count': len(site_auc_values),
+            "run_name": run_name,
+            "grl_alpha": float(grl_alpha),
+            "site_auc_variance": site_auc_variance,
+            "site_auc_count": len(site_auc_values),
         }
     )
     logger.info(
@@ -980,10 +1057,9 @@ def _run_training_once(
             from src.features.graph_factory import ABIDECausalDataset
 
             # Load test set
-            test_dataset = ABIDECausalDataset(split='test')
+            test_dataset = ABIDECausalDataset(split="test")
             test_loader = make_loader(
-                [d for d in test_dataset if d is not None],
-                batch_size=GNN_BATCH_SIZE
+                [d for d in test_dataset if d is not None], batch_size=GNN_BATCH_SIZE
             )
 
             # Define feature names (8 temporal + 6 spatial)
@@ -1014,13 +1090,14 @@ def _run_training_once(
             attributions = feature_analyzer.compute_attributions()
 
             # Visualize and save
-            feature_output = analysis_dir / 'features'
+            feature_output = analysis_dir / "features"
             feature_output.mkdir(parents=True, exist_ok=True)
             feature_analyzer.visualize_feature_importance(
-                attributions,
-                feature_output / 'feature_importance.png'
+                attributions, feature_output / "feature_importance.png"
             )
-            logger.info(f"  Feature importance plot saved to: {feature_output / 'feature_importance.png'}")
+            logger.info(
+                f"  Feature importance plot saved to: {feature_output / 'feature_importance.png'}"
+            )
 
         except Exception as e:
             logger.warning(f"Feature attribution analysis failed: {e}")
@@ -1031,7 +1108,7 @@ def _run_training_once(
             logger.info("\nRunning causal graph analysis...")
 
             # Load manifest
-            manifest_path = DATA_METADATA / 'master_manifest.csv'
+            manifest_path = DATA_METADATA / "master_manifest.csv"
             manifest = pd.read_csv(manifest_path)
 
             # Compute graph properties
@@ -1039,12 +1116,9 @@ def _run_training_once(
             graph_metrics = graph_analyzer.compute_graph_properties()
 
             # Compare ASD vs Control
-            graph_output = analysis_dir / 'graphs'
+            graph_output = analysis_dir / "graphs"
             graph_output.mkdir(parents=True, exist_ok=True)
-            graph_analyzer.compare_asd_vs_control(
-                graph_metrics,
-                graph_output
-            )
+            graph_analyzer.compare_asd_vs_control(graph_metrics, graph_output)
             logger.info(f"  Graph analysis plots saved to: {graph_output}")
 
         except Exception as e:
@@ -1058,10 +1132,11 @@ def _run_training_once(
     return {
         "run_name": run_name,
         "grl_alpha": grl_alpha,
-        "mean_auc": float(summary.get('mean_auc', 0.0)),
+        "mean_auc": float(summary.get("mean_auc", 0.0)),
         "site_auc_variance": site_auc_variance,
         "site_auc_count": len(site_auc_values),
     }
+
 
 def run_training():
     """Entry point for model training with optional GRL alpha grid search."""
@@ -1089,7 +1164,9 @@ def run_training():
             )
 
         if not candidate_results:
-            logger.warning("GRL grid search produced no valid results; falling back to config defaults")
+            logger.warning(
+                "GRL grid search produced no valid results; falling back to config defaults"
+            )
             return _run_training_once(
                 use_grl=GNN_USE_GRL,
                 grl_alpha=GNN_GRL_ALPHA,
@@ -1100,9 +1177,13 @@ def run_training():
 
         best_mean_auc = max(r["mean_auc"] for r in candidate_results)
         viable = [r for r in candidate_results if r["mean_auc"] >= best_mean_auc - 0.01]
-        selected = min(viable, key=lambda r: r["site_auc_variance"]) if viable else max(
-            candidate_results,
-            key=lambda r: r["mean_auc"],
+        selected = (
+            min(viable, key=lambda r: r["site_auc_variance"])
+            if viable
+            else max(
+                candidate_results,
+                key=lambda r: r["mean_auc"],
+            )
         )
         selected_alpha = float(selected["grl_alpha"])
 
@@ -1129,7 +1210,9 @@ def run_training():
         run_post_analysis=True,
     )
 
+
 # CLI
+
 
 def parse_args():
     """Parse command-line arguments for GNN training.
@@ -1138,9 +1221,16 @@ def parse_args():
         Parsed arguments with optional seed override.
     """
     import argparse
+
     parser = argparse.ArgumentParser(description="Neuro-CXG GNN Training")
-    parser.add_argument("--seed", type=int, default=None, help="Random seed (default: uses GNN_SEED from config)")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed (default: uses GNN_SEED from config)",
+    )
     return parser.parse_args()
+
 
 if __name__ == "__main__":
     args = parse_args()

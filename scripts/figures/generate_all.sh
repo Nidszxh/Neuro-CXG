@@ -15,11 +15,11 @@ echo "========================================"
 mkdir -p results/paper_figures/
 
 # Run main figure generation script
-echo "[1/3] Running generate_paper_figures.py..."
+echo "[1/4] Running generate_paper_figures.py..."
 python3 src/analysis/generate_paper_figures.py --output results/paper_figures/
 
 # Generate architecture diagram (from Mermaid in docs/architecture.md)
-echo "[2/3] Generating architecture diagram..."
+echo "[2/4] Generating architecture diagram..."
 if command -v mermaid &> /dev/null; then
     mermaid docs/architecture.md -o results/paper_figures/
 elif [ -f "results/paper_figures/architecture_diagram.png" ]; then

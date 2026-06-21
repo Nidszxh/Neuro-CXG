@@ -10,7 +10,6 @@ DATA_PROCESSED = DATA_ROOT / "processed"
 DATA_TIME_SERIES = DATA_PROCESSED / "time_series"
 DATA_FINAL = DATA_ROOT / "final"
 DATA_IMAGES = DATA_ROOT / "images"
-DATA_LABELS = DATA_ROOT / "labels"
 DATA_ATLASES = DATA_ROOT / "raw" / "atlases"
 DATA_METADATA = DATA_ROOT / "metadata"
 
@@ -33,7 +32,6 @@ RESULTS_TRAINING_DIR = RESULTS_DIR / "experiments" / "training"
 RESULTS_ABLATIONS_DIR = RESULTS_DIR / "experiments" / "ablations"
 RESULTS_DATA_QUALITY_DIR = RESULTS_DIR / "experiments" / "data_quality"
 RESULTS_EVALUATION_DIR = RESULTS_DIR / "evaluation"
-RESULTS_FIGURES_DIR = RESULTS_DIR / "figures"
 CONFIG_DIR = PROJECT_ROOT / "configs"
 
 # --- FILE PATHS ---

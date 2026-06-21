@@ -16,11 +16,12 @@ while keeping PyTorch raw (no pytorch-lightning dependency).
 import hashlib
 import logging
 import os
+import pickle
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -41,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 def attach_feature_scaler_from_checkpoint(
-    model: torch.nn.Module,
+    model: Any,
     checkpoint: dict[str, Any],
     expected_dim: int | None = None,
 ) -> bool:
@@ -70,15 +71,21 @@ def attach_feature_scaler_from_checkpoint(
         try:
             mean_t = torch.as_tensor(feature_mean, dtype=torch.float32).view(-1)
             std_t = torch.as_tensor(feature_std, dtype=torch.float32).view(-1)
-            if mean_t.numel() == 0 or std_t.numel() == 0 or mean_t.numel() != std_t.numel():
+            if (
+                mean_t.numel() == 0
+                or std_t.numel() == 0
+                or mean_t.numel() != std_t.numel()
+            ):
                 raise ValueError("invalid scaler shape")
             if expected_dim is not None and mean_t.numel() != int(expected_dim):
                 raise ValueError("scaler dim mismatch")
             model._feature_mean = mean_t
             model._feature_std = std_t.clamp_min(1e-06)
             attached = True
-        except Exception:
-            logger.warning("Ignoring malformed checkpoint feature scaler metadata")
+        except (ValueError, TypeError, RuntimeError) as e:
+            logger.warning(
+                "Ignoring malformed checkpoint feature scaler metadata: %s", e
+            )
 
     target_dim = int(expected_dim) if expected_dim is not None else None
 
@@ -91,15 +98,17 @@ def attach_feature_scaler_from_checkpoint(
                 raise ValueError("feature mask dim mismatch")
             model._feature_mask = mask_t
             attached = True
-        except Exception:
-            logger.warning("Ignoring malformed checkpoint feature_mask metadata")
+        except (ValueError, TypeError, RuntimeError) as e:
+            logger.warning("Ignoring malformed checkpoint feature_mask metadata: %s", e)
 
     selected_idx = checkpoint.get("selected_feature_idx")
     if isinstance(selected_idx, (list, tuple)):
         try:
             model._selected_feature_idx = [int(i) for i in selected_idx]
-        except Exception:
-            logger.warning("Ignoring malformed checkpoint selected_feature_idx metadata")
+        except (ValueError, TypeError) as e:
+            logger.warning(
+                "Ignoring malformed checkpoint selected_feature_idx metadata: %s", e
+            )
 
     preprocessing_mode = checkpoint.get("preprocessing_mode")
     if isinstance(preprocessing_mode, str) and preprocessing_mode.strip():
@@ -124,14 +133,18 @@ def attach_feature_scaler_from_checkpoint(
             try:
                 sid = int(sid_key)
                 mean_t = torch.as_tensor(mean_vals, dtype=torch.float32).view(-1)
-                std_t = torch.as_tensor(std_vals, dtype=torch.float32).view(-1).clamp_min(1e-6)
+                std_t = (
+                    torch.as_tensor(std_vals, dtype=torch.float32)
+                    .view(-1)
+                    .clamp_min(1e-6)
+                )
                 if mean_t.numel() == 0 or mean_t.numel() != std_t.numel():
                     raise ValueError("invalid site scaler shape")
                 if target_dim is not None and mean_t.numel() != target_dim:
                     raise ValueError("site scaler dim mismatch")
                 site_means[sid] = mean_t
                 site_stds[sid] = std_t
-            except Exception:
+            except (ValueError, TypeError, RuntimeError):
                 bad_sites += 1
 
         if site_means and site_stds:
@@ -139,7 +152,10 @@ def attach_feature_scaler_from_checkpoint(
             model._site_feature_stds = site_stds
             attached = True
         if bad_sites > 0:
-            logger.warning("Ignored malformed site-normalization metadata for %d site(s)", bad_sites)
+            logger.warning(
+                "Ignored malformed site-normalization metadata for %d site(s)",
+                bad_sites,
+            )
 
     return attached
 
@@ -178,12 +194,6 @@ def get_multiview_cache(maxsize: int = 512) -> _MultiviewCache:
     if _multiview_cache is None:
         _multiview_cache = _MultiviewCache(maxsize=maxsize)
     return _multiview_cache
-
-
-def reset_multiview_cache(maxsize: int = 512) -> None:
-    """Reset multiview cache for new training run."""
-    global _multiview_cache
-    _multiview_cache = _MultiviewCache(maxsize=maxsize)
 
 
 def make_loader(
@@ -230,13 +240,13 @@ class EarlyStopping:
             if early_stop(val_auc):
                 break
     """
-    def __init__(self, patience: int = 10, min_delta: float = 0.0, mode: str = 'max'):
+
+    def __init__(self, patience: int = 10, min_delta: float = 0.0, mode: str = "max"):
         self.patience = patience
         self.min_delta = min_delta
         self.mode = mode
         self.counter = 0
         self.best_score: float | None = None
-        self.early_stop = False
 
     def __call__(self, score: float) -> bool:
         """Check if training should stop. Returns True if stopping criterion met."""
@@ -245,7 +255,7 @@ class EarlyStopping:
             return False
 
         improved = False
-        if self.mode == 'max':
+        if self.mode == "max":
             improved = score > self.best_score + self.min_delta
         else:
             improved = score < self.best_score - self.min_delta
@@ -256,7 +266,9 @@ class EarlyStopping:
         else:
             self.counter += 1
             if self.counter >= self.patience:
-                logger.info(f"Early stopping triggered after {self.counter} epochs without improvement")
+                logger.info(
+                    f"Early stopping triggered after {self.counter} epochs without improvement"
+                )
                 return True
 
         return False
@@ -265,42 +277,12 @@ class EarlyStopping:
         """Reset state for new training run."""
         self.counter = 0
         self.best_score = None
-        self.early_stop = False
-
-
-class WarmupScheduler:
-    """
-    Linear learning rate warmup.
-
-    Gradually increases learning rate from 0 to base_lr over warmup_epochs.
-
-    Args:
-        optimizer: PyTorch optimizer
-        warmup_epochs: Number of epochs for warmup
-        base_lr: Target learning rate after warmup
-    """
-    def __init__(self, optimizer: torch.optim.Optimizer, warmup_epochs: int, base_lr: float):
-        self.optimizer = optimizer
-        self.warmup_epochs = warmup_epochs
-        self.base_lr = base_lr
-        self.current_epoch = 0
-
-    def step(self):
-        """Increment epoch and update learning rate."""
-        if self.current_epoch < self.warmup_epochs:
-            lr = self.base_lr * (self.current_epoch + 1) / self.warmup_epochs
-            for param_group in self.optimizer.param_groups:
-                param_group['lr'] = lr
-        self.current_epoch += 1
-
-    def reset(self):
-        """Reset for new training run."""
-        self.current_epoch = 0
 
 
 @dataclass
 class FoldMetrics:
     """Stores metrics for a single fold."""
+
     fold: int
     auc: float
     f1: float
@@ -325,20 +307,37 @@ class TrainingTracker:
                                     threshold=0.55, best_epoch=45)
         summary = tracker.get_summary()
     """
+
     def __init__(self, k_folds: int):
         self.k_folds = k_folds
         self.fold_results: list[FoldMetrics] = []
 
-    def add_fold_result(self, fold: int, auc: float, f1: float, acc: float,
-                        threshold: float, best_epoch: int, train_time: float = 0.0,
-                        val_probs: np.ndarray | None = None,
-                        val_labels: np.ndarray | None = None):
+    def add_fold_result(
+        self,
+        fold: int,
+        auc: float,
+        f1: float,
+        acc: float,
+        threshold: float,
+        best_epoch: int,
+        train_time: float = 0.0,
+        val_probs: np.ndarray | None = None,
+        val_labels: np.ndarray | None = None,
+    ):
         """Add results from a completed fold."""
-        self.fold_results.append(FoldMetrics(
-            fold=fold, auc=auc, f1=f1, acc=acc, threshold=threshold,
-            best_epoch=best_epoch, train_time=train_time,
-            val_probs=val_probs, val_labels=val_labels,
-        ))
+        self.fold_results.append(
+            FoldMetrics(
+                fold=fold,
+                auc=auc,
+                f1=f1,
+                acc=acc,
+                threshold=threshold,
+                best_epoch=best_epoch,
+                train_time=train_time,
+                val_probs=val_probs,
+                val_labels=val_labels,
+            )
+        )
 
     def get_summary(self) -> dict[str, Any]:
         """Compute summary statistics across all folds."""
@@ -352,17 +351,17 @@ class TrainingTracker:
         epochs = [r.best_epoch for r in self.fold_results]
 
         return {
-            'mean_auc': np.mean(aucs),
-            'std_auc': np.std(aucs),
-            'mean_f1': np.mean(f1s),
-            'std_f1': np.std(f1s),
-            'mean_acc': np.mean(accs),
-            'std_acc': np.std(accs),
-            'mean_threshold': np.mean(thresholds),
-            'mean_best_epoch': np.mean(epochs),
-            'per_fold_aucs': aucs,
-            'per_fold_f1s': f1s,
-            'per_fold_epochs': epochs,
+            "mean_auc": np.mean(aucs),
+            "std_auc": np.std(aucs),
+            "mean_f1": np.mean(f1s),
+            "std_f1": np.std(f1s),
+            "mean_acc": np.mean(accs),
+            "std_acc": np.std(accs),
+            "mean_threshold": np.mean(thresholds),
+            "mean_best_epoch": np.mean(epochs),
+            "per_fold_aucs": aucs,
+            "per_fold_f1s": f1s,
+            "per_fold_epochs": epochs,
         }
 
     def log_summary(self):
@@ -377,28 +376,17 @@ class TrainingTracker:
         logger.info(f"{'='*70}")
         logger.info(f"Mean AUC: {summary['mean_auc']:.4f} ± {summary['std_auc']:.4f}")
         logger.info(f"Mean F1: {summary['mean_f1']:.4f} ± {summary['std_f1']:.4f}")
-        logger.info(f"Mean Accuracy: {summary['mean_acc']:.4f} ± {summary['std_acc']:.4f}")
+        logger.info(
+            f"Mean Accuracy: {summary['mean_acc']:.4f} ± {summary['std_acc']:.4f}"
+        )
         logger.info(f"Mean Threshold: {summary['mean_threshold']:.3f}")
         logger.info(f"Mean Best Epoch: {summary['mean_best_epoch']:.1f}")
-        logger.info(f"\nPer-fold AUCs: {[f'{x:.4f}' for x in summary['per_fold_aucs']]}")
+        logger.info(
+            f"\nPer-fold AUCs: {[f'{x:.4f}' for x in summary['per_fold_aucs']]}"
+        )
         logger.info(f"Per-fold F1s: {[f'{x:.4f}' for x in summary['per_fold_f1s']]}")
         logger.info(f"Per-fold Best Epochs: {summary['per_fold_epochs']}")
         logger.info(f"{'='*70}\n")
-
-    def get_ensemble_predictions(self) -> tuple | None:
-        """
-        Get ensemble predictions by concatenating validation predictions from all folds.
-
-        Returns:
-            (probs, labels) tuple or None if no predictions stored
-        """
-        probs_list = [r.val_probs for r in self.fold_results if r.val_probs is not None]
-        labels_list = [r.val_labels for r in self.fold_results if r.val_labels is not None]
-
-        if not probs_list:
-            return None
-
-        return np.concatenate(probs_list), np.concatenate(labels_list)
 
 
 class CheckpointManager:
@@ -410,22 +398,29 @@ class CheckpointManager:
         monitor: Metric to monitor ('auc', 'f1', 'loss')
         mode: 'max' (higher is better) or 'min' (lower is better)
     """
-    def __init__(self, checkpoint_dir: Path, monitor: str = 'auc', mode: str = 'max'):
+
+    def __init__(self, checkpoint_dir: Path, monitor: str = "auc", mode: str = "max"):
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.monitor = monitor
         self.mode = mode
-        self.best_score = float('-inf') if mode == 'max' else float('inf')
+        self.best_score = float("-inf") if mode == "max" else float("inf")
         self.run_id = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
 
     def should_save(self, score: float) -> bool:
-        if self.mode == 'max':
+        if self.mode == "max":
             return score > self.best_score
         else:
             return score < self.best_score
 
-    def save(self, model: torch.nn.Module, optimizer: torch.optim.Optimizer | None,
-             epoch: int, metrics: dict[str, Any], fold: int | None = None):
+    def save(
+        self,
+        model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer | None,
+        epoch: int,
+        metrics: dict[str, Any],
+        fold: int | None = None,
+    ):
         """Save model checkpoint with metadata."""
         score = metrics.get(self.monitor)
         if score is None:
@@ -434,22 +429,31 @@ class CheckpointManager:
 
         if self.should_save(score):
             self.best_score = score
-            filename = f"best_model_fold{fold}.pt" if fold is not None else "best_model.pt"
+            filename = (
+                f"best_model_fold{fold}.pt" if fold is not None else "best_model.pt"
+            )
             filepath = self.checkpoint_dir / filename
             checkpoint = {
-                'model_state': model.state_dict(),
-                'epoch': epoch,
-                'run_id': self.run_id,
-                'timestamp': time.strftime("%Y%m%d_%H%M%S"),
+                "model_state": model.state_dict(),
+                "epoch": epoch,
+                "run_id": self.run_id,
+                "timestamp": time.strftime("%Y%m%d_%H%M%S"),
                 **metrics,
             }
             if optimizer is not None:
-                checkpoint['optimizer_state'] = optimizer.state_dict()
+                checkpoint["optimizer_state"] = optimizer.state_dict()
             torch.save(checkpoint, filepath)
-            logger.info(f"✓ Saved checkpoint: {filename} (epoch {epoch}, {self.monitor}={score:.4f})")
+            logger.info(
+                f"✓ Saved checkpoint: {filename} (epoch {epoch}, {self.monitor}={score:.4f})"
+            )
 
-    def load(self, model: torch.nn.Module, optimizer: torch.optim.Optimizer | None = None,
-             fold: int | None = None, allow_partial: bool = False) -> dict[str, Any]:
+    def load(
+        self,
+        model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer | None = None,
+        fold: int | None = None,
+        allow_partial: bool = False,
+    ) -> dict[str, Any]:
         """Load model checkpoint."""
         filename = f"best_model_fold{fold}.pt" if fold is not None else "best_model.pt"
         filepath = self.checkpoint_dir / filename
@@ -459,19 +463,20 @@ class CheckpointManager:
 
         checkpoint = torch.load(filepath, weights_only=True)
 
-        saved_auc = checkpoint.get('auc')
+        saved_auc = checkpoint.get("auc")
         if saved_auc is None:
             logger.warning("Checkpoint %s has no 'auc' metric.", filename)
         elif saved_auc < 0.60:
             logger.warning(
                 "Loaded checkpoint %s has low AUC=%.4f (<0.60). "
                 "This may be a collapsed fold; canonical run target is ~0.74 CV AUC.",
-                filename, saved_auc,
+                filename,
+                saved_auc,
             )
 
         if allow_partial:
             model_state = model.state_dict()
-            checkpoint_state = checkpoint['model_state']
+            checkpoint_state = checkpoint["model_state"]
             compatible_state = {}
             skipped_keys = []
             for key, value in checkpoint_state.items():
@@ -486,24 +491,27 @@ class CheckpointManager:
                     "This is expected when comparing models with different input dimensions."
                 )
         else:
-            model.load_state_dict(checkpoint['model_state'])
+            model.load_state_dict(checkpoint["model_state"])
 
-        if optimizer is not None and 'optimizer_state' in checkpoint:
-            optimizer.load_state_dict(checkpoint['optimizer_state'])
+        if optimizer is not None and "optimizer_state" in checkpoint:
+            optimizer.load_state_dict(checkpoint["optimizer_state"])
 
         scaler_attached = attach_feature_scaler_from_checkpoint(model, checkpoint)
         if scaler_attached:
             logger.info("Loaded fold preprocessing metadata from %s", filename)
 
-        logger.info(f"Loaded checkpoint: {filename} (epoch {checkpoint.get('epoch', 'unknown')})")
-        return checkpoint
+        logger.info(
+            f"Loaded checkpoint: {filename} (epoch {checkpoint.get('epoch', 'unknown')})"
+        )
+        return cast(dict[str, Any], checkpoint)
 
     def reset(self):
         """Reset best score for new training run."""
-        self.best_score = float('-inf') if self.mode == 'max' else float('inf')
+        self.best_score = float("-inf") if self.mode == "max" else float("inf")
 
 
 # ── TASK 1: Structural Learning Enforcement (DD-009) ────────────────────────────
+
 
 def _apply_structural_dropout(
     batch,
@@ -537,7 +545,9 @@ def _apply_structural_dropout(
     num_graphs = int(batch.batch.max().item()) + 1
 
     # Draw per-graph zero mask
-    zero_graph_mask = torch.rand(num_graphs, device=batch.x.device) < dropout_prob  # (G,)
+    zero_graph_mask = (
+        torch.rand(num_graphs, device=batch.x.device) < dropout_prob
+    )  # (G,)
 
     # Expand to node level via assignment vector
     node_zero_mask = zero_graph_mask[batch.batch]  # (N_total,)
@@ -573,7 +583,7 @@ class EdgeStructureContrastiveLoss(nn.Module):
 
     def forward(
         self,
-        z_full: torch.Tensor,       # (B, D) embeddings from full-feature pass
+        z_full: torch.Tensor,  # (B, D) embeddings from full-feature pass
         z_edge_only: torch.Tensor,  # (B, D) embeddings from edge-only pass
     ) -> torch.Tensor:
         B = z_full.size(0)
@@ -591,13 +601,15 @@ class EdgeStructureContrastiveLoss(nn.Module):
 
         # Mask out self-similarity from denominator
         eye = torch.eye(2 * B, dtype=torch.bool, device=z.device)
-        sim = sim.masked_fill(eye, float('-inf'))
+        sim = sim.masked_fill(eye, float("-inf"))
 
         # Positive pairs: index i (full) ↔ i+B (edge-only)
-        labels = torch.cat([
-            torch.arange(B, 2 * B, device=z.device),
-            torch.arange(0,  B, device=z.device),
-        ])
+        labels = torch.cat(
+            [
+                torch.arange(B, 2 * B, device=z.device),
+                torch.arange(0, B, device=z.device),
+            ]
+        )
 
         return F.cross_entropy(sim, labels)
 
@@ -658,7 +670,9 @@ def _extract_batch_subject_ids(batch, num_graphs: int) -> list[str] | None:
     return None
 
 
-def _load_multiview_package(file_path: Path, cache: _MultiviewCache | None = None) -> dict[str, torch.Tensor] | None:
+def _load_multiview_package(
+    file_path: Path, cache: _MultiviewCache | None = None
+) -> dict[str, torch.Tensor] | None:
     """Load and normalize one subject's multiview adjacency package."""
     if cache is None:
         cache = get_multiview_cache()
@@ -670,7 +684,8 @@ def _load_multiview_package(file_path: Path, cache: _MultiviewCache | None = Non
 
     try:
         payload = torch.load(file_path, map_location="cpu", weights_only=True)
-    except Exception:
+    except (FileNotFoundError, RuntimeError, pickle.UnpicklingError) as e:
+        logger.warning("Failed to load multiview package %s: %s", file_path, e)
         return None
 
     if not isinstance(payload, dict):
@@ -751,7 +766,9 @@ def _build_multiview_batches(batch, multiview_dir: Path) -> list | None:
             local_edges = (adj != 0).nonzero(as_tuple=False).t().contiguous()
 
             if local_edges.numel() == 0:
-                base_adj = graph_views["base"].to(device=device, dtype=torch.float32).clone()
+                base_adj = (
+                    graph_views["base"].to(device=device, dtype=torch.float32).clone()
+                )
                 base_adj.fill_diagonal_(0.0)
                 local_edges = (base_adj != 0).nonzero(as_tuple=False).t().contiguous()
                 adj = base_adj
@@ -776,8 +793,9 @@ def _build_multiview_batches(batch, multiview_dir: Path) -> list | None:
 
 # ── EPOCH-LEVEL TRAINING ─────────────────────────────────────────────────────────
 
+
 def train_one_epoch_with_accumulation(
-    model: torch.nn.Module,
+    model: Any,
     loader: torch.utils.data.DataLoader,
     optimizer: torch.optim.Optimizer,
     criterion: torch.nn.Module,
@@ -833,15 +851,19 @@ def train_one_epoch_with_accumulation(
     epoch_grad_norm = 0.0
 
     # Instantiate contrastive loss once per epoch (reuse temperature)
-    contrastive_fn = EdgeStructureContrastiveLoss(temperature=0.5) if edge_contrastive_weight > 0 else None
+    contrastive_fn = (
+        EdgeStructureContrastiveLoss(temperature=0.5)
+        if edge_contrastive_weight > 0
+        else None
+    )
 
     for i, data in enumerate(loader):
         if data is None:
             continue
 
-        x_raw = getattr(data, 'x', None)
-        edge_index_raw = getattr(data, 'edge_index', None)
-        batch_raw = getattr(data, 'batch', None)
+        x_raw = getattr(data, "x", None)
+        edge_index_raw = getattr(data, "edge_index", None)
+        batch_raw = getattr(data, "batch", None)
         if x_raw is None or edge_index_raw is None or batch_raw is None:
             logger.warning("Batch %d missing x/edge_index/batch; skipping batch", i)
             continue
@@ -851,7 +873,7 @@ def train_one_epoch_with_accumulation(
             logger.warning("Batch %d has zero nodes; skipping batch", i)
             continue
 
-        b_cpu = batch_raw.view(-1).detach().to(device='cpu').long()
+        b_cpu = batch_raw.view(-1).detach().to(device="cpu").long()
         if b_cpu.numel() != num_nodes:
             logger.error(
                 "Skipping batch %d due to batch vector mismatch: len(batch)=%d vs num_nodes=%d",
@@ -861,10 +883,12 @@ def train_one_epoch_with_accumulation(
             )
             continue
         if bool((b_cpu < 0).any()):
-            logger.error("Skipping batch %d due to negative graph indices in batch vector", i)
+            logger.error(
+                "Skipping batch %d due to negative graph indices in batch vector", i
+            )
             continue
 
-        ei_cpu = edge_index_raw.detach().to(device='cpu').long()
+        ei_cpu = edge_index_raw.detach().to(device="cpu").long()
         if ei_cpu.dim() != 2 or int(ei_cpu.size(0)) != 2:
             logger.error(
                 "Skipping batch %d due to malformed edge_index shape %s",
@@ -886,17 +910,17 @@ def train_one_epoch_with_accumulation(
                 continue
 
         # Validate/sanitize targets on CPU before any CUDA kernels run.
-        y_raw = getattr(data, 'y', None)
+        y_raw = getattr(data, "y", None)
         if y_raw is None:
             logger.warning("Batch %d missing labels; skipping batch", i)
             continue
 
-        y_cpu = y_raw.view(-1).detach().to(device='cpu').long()
+        y_cpu = y_raw.view(-1).detach().to(device="cpu").long()
         num_classes = 2
         try:
-            if hasattr(model, 'classifier') and len(model.classifier) > 0:
+            if hasattr(model, "classifier") and len(model.classifier) > 0:
                 num_classes = int(model.classifier[-1].out_features)
-        except Exception:
+        except (AttributeError, IndexError, TypeError):
             num_classes = 2
 
         # Common legacy encoding fix: DX_GROUP style {1,2} -> {0,1}.
@@ -918,9 +942,9 @@ def train_one_epoch_with_accumulation(
         data.y = y_cpu
 
         # Site IDs can also trigger CUDA asserts (embedding/cross-entropy indices).
-        site_raw = getattr(data, 'site_id', None)
-        if site_raw is not None and hasattr(model, 'site_embedding'):
-            site_cpu = site_raw.view(-1).detach().to(device='cpu').long()
+        site_raw = getattr(data, "site_id", None)
+        if site_raw is not None and hasattr(model, "site_embedding"):
+            site_cpu = site_raw.view(-1).detach().to(device="cpu").long()
             num_sites = int(model.site_embedding.num_embeddings)
             invalid_site = (site_cpu < 0) | (site_cpu >= num_sites)
             if bool(invalid_site.any()):
@@ -950,24 +974,34 @@ def train_one_epoch_with_accumulation(
         # ── Forward pass ────────────────────────────────────────────────────
         if use_grl:
             out, site_logits = model(
-                data.x, data.edge_index, data.edge_attr, data.batch,
-                getattr(data, 'site_id', None),
-                getattr(data, 'age', None),
-                getattr(data, 'sex', None),
-                getattr(data, 'fiq', None),
+                data.x,
+                data.edge_index,
+                data.edge_attr,
+                data.batch,
+                getattr(data, "site_id", None),
+                getattr(data, "age", None),
+                getattr(data, "sex", None),
+                getattr(data, "fiq", None),
                 return_site_logits=True,
             )
             class_loss = criterion(out, data.y)
-            site_targets = getattr(data, 'site_id', None)
+            site_targets = getattr(data, "site_id", None)
             if site_targets is None:
                 loss = class_loss
             else:
                 site_targets = site_targets.view(-1).long()
                 num_site_classes = int(site_logits.size(1))
-                valid_site_mask = (site_targets >= 0) & (site_targets < num_site_classes)
+                valid_site_mask = (site_targets >= 0) & (
+                    site_targets < num_site_classes
+                )
 
                 if not bool(valid_site_mask.all()):
-                    invalid_vals = torch.unique(site_targets[~valid_site_mask]).detach().cpu().tolist()
+                    invalid_vals = (
+                        torch.unique(site_targets[~valid_site_mask])
+                        .detach()
+                        .cpu()
+                        .tolist()
+                    )
                     logger.warning(
                         "Skipping invalid site_id values for GRL site loss: %s (valid range [0, %d])",
                         [int(v) for v in invalid_vals],
@@ -975,36 +1009,53 @@ def train_one_epoch_with_accumulation(
                     )
 
                 import torch.nn.functional as _F
+
                 if bool(valid_site_mask.any()):
-                    site_loss = _F.cross_entropy(site_logits[valid_site_mask], site_targets[valid_site_mask])
+                    site_loss = _F.cross_entropy(
+                        site_logits[valid_site_mask], site_targets[valid_site_mask]
+                    )
                     loss = class_loss + site_loss_weight * site_loss
                 else:
                     loss = class_loss
 
         else:
             if multiview_batches is not None:
-                assert invariance_loss_fn is not None, "invariance_loss_fn required when multiview_batches is not None"
-                logits_full, multiview_embeddings = model.forward_multiview(multiview_batches)
+                assert (
+                    invariance_loss_fn is not None
+                ), "invariance_loss_fn required when multiview_batches is not None"
+                logits_full, multiview_embeddings = model.forward_multiview(
+                    multiview_batches
+                )
                 emb_full = multiview_embeddings[0]
                 focal = criterion(logits_full, data.y)
                 invariance = invariance_loss_fn(multiview_embeddings)
                 loss = focal + invariance_weight * invariance
             elif hasattr(model, "_forward_with_embedding"):
                 logits_full, emb_full = model._forward_with_embedding(
-                    data.x, data.edge_index, data.edge_attr, data.batch,
-                    site_id=getattr(data, 'site_id', None),
-                    age=getattr(data, 'age', None),
-                    sex=getattr(data, 'sex', None),
-                    fiq=getattr(data, 'fiq', None),
+                    data.x,
+                    data.edge_index,
+                    data.edge_attr,
+                    data.batch,
+                    site_id=getattr(data, "site_id", None),
+                    age=getattr(data, "age", None),
+                    sex=getattr(data, "sex", None),
+                    fiq=getattr(data, "fiq", None),
                 )
                 loss = criterion(logits_full, data.y)
             else:
-                out = model.forward_batch(data) if hasattr(model, "forward_batch") else model(
-                    data.x, data.edge_index, data.edge_attr, data.batch,
-                    getattr(data, 'site_id', None),
-                    getattr(data, 'age', None),
-                    getattr(data, 'sex', None),
-                    getattr(data, 'fiq', None),
+                out = (
+                    model.forward_batch(data)
+                    if hasattr(model, "forward_batch")
+                    else model(
+                        data.x,
+                        data.edge_index,
+                        data.edge_attr,
+                        data.batch,
+                        getattr(data, "site_id", None),
+                        getattr(data, "age", None),
+                        getattr(data, "sex", None),
+                        getattr(data, "fiq", None),
+                    )
                 )
                 loss = criterion(out, data.y)
 
@@ -1014,15 +1065,20 @@ def train_one_epoch_with_accumulation(
                 and structural_dropout_prob > 0.0
                 and edge_contrastive_weight > 0.0
                 and contrastive_fn is not None
-                and hasattr(model, '_forward_with_embedding')
+                and hasattr(model, "_forward_with_embedding")
             ):
-                data_edge = _apply_structural_dropout(data, structural_dropout_prob, training=True)
+                data_edge = _apply_structural_dropout(
+                    data, structural_dropout_prob, training=True
+                )
                 _, emb_edge = model._forward_with_embedding(
-                    data_edge.x, data_edge.edge_index, data_edge.edge_attr, data_edge.batch,
-                    site_id=getattr(data_edge, 'site_id', None),
-                    age=getattr(data_edge, 'age', None),
-                    sex=getattr(data_edge, 'sex', None),
-                    fiq=getattr(data_edge, 'fiq', None),
+                    data_edge.x,
+                    data_edge.edge_index,
+                    data_edge.edge_attr,
+                    data_edge.batch,
+                    site_id=getattr(data_edge, "site_id", None),
+                    age=getattr(data_edge, "age", None),
+                    sex=getattr(data_edge, "sex", None),
+                    fiq=getattr(data_edge, "fiq", None),
                 )
                 contrastive = contrastive_fn(emb_full, emb_edge)
                 loss = loss + edge_contrastive_weight * contrastive
@@ -1039,10 +1095,15 @@ def train_one_epoch_with_accumulation(
         loss.backward()
 
         if (i + 1) % gradient_accumulation_steps == 0:
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                model.parameters(), max_norm=max_grad_norm
+            )
             optimizer.step()
             optimizer.zero_grad()
-            epoch_grad_norm = max(epoch_grad_norm, (grad_norm.item() if torch.is_tensor(grad_norm) else float(grad_norm)))
+            epoch_grad_norm = max(
+                epoch_grad_norm,
+                (grad_norm.item() if torch.is_tensor(grad_norm) else float(grad_norm)),
+            )
 
         total_loss += loss.item() * gradient_accumulation_steps
         num_batches += 1
@@ -1056,16 +1117,18 @@ def train_one_epoch_with_accumulation(
     return total_loss / max(num_batches, 1), epoch_grad_norm
 
 
-
-
 @torch.no_grad()
-def _evaluate_model(model: torch.nn.Module, loader: torch.utils.data.DataLoader,
-                    device: torch.device, threshold: float = 0.5) -> dict[str, Any]:
+def _evaluate_model(
+    model: torch.nn.Module,
+    loader: torch.utils.data.DataLoader,
+    device: torch.device,
+    threshold: float = 0.5,
+) -> dict[str, Any]:
     return evaluate_loader(model, loader, device, threshold=threshold)
 
 
 def train_fold_with_onecycle(
-    model: torch.nn.Module,
+    model: Any,
     train_loader: torch.utils.data.DataLoader,
     val_loader: torch.utils.data.DataLoader,
     criterion: torch.nn.Module,
@@ -1114,25 +1177,33 @@ def train_fold_with_onecycle(
         max_lr=max_lr,
         total_steps=epochs,
         pct_start=pct_start,
-        anneal_strategy='cos',
+        anneal_strategy="cos",
     )
 
-    early_stopping = EarlyStopping(patience=patience, min_delta=0.0001, mode='max')
+    early_stopping = EarlyStopping(patience=patience, min_delta=0.0001, mode="max")
     history = []
     best_state = None
     best_metrics = {
-        'auc': 0.0, 'auprc': 0.0, 'f1': 0.0, 'acc': 0.0,
-        'threshold': 0.5, 'best_epoch': 0,
+        "auc": 0.0,
+        "auprc": 0.0,
+        "f1": 0.0,
+        "acc": 0.0,
+        "threshold": 0.5,
+        "best_epoch": 0,
     }
 
     for epoch in range(1, epochs + 1):
         # Anneal GRL alpha (Ganin et al. 2016 schedule)
-        if use_grl and hasattr(model, 'set_grl_alpha'):
+        if use_grl and hasattr(model, "set_grl_alpha"):
             progress = (epoch - 1) / max(epochs - 1, 1)
             model.set_grl_alpha(progress, alpha_max=grl_alpha_max)
 
         loss, grad_norm = train_one_epoch_with_accumulation(
-            model, train_loader, optimizer, criterion, device,
+            model,
+            train_loader,
+            optimizer,
+            criterion,
+            device,
             gradient_accumulation_steps=gradient_accumulation_steps,
             site_loss_weight=grl_weight,
             use_grl=use_grl,
@@ -1148,36 +1219,43 @@ def train_fold_with_onecycle(
 
         metrics = _evaluate_model(model, val_loader, device, threshold=0.5)
         val_loss = metrics.get("loss", None)
-        opt_threshold, _ = resolve_threshold(metrics["probs"], metrics["labels"], EVAL_THRESHOLD_POLICY, EVAL_FIXED_THRESHOLD)
-        metrics_opt = _evaluate_model(model, val_loader, device, threshold=opt_threshold)
+        opt_threshold, _ = resolve_threshold(
+            metrics["probs"],
+            metrics["labels"],
+            EVAL_THRESHOLD_POLICY,
+            EVAL_FIXED_THRESHOLD,
+        )
+        metrics_opt = _evaluate_model(
+            model, val_loader, device, threshold=opt_threshold
+        )
 
         epoch_metrics = {
-            'epoch': epoch,
-            'train_loss': loss,
-            'val_loss': val_loss if val_loss is not None else loss,
-            'grad_norm': grad_norm,
-            'auc': metrics['auc'],
-            'auprc': metrics['auprc'],
-            'f1': metrics_opt['f1'],
-            'acc': metrics_opt['acc'],
-            'threshold': opt_threshold,
-            'cm': metrics_opt['cm'],
-            'lr': optimizer.param_groups[0]['lr'],
+            "epoch": epoch,
+            "train_loss": loss,
+            "val_loss": val_loss if val_loss is not None else loss,
+            "grad_norm": grad_norm,
+            "auc": metrics["auc"],
+            "auprc": metrics["auprc"],
+            "f1": metrics_opt["f1"],
+            "acc": metrics_opt["acc"],
+            "threshold": opt_threshold,
+            "cm": metrics_opt["cm"],
+            "lr": optimizer.param_groups[0]["lr"],
         }
         history.append(epoch_metrics)
 
-        if metrics['auc'] > best_metrics['auc']:
+        if metrics["auc"] > best_metrics["auc"]:
             best_metrics = {
-                'auc': metrics['auc'],
-                'auprc': metrics['auprc'],
-                'f1': metrics_opt['f1'],
-                'acc': metrics_opt['acc'],
-                'threshold': opt_threshold,
-                'best_epoch': epoch,
+                "auc": metrics["auc"],
+                "auprc": metrics["auprc"],
+                "f1": metrics_opt["f1"],
+                "acc": metrics_opt["acc"],
+                "threshold": opt_threshold,
+                "best_epoch": epoch,
             }
             best_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
 
-        should_stop = early_stopping(metrics['auc'])
+        should_stop = early_stopping(metrics["auc"])
         if epoch >= int(max(min_epochs_before_stopping, 0)) and should_stop:
             logger.info(
                 "Fold %s: early stopping at epoch %s (min_epochs=%s, patience=%s)",

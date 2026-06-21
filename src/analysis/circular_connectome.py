@@ -8,6 +8,7 @@ ASD and Control groups shown side-by-side.
 Usage:
     python src/analysis/circular_connectome.py --output results/paper_figures/
 """
+
 import argparse
 import logging
 import warnings
@@ -42,21 +43,16 @@ from src.core.config import (
 
 # Network membership for each lobe - sync with LOBE_TO_NETWORK from config
 NETWORK_MEMBERSHIP = {
-    i: NETWORK_NAMES.get(net, "Other")
-    for i, net in LOBE_TO_NETWORK.items()
+    i: NETWORK_NAMES.get(net, "Other") for i, net in LOBE_TO_NETWORK.items()
 }
 
 NETWORK_COLORS = {
-    "DMN": "#1f77b4",          # Blue
-    "Salience": "#ff7f0e",     # Orange
+    "DMN": "#1f77b4",  # Blue
+    "Salience": "#ff7f0e",  # Orange
     "Visual_Cerebellar": "#2ca02c",  # Green
-    "Limbic": "#d62728",       # Red
+    "Limbic": "#d62728",  # Red
 }
 
-def get_network_color(lobe_idx):
-    """Get network color for a lobe index."""
-    network = NETWORK_MEMBERSHIP.get(lobe_idx, "Other")
-    return NETWORK_COLORS.get(network, "#7f7f7f")
 
 def compute_group_average_causal(subject_ids, graphs_dir):
     """Compute average causal adjacency matrix for a group."""
@@ -75,8 +71,10 @@ def compute_group_average_causal(subject_ids, graphs_dir):
         return None
     return np.mean(np.stack(matrices), axis=0)
 
-def create_circular_connectome(adj_matrix, output_path, title="Causal Connectivity",
-                               top_edges=20):
+
+def create_circular_connectome(
+    adj_matrix, output_path, title="Causal Connectivity", top_edges=20
+):
     """Create circular connectome plot showing strongest edges.
 
     Uses two-tier rendering: strong edges thick/opaque, weaker edges thin/transparent.
@@ -116,7 +114,7 @@ def create_circular_connectome(adj_matrix, output_path, title="Causal Connectivi
 
     edges = list(G.edges())
     if edges:
-        all_weights = [G[u][v]['weight'] for u, v in edges]
+        all_weights = [G[u][v]["weight"] for u, v in edges]
         abs_weights = np.array([abs(w) for w in all_weights])
         max_abs_w = max(abs_weights)
         min_abs_w = min(abs_weights)
@@ -151,26 +149,41 @@ def create_circular_connectome(adj_matrix, output_path, title="Causal Connectivi
 
         if weak_edges:
             weak_idx = [i for i, m in enumerate(weak_mask) if m]
-            weak_colors = [cmap(norm(G[u][v]['weight'])) for u, v in weak_edges]
+            weak_colors = [cmap(norm(G[u][v]["weight"])) for u, v in weak_edges]
             weak_widths = [widths[i] for i in weak_idx]
             weak_alphas = [alphas[i] for i in weak_idx]
             nx.draw_networkx_edges(
-                G, pos, edgelist=weak_edges,
-                edge_color=weak_colors, width=weak_widths,
+                G,
+                pos,
+                edgelist=weak_edges,
+                edge_color=weak_colors,
+                width=weak_widths,
                 alpha=min(weak_alphas),  # Use minimum alpha for consistency
-                arrows=True, arrowsize=10, arrowstyle='-|>',
-                connectionstyle='arc3,rad=0.15', node_size=700, ax=ax
+                arrows=True,
+                arrowsize=10,
+                arrowstyle="-|>",
+                connectionstyle="arc3,rad=0.15",
+                node_size=700,
+                ax=ax,
             )
 
         if strong_edges:
             strong_idx = [i for i, m in enumerate(strong_mask) if m]
-            strong_colors = [cmap(norm(G[u][v]['weight'])) for u, v in strong_edges]
+            strong_colors = [cmap(norm(G[u][v]["weight"])) for u, v in strong_edges]
             strong_widths = [widths[i] for i in strong_idx]
             nx.draw_networkx_edges(
-                G, pos, edgelist=strong_edges,
-                edge_color=strong_colors, width=strong_widths, alpha=0.9,
-                arrows=True, arrowsize=14, arrowstyle='-|>',
-                connectionstyle='arc3,rad=0.15', node_size=700, ax=ax
+                G,
+                pos,
+                edgelist=strong_edges,
+                edge_color=strong_colors,
+                width=strong_widths,
+                alpha=0.9,
+                arrows=True,
+                arrowsize=14,
+                arrowstyle="-|>",
+                connectionstyle="arc3,rad=0.15",
+                node_size=700,
+                ax=ax,
             )
 
     # Draw nodes colored by network (smaller size to not obscure edges)
@@ -178,49 +191,78 @@ def create_circular_connectome(adj_matrix, output_path, title="Causal Connectivi
         nodes = [i for i in range(NUM_LOBES) if NETWORK_MEMBERSHIP.get(i) == network]
         if nodes:
             nx.draw_networkx_nodes(
-                G, pos,
+                G,
+                pos,
                 nodelist=nodes,
                 node_color=NETWORK_COLORS.get(network, "#7f7f7f"),
                 node_size=700,
                 alpha=0.95,
-                edgecolors='#333333',
+                edgecolors="#333333",
                 linewidths=1.5,
-                ax=ax
+                ax=ax,
             )
 
     # Draw labels
-    labels = {i: LOBE_NAMES[i].replace('_', '\n') for i in range(NUM_LOBES)}
-    nx.draw_networkx_labels(G, pos, labels, font_size=8, font_weight='bold', ax=ax)
+    labels = {i: LOBE_NAMES[i].replace("_", "\n") for i in range(NUM_LOBES)}
+    nx.draw_networkx_labels(G, pos, labels, font_size=8, font_weight="bold", ax=ax)
 
-    ax.set_title(f"{title}\n(Top {len(edges)} strongest edges shown)",
-                 fontsize=13, fontweight='bold', pad=20)
-    ax.axis('off')
+    ax.set_title(
+        f"{title}\n(Top {len(edges)} strongest edges shown)",
+        fontsize=13,
+        fontweight="bold",
+        pad=20,
+    )
+    ax.axis("off")
 
     # Add legend
     legend_elements = [
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color,
-                    markersize=10, label=network, markeredgecolor='#333333', markeredgewidth=1)
+        plt.Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor=color,
+            markersize=10,
+            label=network,
+            markeredgecolor="#333333",
+            markeredgewidth=1,
+        )
         for network, color in sorted(NETWORK_COLORS.items())
     ]
-    ax.legend(handles=legend_elements, loc='center left', bbox_to_anchor=(1.0, 0.5),
-              title='Network', fontsize=10, title_fontsize=11)
+    ax.legend(
+        handles=legend_elements,
+        loc="center left",
+        bbox_to_anchor=(1.0, 0.5),
+        title="Network",
+        fontsize=10,
+        title_fontsize=11,
+    )
 
     # Add colorbar for edge weights
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cbar = plt.colorbar(sm, ax=ax, fraction=0.04, pad=0.02)
-    cbar.set_label('Causal weight', fontsize=10)
+    cbar.set_label("Causal weight", fontsize=10)
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close()
     logger.info("Saved: %s (%d edges)", output_path, len(edges))
 
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--output', type=str, default=str(RESULTS_DIR / 'paper_figures' / 'causal_graphs'))
-    parser.add_argument('--top-edges', type=int, default=30,
-                       help='Number of strongest edges to show per plot (default: 30)')
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=str(RESULTS_DIR / "paper_figures" / "causal_graphs"),
+    )
+    parser.add_argument(
+        "--top-edges",
+        type=int,
+        default=30,
+        help="Number of strongest edges to show per plot (default: 30)",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output)
@@ -229,18 +271,30 @@ def main():
     # Load manifest
     if not MASTER_MANIFEST.exists():
         logger.error("%s not found", MASTER_MANIFEST)
-        logger.error("Run: python src/run_pipeline.py --auto --skip-download --skip-split")
+        logger.error(
+            "Run: python src/run_pipeline.py --auto --skip-download --skip-split"
+        )
         return
 
     manifest = pd.read_csv(MASTER_MANIFEST)
 
     # Get ASD and Control subjects
-    asd_subjects = manifest[manifest['DX_GROUP'] == 1]['subject_id'].astype(str).tolist()
-    control_subjects = manifest[manifest['DX_GROUP'] == 2]['subject_id'].astype(str).tolist()
+    asd_subjects = (
+        manifest[manifest["DX_GROUP"] == 1]["subject_id"].astype(str).tolist()
+    )
+    control_subjects = (
+        manifest[manifest["DX_GROUP"] == 2]["subject_id"].astype(str).tolist()
+    )
     if not control_subjects:
-        control_subjects = manifest[manifest['DX_GROUP'] == 0]['subject_id'].astype(str).tolist()
+        control_subjects = (
+            manifest[manifest["DX_GROUP"] == 0]["subject_id"].astype(str).tolist()
+        )
 
-    logger.info("Found %d ASD subjects, %d Control subjects", len(asd_subjects), len(control_subjects))
+    logger.info(
+        "Found %d ASD subjects, %d Control subjects",
+        len(asd_subjects),
+        len(control_subjects),
+    )
 
     # Compute average causal matrices
     logger.info("Computing ASD average causal matrix...")
@@ -255,30 +309,33 @@ def main():
         return
 
     # Generate circular connectome plots
-    logger.info("Generating circular connectome plots (top %d edges)...", args.top_edges)
+    logger.info(
+        "Generating circular connectome plots (top %d edges)...", args.top_edges
+    )
     create_circular_connectome(
         asd_avg,
-        output_dir / 'circular_connectome_ASD.png',
-        title='ASD: Causal Connectivity',
-        top_edges=args.top_edges
+        output_dir / "circular_connectome_ASD.png",
+        title="ASD: Causal Connectivity",
+        top_edges=args.top_edges,
     )
     create_circular_connectome(
         control_avg,
-        output_dir / 'circular_connectome_Control.png',
-        title='Control: Causal Connectivity',
-        top_edges=args.top_edges
+        output_dir / "circular_connectome_Control.png",
+        title="Control: Causal Connectivity",
+        top_edges=args.top_edges,
     )
 
     # Also generate difference plot
     diff_matrix = asd_avg - control_avg
     create_circular_connectome(
         diff_matrix,
-        output_dir / 'circular_connectome_Difference.png',
-        title='ASD - Control: Causal Connectivity Difference',
-        top_edges=args.top_edges
+        output_dir / "circular_connectome_Difference.png",
+        title="ASD - Control: Causal Connectivity Difference",
+        top_edges=args.top_edges,
     )
 
     logger.info("All figures saved to: %s", output_dir)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

@@ -16,6 +16,7 @@ from src.core.config import (
 # Setup logging
 logger = logging.getLogger(__name__)
 
+
 def create_manifest():
     if not PHENO_PATH.exists():
         logger.error(f"[Error]: Phenotypic file not found at {PHENO_PATH}")
@@ -25,12 +26,12 @@ def create_manifest():
     df = pd.read_csv(PHENO_PATH)
     df.columns = df.columns.str.strip()
     # Strip whitespace from FILE_ID to prevent match failures
-    df['FILE_ID'] = df['FILE_ID'].astype(str).str.strip()
+    df["FILE_ID"] = df["FILE_ID"].astype(str).str.strip()
 
     # Enforce curated subject exclusion policy (1035 -> 1015 cohort).
     excluded_upper = {s.upper() for s in EXCLUDED_SUBJECTS}
     before_exclusion = len(df)
-    df = df[~df['FILE_ID'].astype(str).str.upper().isin(excluded_upper)]
+    df = df[~df["FILE_ID"].astype(str).str.upper().isin(excluded_upper)]
     logger.info(
         "Applied EXCLUDED_SUBJECTS in manifestor phenotypes: removed %d row(s), remaining %d",
         before_exclusion - len(df),
@@ -39,27 +40,33 @@ def create_manifest():
 
     # 2. Map processed files to their specific splits (Phase 2.2)
     manifest_data = []
-    splits = ['train', 'val', 'test']
+    splits = ["train", "val", "test"]
 
     for split in splits:
         # Check time_series folder specifically as it's the core for the GNN
-        ts_path = DATA_FINAL / split / 'time_series'
+        ts_path = DATA_FINAL / split / "time_series"
 
         if ts_path.exists():
             # Extract subject IDs from time series files only (not roi_labels)
-            subjects = [f.replace('_ts.npy', '') for f in os.listdir(ts_path) if f.endswith('_ts.npy')]
+            subjects = [
+                f.replace("_ts.npy", "")
+                for f in os.listdir(ts_path)
+                if f.endswith("_ts.npy")
+            ]
             subjects = [s for s in subjects if s.upper() not in excluded_upper]
             for s in subjects:
-                manifest_data.append({'subject_id': s, 'split': split})
+                manifest_data.append({"subject_id": s, "split": split})
 
     if not manifest_data:
-        logger.error("[Error]: No processed data found. Ensure split.py was successful.")
+        logger.error(
+            "[Error]: No processed data found. Ensure split.py was successful."
+        )
         return
 
     manifest_df = pd.DataFrame(manifest_data)
 
     # Enforce one subject -> one split mapping; stale files across splits can violate this.
-    duplicate_subjects = manifest_df['subject_id'].value_counts()
+    duplicate_subjects = manifest_df["subject_id"].value_counts()
     duplicate_subjects = duplicate_subjects[duplicate_subjects > 1]
     if not duplicate_subjects.empty:
         logger.warning(
@@ -74,13 +81,12 @@ def create_manifest():
         )
 
     # Stable priority if duplicates exist: train > val > test
-    split_priority = {'train': 0, 'val': 1, 'test': 2}
-    manifest_df['_split_priority'] = manifest_df['split'].map(split_priority).fillna(99)
+    split_priority = {"train": 0, "val": 1, "test": 2}
+    manifest_df["_split_priority"] = manifest_df["split"].map(split_priority).fillna(99)
     manifest_df = (
-        manifest_df
-        .sort_values(['subject_id', '_split_priority'])
-        .drop_duplicates(subset=['subject_id'], keep='first')
-        .drop(columns=['_split_priority'])
+        manifest_df.sort_values(["subject_id", "_split_priority"])
+        .drop_duplicates(subset=["subject_id"], keep="first")
+        .drop(columns=["_split_priority"])
     )
 
     # 3. Select Causal & Clinical variables (Phase 7.1 & 8.4)
@@ -88,8 +94,13 @@ def create_manifest():
     # TR is intentionally excluded here because phenotype CSV variants may not
     # contain site-correct TR; we derive TR from SITE_TR_MAP below.
     required_cols = [
-        'FILE_ID', 'DX_GROUP', 'AGE_AT_SCAN', 'SEX',
-        'SITE_ID', 'FIQ', 'HANDEDNESS_CATEGORY'
+        "FILE_ID",
+        "DX_GROUP",
+        "AGE_AT_SCAN",
+        "SEX",
+        "SITE_ID",
+        "FIQ",
+        "HANDEDNESS_CATEGORY",
     ]
 
     # Filter only available columns to avoid merge errors
@@ -99,19 +110,21 @@ def create_manifest():
     final_df = pd.merge(
         manifest_df,
         df[available_cols],
-        left_on='subject_id',
-        right_on='FILE_ID',
-        how='inner'
-    ).drop(columns=['FILE_ID'])
+        left_on="subject_id",
+        right_on="FILE_ID",
+        how="inner",
+    ).drop(columns=["FILE_ID"])
 
     # Final safety: guarantee unique subject IDs in manifest output.
-    final_df = final_df.drop_duplicates(subset=['subject_id'], keep='first')
+    final_df = final_df.drop_duplicates(subset=["subject_id"], keep="first")
 
     # Final safety: exclude curated subjects even if stale split files are present.
-    final_df = final_df[~final_df['subject_id'].astype(str).str.upper().isin(excluded_upper)]
+    final_df = final_df[
+        ~final_df["subject_id"].astype(str).str.upper().isin(excluded_upper)
+    ]
 
-    pheno_unique = df['FILE_ID'].nunique()
-    manifest_unique = final_df['subject_id'].nunique()
+    pheno_unique = df["FILE_ID"].nunique()
+    manifest_unique = final_df["subject_id"].nunique()
     if manifest_unique > pheno_unique:
         logger.error(
             f"Manifest unique subject count ({manifest_unique}) exceeds phenotype unique FILE_ID count ({pheno_unique})."
@@ -122,12 +135,12 @@ def create_manifest():
         )
 
     # 5. Data Integrity Check: Ensure no missing targets
-    final_df = final_df.dropna(subset=['DX_GROUP'])
+    final_df = final_df.dropna(subset=["DX_GROUP"])
 
     # 6. Apply Site-Specific TR Mapping (imported from config)
     logger.info("Applying site-specific TR mapping based on SITE_ID...")
-    final_df['TR'] = final_df['SITE_ID'].map(SITE_TR_MAP).fillna(2.0)
-    tr_summary = final_df.groupby('SITE_ID')['TR'].first().to_dict()
+    final_df["TR"] = final_df["SITE_ID"].map(SITE_TR_MAP).fillna(2.0)
+    tr_summary = final_df.groupby("SITE_ID")["TR"].first().to_dict()
     logger.info(f"Assigned site-specific TRs: {tr_summary}")
 
     DATA_METADATA.mkdir(parents=True, exist_ok=True)
@@ -137,9 +150,11 @@ def create_manifest():
     if MASTER_MANIFEST.exists():
         try:
             _prev = pd.read_csv(MASTER_MANIFEST)
-            if 'cv_fold' in _prev.columns:
-                _fold_map = _prev.set_index('subject_id')['cv_fold']
-                final_df['cv_fold'] = final_df['subject_id'].map(_fold_map).fillna(-1).astype(int)
+            if "cv_fold" in _prev.columns:
+                _fold_map = _prev.set_index("subject_id")["cv_fold"]
+                final_df["cv_fold"] = (
+                    final_df["subject_id"].map(_fold_map).fillna(-1).astype(int)
+                )
                 logger.info("Preserved cv_fold assignments from existing manifest.")
         except Exception as _e:
             logger.warning("Could not preserve cv_fold from existing manifest: %s", _e)
@@ -147,7 +162,10 @@ def create_manifest():
     final_df.to_csv(MASTER_MANIFEST, index=False)
 
     logger.info(f"Manifest successfully synchronized with {len(final_df)} subjects.")
-    logger.info(f"Breakdown:\n{final_df.groupby(['split', 'DX_GROUP']).size().unstack(fill_value=0)}")
+    logger.info(
+        f"Breakdown:\n{final_df.groupby(['split', 'DX_GROUP']).size().unstack(fill_value=0)}"
+    )
+
 
 if __name__ == "__main__":
     create_manifest()

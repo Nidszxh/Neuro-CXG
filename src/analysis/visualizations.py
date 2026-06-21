@@ -31,6 +31,7 @@ from src.models.training_utils import attach_feature_scaler_from_checkpoint, mak
 # Import analysis modules
 try:
     from src.analysis.feature_attribution import FeatureAttributionAnalyzer
+
     CAPTUM_AVAILABLE = True
 except ImportError:
     CAPTUM_AVAILABLE = False
@@ -38,22 +39,29 @@ except ImportError:
 
 try:
     from src.analysis.diagnostics import CausalGraphAnalyzer, TrainingMonitor
+
     DIAGNOSTICS_AVAILABLE = True
 except ImportError:
     DIAGNOSTICS_AVAILABLE = False
-    logger.warning("Diagnostics module (TrainingMonitor/CausalGraphAnalyzer) not available")
+    logger.warning(
+        "Diagnostics module (TrainingMonitor/CausalGraphAnalyzer) not available"
+    )
+
 
 def _parse_fold_id(history_file: Path) -> int:
     """Extract fold ID from filename like 'training_history_fold0.json'."""
     import re
+
     match = re.search(r"fold(\d+)", history_file.stem)
     if match:
         return int(match.group(1))
     return 0  # Default to fold 0 if parsing fails
 
+
 def create_feature_names():
     """Create list of temporal + spatial feature names."""
     return ALL_FEATURE_NAMES.copy()
+
 
 def run_visualization_pipeline(output_dir: Path):
     """Run complete visualization pipeline."""
@@ -73,8 +81,14 @@ def run_visualization_pipeline(output_dir: Path):
             if not checkpoint_path.exists():
                 logger.warning("Checkpoint not found: %s", checkpoint_path)
             else:
-                checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-                state_dict = checkpoint["model_state"] if isinstance(checkpoint, dict) and "model_state" in checkpoint else checkpoint
+                checkpoint = torch.load(
+                    checkpoint_path, map_location=device, weights_only=True
+                )
+                state_dict = (
+                    checkpoint["model_state"]
+                    if isinstance(checkpoint, dict) and "model_state" in checkpoint
+                    else checkpoint
+                )
 
                 site_dim = GNN_SITE_EMBEDDING_DIM if GNN_USE_SITE_EMBEDDING else 0
                 saved_in_features = state_dict["lin_in.weight"].shape[1]
@@ -90,11 +104,15 @@ def run_visualization_pipeline(output_dir: Path):
                 if missing or unexpected:
                     logger.warning(f"Checkpoint load had missing keys: {missing}")
                     logger.warning(f"Checkpoint load had unexpected keys: {unexpected}")
-                attach_feature_scaler_from_checkpoint(model, checkpoint, expected_dim=GNN_IN_CHANNELS)
+                attach_feature_scaler_from_checkpoint(
+                    model, checkpoint, expected_dim=GNN_IN_CHANNELS
+                )
                 model.eval()
 
                 test_dataset = ABIDECausalDataset(split="test")
-                test_loader = make_loader([d for d in test_dataset if d is not None], batch_size=32)
+                test_loader = make_loader(
+                    [d for d in test_dataset if d is not None], batch_size=32
+                )
 
                 feature_names = create_feature_names()
 
@@ -107,11 +125,17 @@ def run_visualization_pipeline(output_dir: Path):
 
                 try:
                     attributions = analyzer.compute_attributions()
-                    analyzer.visualize_feature_importance(attributions, output_dir / "feature_importance_ig.png")
-                    analyzer.visualize_per_class(output_dir / "feature_importance_per_class.png")
+                    analyzer.visualize_feature_importance(
+                        attributions, output_dir / "feature_importance_ig.png"
+                    )
+                    analyzer.visualize_per_class(
+                        output_dir / "feature_importance_per_class.png"
+                    )
                     logger.info("Advanced feature importance completed")
                 except (RuntimeError, IndexError) as shape_error:
-                    logger.warning(f"Feature attribution skipped due to architecture mismatch: {str(shape_error)[:80]}…")
+                    logger.warning(
+                        f"Feature attribution skipped due to architecture mismatch: {str(shape_error)[:80]}…"
+                    )
         except Exception as e:
             logger.error(f"Advanced feature importance failed: {e}")
             import traceback
@@ -123,7 +147,9 @@ def run_visualization_pipeline(output_dir: Path):
             logger.info("Generating training history visualizations...")
 
             training_results_dir = RESULTS_DIR / "experiments" / "training"
-            history_files = list(training_results_dir.glob("training_history_fold*.json"))
+            history_files = list(
+                training_results_dir.glob("training_history_fold*.json")
+            )
 
             if history_files:
                 monitor = TrainingMonitor(output_dir=training_results_dir, num_folds=5)
@@ -150,7 +176,9 @@ def run_visualization_pipeline(output_dir: Path):
 
                 logger.info("Training history visualizations completed")
             else:
-                logger.warning("No training history files found. Run training with monitoring enabled.")
+                logger.warning(
+                    "No training history files found. Run training with monitoring enabled."
+                )
 
         except Exception as e:
             logger.error(f"Training history visualization failed: {e}")
@@ -164,12 +192,16 @@ def run_visualization_pipeline(output_dir: Path):
 
             manifest = pd.read_csv(MASTER_MANIFEST)
 
-            analyzer = CausalGraphAnalyzer(graphs_dir=CAUSAL_GRAPHS_DIR, manifest=manifest)
+            analyzer = CausalGraphAnalyzer(
+                graphs_dir=CAUSAL_GRAPHS_DIR, manifest=manifest
+            )
 
             properties_df = analyzer.compute_graph_properties(max_graphs=500)
             properties_df.to_csv(output_dir / "graph_properties.csv", index=False)
 
-            analyzer.visualize_average_causal_graph(output_path=output_dir / "average_causal_graph.png")
+            analyzer.visualize_average_causal_graph(
+                output_path=output_dir / "average_causal_graph.png"
+            )
 
             logger.info("Graph analysis completed")
         except Exception as e:
@@ -183,8 +215,11 @@ def run_visualization_pipeline(output_dir: Path):
     logger.info(f"All visualizations saved to: {output_dir}")
     logger.info("=" * 60)
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Generate comprehensive visualizations for Neuro-CXG results")
+    parser = argparse.ArgumentParser(
+        description="Generate comprehensive visualizations for Neuro-CXG results"
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -195,6 +230,7 @@ def main():
     args = parser.parse_args()
 
     run_visualization_pipeline(args.output_dir)
+
 
 if __name__ == "__main__":
     main()

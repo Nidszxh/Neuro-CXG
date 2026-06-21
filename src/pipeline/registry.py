@@ -17,8 +17,6 @@ from src.core.config import (
     NODE_ATTRIBUTES_HARMONIZED,
     NODE_ATTRIBUTES_TEMPORAL,
     NODE_FEATURES_3D,
-    RESULTS_ABLATIONS_DIR,
-    RESULTS_DATA_QUALITY_DIR,
     RESULTS_DIR,
     RESULTS_EVALUATION_DIR,
     YOLO_WEIGHTS_PATH,
@@ -54,10 +52,27 @@ class Stage:
 
 
 STAGES: list[Stage] = [
-    Stage("download", "ABIDE Download", "src.data.abide_download", DATA_METADATA / "download_log.csv"),
-    Stage("split", "Train/Val/Test Split", "src.data.split", MASTER_MANIFEST, dependencies=["download"]),
-    Stage("manifest", "Generate Master Manifest", "src.data.manifestor", MASTER_MANIFEST, dependencies=["split"]),
-    # Task 5 (DD-013): Opt-in site-stratified CV fold regeneration.
+    Stage(
+        "download",
+        "ABIDE Download",
+        "src.data.abide_download",
+        DATA_METADATA / "download_log.csv",
+    ),
+    Stage(
+        "split",
+        "Train/Val/Test Split",
+        "src.data.split",
+        MASTER_MANIFEST,
+        dependencies=["download"],
+    ),
+    Stage(
+        "manifest",
+        "Generate Master Manifest",
+        "src.data.manifestor",
+        MASTER_MANIFEST,
+        dependencies=["split"],
+    ),
+    # Opt-in site-stratified CV fold regeneration.
     # Run AFTER split and BEFORE harmonization/gnn_training.
     #   python src/run_pipeline.py --site-stratified-cv
     Stage(
@@ -69,8 +84,12 @@ STAGES: list[Stage] = [
         function="run_site_stratified_split",
         args=["--site-stratified-cv"],
     ),
-    Stage("atlas_validation", "Atlas Validation", "src.validation.atlas_validator", ATLAS_METADATA),
-    Stage("pipeline_validation", "Pipeline Validation", "src.validation.pipeline_checks", None),
+    Stage(
+        "atlas_validation",
+        "Atlas Validation",
+        "src.validation.atlas_validator",
+        ATLAS_METADATA,
+    ),
     Stage(
         "post_download_integrity",
         "Post-Download Integrity",
@@ -78,9 +97,27 @@ STAGES: list[Stage] = [
         None,
         function="check_dataset_integrity",
     ),
-    Stage("annotate", "Atlas-Based Label Annotation", "src.detection.generate_labels", FINAL_TRAIN / "labels", dependencies=["split"]),
-    Stage("yolo", "YOLO Training", "src.detection.roi_detection", YOLO_WEIGHTS_PATH, dependencies=["annotate"]),
-    Stage("spatial_features", "Spatial Feature Extraction", "src.features.extract_spatial", NODE_FEATURES_3D, dependencies=["split"]),
+    Stage(
+        "annotate",
+        "Atlas-Based Label Annotation",
+        "src.detection.generate_labels",
+        FINAL_TRAIN / "labels",
+        dependencies=["split"],
+    ),
+    Stage(
+        "yolo",
+        "YOLO Training",
+        "src.detection.roi_detection",
+        YOLO_WEIGHTS_PATH,
+        dependencies=["annotate"],
+    ),
+    Stage(
+        "spatial_features",
+        "Spatial Feature Extraction",
+        "src.features.extract_spatial",
+        NODE_FEATURES_3D,
+        dependencies=["split"],
+    ),
     Stage(
         "temporal_features",
         "Temporal Feature Extraction",
@@ -89,7 +126,13 @@ STAGES: list[Stage] = [
         dependencies=["split"],
         args=["--n-jobs", "-1"],
     ),
-    Stage("harmonization", "Feature Harmonization", "src.features.fold_safe_harmonization", NODE_ATTRIBUTES_HARMONIZED, dependencies=["spatial_features", "temporal_features"]),
+    Stage(
+        "harmonization",
+        "Feature Harmonization",
+        "src.features.fold_safe_harmonization",
+        NODE_ATTRIBUTES_HARMONIZED,
+        dependencies=["spatial_features", "temporal_features"],
+    ),
     Stage(
         "pre_gnn_integrity",
         "Pre-GNN Integrity",
@@ -98,8 +141,16 @@ STAGES: list[Stage] = [
         dependencies=["harmonization"],
         function="check_distribution",
     ),
-    Stage("causal_graphs", "Causal Graph Construction", "src.features.construct_causal", CAUSAL_GRAPHS_DIR, dependencies=["harmonization"], function="main", args=["--n-jobs", "-1"]),
-    # Task 2 (DD-010): Opt-in multi-view causal graph construction.
+    Stage(
+        "causal_graphs",
+        "Causal Graph Construction",
+        "src.features.construct_causal",
+        CAUSAL_GRAPHS_DIR,
+        dependencies=["harmonization"],
+        function="main",
+        args=["--n-jobs", "-1"],
+    ),
+    # Opt-in multi-view causal graph construction.
     # Run AFTER causal_graphs.  Activates CausalInvarianceLoss during gnn_training
     # when CAUSAL_GRAPHS_MULTIVIEW_DIR is populated.
     #   python src/run_pipeline.py --multiview
@@ -128,8 +179,20 @@ STAGES: list[Stage] = [
         dependencies=["causal_graphs"],
         function="run_quality_validation",
     ),
-    Stage("gnn_training", "GNN Training", "src.models.gnn_model", CHECKPOINT_DIR, dependencies=["causal_graphs"]),
-    Stage("visualizations", "Generate Visualizations", "src.analysis.visualizations", RESULTS_DIR / "visualizations", dependencies=["gnn_training"]),
+    Stage(
+        "gnn_training",
+        "GNN Training",
+        "src.models.gnn_model",
+        CHECKPOINT_DIR,
+        dependencies=["causal_graphs"],
+    ),
+    Stage(
+        "visualizations",
+        "Generate Visualizations",
+        "src.analysis.visualizations",
+        RESULTS_DIR / "visualizations",
+        dependencies=["gnn_training"],
+    ),
     Stage(
         "graph_visualization",
         "Causal Graph Visualization",
@@ -152,20 +215,33 @@ STAGES: list[Stage] = [
         RESULTS_DIR / "paper_figures" / "brain_3d",
         dependencies=["explainability"],
     ),
-    Stage("evaluation", "Comprehensive Evaluation", "src.run_evaluation", RESULTS_EVALUATION_DIR / "comprehensive_results.json", dependencies=["gnn_training"]),
-    Stage("explainability", "Explainability", "src.run_explainability", RESULTS_DIR / "explainability" / "summary.json", dependencies=["gnn_training"]),
-    Stage("result_analysis", "Result Analysis", "src.run_result_analysis", RESULTS_DIR / "analysis" / "result_analysis_summary.json", dependencies=["gnn_training"]),
-    Stage("subject_analysis", "Subject Analysis", "src.analysis.subject_analysis", RESULTS_DIR / "subject_analysis", dependencies=["causal_graphs"]),
-    Stage("audit_check", "Post-Fix Audit Check", "src.validation.audit_check", None),
-    Stage("dev_audit", "Developer Audit", "src.validation.dev_audit", None),
-    Stage("data_quality_experiments", "Data Quality Experiments", "src.experiments.data_quality", RESULTS_DATA_QUALITY_DIR),
-    Stage("ablation_studies", "Ablation Studies", "src.experiments.run_ablations", RESULTS_ABLATIONS_DIR),
     Stage(
-        "paper_figures",
-        "Generate Paper Figures",
-        "src.analysis.generate_paper_figures",
-        RESULTS_DIR / "paper_figures",
-        dependencies=["evaluation", "explainability", "result_analysis"],
+        "evaluation",
+        "Comprehensive Evaluation",
+        "src.run_evaluation",
+        RESULTS_EVALUATION_DIR / "comprehensive_results.json",
+        dependencies=["gnn_training"],
+    ),
+    Stage(
+        "explainability",
+        "Explainability",
+        "src.run_explainability",
+        RESULTS_DIR / "explainability" / "summary.json",
+        dependencies=["gnn_training"],
+    ),
+    Stage(
+        "result_analysis",
+        "Result Analysis",
+        "src.run_result_analysis",
+        RESULTS_DIR / "analysis" / "result_analysis_summary.json",
+        dependencies=["gnn_training"],
+    ),
+    Stage(
+        "subject_analysis",
+        "Subject Analysis",
+        "src.analysis.subject_analysis",
+        RESULTS_DIR / "subject_analysis",
+        dependencies=["causal_graphs"],
     ),
 ]
 
@@ -178,16 +254,3 @@ def stage_map(stages: Iterable[Stage] = STAGES) -> dict[str, Stage]:
 def completion_snapshot(stages: Iterable[Stage] = STAGES) -> dict[str, bool]:
     """Return stage completion status keyed by stage key."""
     return {stage.key: stage.is_complete() for stage in stages}
-
-
-def get_stage_dependencies(key: str, stages: Iterable[Stage] = STAGES) -> list[str]:
-    """Return list of dependency keys for a given stage."""
-    stage_dict = stage_map(stages)
-    if key in stage_dict:
-        return stage_dict[key].dependencies
-    return []
-
-
-def get_stages_by_phase(phase: str, stages: Iterable[Stage] = STAGES) -> list[Stage]:
-    """Return stages matching a given phase prefix (e.g., 'data', 'features', 'models')."""
-    return [s for s in stages if s.key.startswith(phase)]

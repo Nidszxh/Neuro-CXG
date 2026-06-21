@@ -43,6 +43,7 @@ from src.models.training_utils import make_loader, train_fold_with_onecycle
 
 logger = logging.getLogger(__name__)
 
+
 def run_kfold_subsample(
     dataset: ABIDECausalDataset,
     sample_fraction: float,
@@ -53,7 +54,9 @@ def run_kfold_subsample(
     sample_fraction: 0.0 to 1.0 (percentage of training data to use)
     """
     logger.info(f"\n{'━'*70}")
-    logger.info(f"LEARNING CURVE: {sample_fraction*100:.0f}% of training data ({sample_fraction:.2f})")
+    logger.info(
+        f"LEARNING CURVE: {sample_fraction*100:.0f}% of training data ({sample_fraction:.2f})"
+    )
     logger.info(f"{'━'*70}")
 
     manifest = dataset.manifest
@@ -84,7 +87,9 @@ def run_kfold_subsample(
 
     labels.count(0)
     n_asd = labels.count(1)
-    logger.info(f"  Original: {n_total} subjects | Subsample: ~{int(n_total * sample_fraction * 0.71)} train")
+    logger.info(
+        f"  Original: {n_total} subjects | Subsample: ~{int(n_total * sample_fraction * 0.71)} train"
+    )
 
     fold_aucs: list[float] = []
     fold_f1s: list[float] = []
@@ -108,7 +113,9 @@ def run_kfold_subsample(
             n_control = max(int((labels_arr == 0).sum()), 1)
             n_asd = max(int((labels_arr == 1).sum()), 1)
             pos_weight = float(n_control / n_asd)
-        criterion = FocalLoss(alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA, pos_weight=pos_weight)
+        criterion = FocalLoss(
+            alpha=FOCAL_LOSS_ALPHA, gamma=FOCAL_LOSS_GAMMA, pos_weight=pos_weight
+        )
     else:
         criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
 
@@ -127,13 +134,14 @@ def run_kfold_subsample(
 
         def model_factory():
             return build_model(
-                    device=DEVICE,
-                    use_site_embedding=True,
-                    use_demographics=True,
-                    use_grl=True,
-                    grl_alpha=GNN_GRL_ALPHA,
-                    edge_gate=True,
-                )
+                device=DEVICE,
+                use_site_embedding=True,
+                use_demographics=True,
+                use_grl=True,
+                grl_alpha=GNN_GRL_ALPHA,
+                edge_gate=True,
+            )
+
         model = model_factory().to(DEVICE)
 
         best_state, best_metrics, _ = train_fold_with_onecycle(
@@ -147,7 +155,7 @@ def run_kfold_subsample(
             patience=GNN_EARLY_STOPPING_PATIENCE,
             min_epochs_before_stopping=GNN_MIN_EPOCHS_BEFORE_STOPPING,
             use_grl=True,
-            grl_weight=GNN_SITE_LOSS_WEIGHT if True else 0.0,
+            grl_weight=GNN_SITE_LOSS_WEIGHT,
             fold=fold,
             weight_decay=GNN_WEIGHT_DECAY,
             grl_alpha_max=GNN_GRL_ALPHA_MAX,
@@ -171,7 +179,9 @@ def run_kfold_subsample(
     std_auc = float(np.std(fold_aucs))
     mean_f1 = float(np.mean(fold_f1s))
 
-    logger.info(f"\n  ╔══ RESULT: {sample_fraction*100:.0f}% → AUC = {mean_auc:.4f} ± {std_auc:.4f} ══╗")
+    logger.info(
+        f"\n  ╔══ RESULT: {sample_fraction*100:.0f}% → AUC = {mean_auc:.4f} ± {std_auc:.4f} ══╗"
+    )
 
     return {
         "sample_fraction": sample_fraction,
@@ -181,13 +191,19 @@ def run_kfold_subsample(
         "fold_aucs": fold_aucs,
     }
 
+
 def main():
     parser = argparse.ArgumentParser(description="Learning curve experiment")
     parser.add_argument(
-        "--subsamples", nargs="+", type=float, default=[0.2, 0.4, 0.6, 0.8, 1.0],
-        help="Training set subsamples (default: 20 40 60 80 100 percent)"
+        "--subsamples",
+        nargs="+",
+        type=float,
+        default=[0.2, 0.4, 0.6, 0.8, 1.0],
+        help="Training set subsamples (default: 20 40 60 80 100 percent)",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Print plan without training")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print plan without training"
+    )
     args = parser.parse_args()
 
     logger.info("\n" + "=" * 70)
@@ -220,28 +236,34 @@ def main():
         std = res["std_auc"]
         logger.info(f"  {key:<10} {auc:.4f} ± {std:.4f}")
     logger.info("-" * 32)
-    logger.info(f"  {'100% (full)':<10} {results.get('100pct', {}).get('mean_auc', 'N/A'):.4f}")
+    logger.info(
+        f"  {'100% (full)':<10} {results.get('100pct', {}).get('mean_auc', 'N/A'):.4f}"
+    )
     logger.info("=" * 70)
 
     import json
 
     import pandas as pd
+
     out_csv = RESULTS_ABLATIONS_DIR / "learning_curve.csv"
-    pd.DataFrame([
-        {
-            "subsample": k,
-            "mean_auc": v["mean_auc"],
-            "std_auc": v["std_auc"],
-            "mean_f1": v["mean_f1"],
-        }
-        for k, v in results.items()
-    ]).to_csv(out_csv, index=False)
+    pd.DataFrame(
+        [
+            {
+                "subsample": k,
+                "mean_auc": v["mean_auc"],
+                "std_auc": v["std_auc"],
+                "mean_f1": v["mean_f1"],
+            }
+            for k, v in results.items()
+        ]
+    ).to_csv(out_csv, index=False)
     logger.info(f"\n  Results saved → {out_csv}")
 
     out_json = RESULTS_ABLATIONS_DIR / "learning_curve.json"
     with open(out_json, "w") as f:
         json.dump(results, f, indent=2)
     logger.info(f"  JSON saved → {out_json}")
+
 
 if __name__ == "__main__":
     main()

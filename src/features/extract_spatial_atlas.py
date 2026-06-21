@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 CENTROIDS_PATH = DATA_METADATA / "roi_centroids.json"
 
+
 def _compute_and_save_centroids_from_atlas() -> dict:
     """Compute ROI centroids from atlas and persist roi_centroids.json."""
     try:
@@ -80,6 +81,7 @@ def _compute_and_save_centroids_from_atlas() -> dict:
     logger.info("Generated %d ROI centroids at %s", len(centroids_list), CENTROIDS_PATH)
     return {c["roi_id"]: c for c in centroids_list}
 
+
 def load_centroids():
     """Load precomputed atlas ROI centroids."""
     if not CENTROIDS_PATH.exists():
@@ -97,6 +99,7 @@ def load_centroids():
     logger.info(f"Loaded {len(centroids)} ROI centroids")
     return centroids
 
+
 def compute_roi_sizes():
     """
     Compute relative size of each ROI based on voxel count.
@@ -104,6 +107,7 @@ def compute_roi_sizes():
     """
     try:
         import nibabel as nib
+
         atlas_path = DATA_METADATA.parent / "raw" / "atlases" / "AAL3v1.nii"
         if atlas_path.exists():
             atlas_img = nib.load(str(atlas_path))
@@ -124,6 +128,7 @@ def compute_roi_sizes():
     # Fallback: uniform sizes
     return dict.fromkeys(range(1, 171), 1.0)
 
+
 def extract_lobe_features(lobe_id, roi_indices, centroids, roi_sizes):
     """
     Aggregate spatial features for one lobe from its constituent ROIs.
@@ -138,7 +143,7 @@ def extract_lobe_features(lobe_id, roi_indices, centroids, roi_sizes):
         roi_id = roi_idx_0 + 1  # Convert 0-indexed to 1-indexed
         if roi_id in centroids:
             c = centroids[roi_id]
-            lobe_centroids.append([c['x'], c['y'], c['z']])
+            lobe_centroids.append([c["x"], c["y"], c["z"]])
             lobe_sizes.append(roi_sizes.get(roi_id, 1.0))
 
     if not lobe_centroids:
@@ -156,6 +161,7 @@ def extract_lobe_features(lobe_id, roi_indices, centroids, roi_sizes):
     mean_size = float(np.mean(lobe_sizes))
 
     return [mean_x, mean_y, mean_z, mean_size]
+
 
 def extract_spatial():
     """Main extraction: compute spatial features for all subjects."""
@@ -183,7 +189,9 @@ def extract_spatial():
 
         for lobe_id in range(NUM_LOBES):
             roi_indices = LOBE_MAPPING[lobe_id]
-            lobe_feats = extract_lobe_features(lobe_id, roi_indices, centroids, roi_sizes)
+            lobe_feats = extract_lobe_features(
+                lobe_id, roi_indices, centroids, roi_sizes
+            )
             subject_row.extend(lobe_feats)
 
         all_features.append(subject_row)
@@ -207,7 +215,10 @@ def extract_spatial():
     df.to_csv(NODE_FEATURES_3D, index=False)
 
     logger.info(f"Saved spatial features to {NODE_FEATURES_3D}")
-    logger.info(f"Features shape: {df.shape} ({len(df)} subjects × {len(df.columns)-1} spatial features)")
+    logger.info(
+        f"Features shape: {df.shape} ({len(df)} subjects × {len(df.columns)-1} spatial features)"
+    )
+
 
 if __name__ == "__main__":
     extract_spatial()

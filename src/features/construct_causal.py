@@ -18,7 +18,6 @@ from src.core.config import (
     CAUSALITY_METHOD,
     DATA_FINAL,
     DEVICE,
-    GRANGER_MAX_LAG,
     GRANGER_MAX_LAG_SECONDS,
     GRAPH_DENSITY_TARGET,
     LAGGED_PEARSON_CONFIDENCE_ALPHA,
@@ -62,6 +61,7 @@ from src.features.causal_inference import (
 # Setup logging
 logger = logging.getLogger(__name__)
 
+
 def _zero_lagged_payload(device: torch.device) -> dict[str, Any]:
     """Return zero-matrix payload for failed lagged correlation computation."""
     z = torch.zeros(NUM_LOBES, NUM_LOBES, device=device)
@@ -71,10 +71,13 @@ def _zero_lagged_payload(device: torch.device) -> dict[str, Any]:
         "z_matrix": z,
         "p_matrix": o,
         "confidence_matrix": z,
-        "selected_lag_matrix": torch.zeros(NUM_LOBES, NUM_LOBES, dtype=torch.long, device=device),
+        "selected_lag_matrix": torch.zeros(
+            NUM_LOBES, NUM_LOBES, dtype=torch.long, device=device
+        ),
         "low_confidence_mask": o.to(torch.bool),
         "selected_r_matrix": z,
     }
+
 
 def _zero_ridge_payload(device: torch.device) -> dict[str, Any]:
     """Return zero-matrix payload for failed ridge Granger computation."""
@@ -87,6 +90,7 @@ def _zero_ridge_payload(device: torch.device) -> dict[str, Any]:
         "confidence_matrix": z,
         "low_confidence_mask": o.to(torch.bool),
     }
+
 
 class _LobeWarningTracker:
     """Rate-limited warning tracker for lobe coverage gaps.
@@ -110,7 +114,9 @@ class _LobeWarningTracker:
     def reset(self) -> None:
         self._warned.clear()
 
+
 _zero_lobe_warned = _LobeWarningTracker()
+
 
 def _empty_sparsification_info() -> dict[str, object]:
     """Return a default sparsification metadata payload."""
@@ -129,7 +135,10 @@ def _empty_sparsification_info() -> dict[str, object]:
         "final_edge_count": 0,
     }
 
-def _stabilize_sign(dominant_signal: torch.Tensor, roi_data: torch.Tensor) -> torch.Tensor:
+
+def _stabilize_sign(
+    dominant_signal: torch.Tensor, roi_data: torch.Tensor
+) -> torch.Tensor:
     """Stabilize PCA eigenvariate sign against a robust anchor ROI signal."""
     roi_means = roi_data.mean(dim=0).abs()
     if roi_means.numel() == 0:
@@ -142,7 +151,10 @@ def _stabilize_sign(dominant_signal: torch.Tensor, roi_data: torch.Tensor) -> to
     )
     return dominant_signal if dot >= 0 else -dominant_signal
 
-def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+
+def aggregate_to_lobes(
+    ts_raw: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Aggregate 170-ROI time series to 12-lobe representations using smart aggregation.
 
@@ -195,7 +207,9 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor
                     "Using zero-signal. (Subsequent warnings suppressed.)"
                 )
             lobe_signals.append(torch.zeros(ts_raw.shape[0], device=ts_raw.device))
-            lobe_internal_features.append(torch.tensor([0.0, 0.0], device=ts_raw.device))
+            lobe_internal_features.append(
+                torch.tensor([0.0, 0.0], device=ts_raw.device)
+            )
             zero_lobes.append(True)
             continue
 
@@ -214,7 +228,9 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor
                     "(Subsequent warnings suppressed.)"
                 )
             lobe_signals.append(torch.zeros(ts_raw.shape[0], device=ts_raw.device))
-            lobe_internal_features.append(torch.tensor([0.0, 0.0], device=ts_raw.device))
+            lobe_internal_features.append(
+                torch.tensor([0.0, 0.0], device=ts_raw.device)
+            )
             zero_lobes.append(True)
             continue
         if valid_roi_mask.sum().item() < len(indices):
@@ -231,7 +247,7 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor
             # Center the data
             centered = roi_data - roi_data.mean(dim=0)
             # Perform SVD (Singular Value Decomposition) for PCA
-            u, s, vh = torch.linalg.svd(centered, full_matrices=False)
+            u, s, _ = torch.linalg.svd(centered, full_matrices=False)
             # First Principal Component captures max variance
             # This preserves the magnitude of activity even when signals are out-of-sync
             dominant_signal = u[:, 0] * s[0]
@@ -254,7 +270,9 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor
                 # Compute correlation matrix of valid ROIs within this lobe
                 intra_corr = torch.corrcoef(valid_rois.T)
                 # Average off-diagonal correlation (all pairs)
-                mask = ~torch.eye(intra_corr.shape[0], dtype=torch.bool, device=ts_raw.device)
+                mask = ~torch.eye(
+                    intra_corr.shape[0], dtype=torch.bool, device=ts_raw.device
+                )
                 coherence = intra_corr[mask].mean()
                 coherence = torch.clamp(coherence, -1.0, 1.0)  # Ensure valid range
 
@@ -266,7 +284,9 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor
                 spatial_variance = torch.tensor(0.0, device=ts_raw.device)
         else:
             # Single ROI in lobe: trivial values
-            coherence = torch.tensor(1.0, device=ts_raw.device)  # Perfect self-correlation
+            coherence = torch.tensor(
+                1.0, device=ts_raw.device
+            )  # Perfect self-correlation
             spatial_variance = torch.tensor(0.0, device=ts_raw.device)
 
         # SAFETY: Replace NaN/Inf with 0 to prevent downstream crashes
@@ -279,13 +299,16 @@ def aggregate_to_lobes(ts_raw: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor
         zero_lobes.append(False)
 
     # Stack results
-    ts_lobes = torch.stack(lobe_signals, dim=1)           # (Timepoints, 12)
+    ts_lobes = torch.stack(lobe_signals, dim=1)  # (Timepoints, 12)
     features_internal = torch.stack(lobe_internal_features, dim=0)  # (12, 2)
-    zero_lobe_mask = torch.tensor(zero_lobes, dtype=torch.bool)      # (12,)
+    zero_lobe_mask = torch.tensor(zero_lobes, dtype=torch.bool)  # (12,)
 
     return ts_lobes, features_internal, zero_lobe_mask
 
-def _assert_fisher_z_transformed(z_matrix: torch.Tensor, r_matrix: torch.Tensor) -> None:
+
+def _assert_fisher_z_transformed(
+    z_matrix: torch.Tensor, r_matrix: torch.Tensor
+) -> None:
     """Guardrail: fail fast if correlations appear to bypass Fisher-Z transform."""
     offdiag_mask = ~torch.eye(NUM_LOBES, dtype=torch.bool, device=z_matrix.device)
     # Use edges where Fisher-Z should differ noticeably from raw r.
@@ -311,6 +334,7 @@ def _assert_fisher_z_transformed(z_matrix: torch.Tensor, r_matrix: torch.Tensor)
         raise AssertionError(
             "Lagged-Pearson output appears untransformed (raw correlations leaked)."
         )
+
 
 def _compute_lagged_pearson_multilag(
     ts_lobe: torch.Tensor,
@@ -353,8 +377,8 @@ def _compute_lagged_pearson_multilag(
             if src == dst:
                 continue
 
-            best_any = (0.0, 1.0, 0.0, 0)      # z, p, r, lag
-            best_sig = (0.0, 1.0, 0.0, 0)      # z, p, r, lag
+            best_any = (0.0, 1.0, 0.0, 0)  # z, p, r, lag
+            best_sig = (0.0, 1.0, 0.0, 0)  # z, p, r, lag
             best_any_abs = -np.inf
             best_sig_abs = -np.inf
 
@@ -430,6 +454,7 @@ def _compute_lagged_pearson_multilag(
         "selected_r_matrix": r_t,
     }
 
+
 def _partial_corr_zero_payload(device: torch.device) -> dict[str, torch.Tensor]:
     """Return an all-zero partial-correlation payload for safe fallbacks."""
     zeros = torch.zeros(NUM_LOBES, NUM_LOBES, device=device)
@@ -440,9 +465,14 @@ def _partial_corr_zero_payload(device: torch.device) -> dict[str, torch.Tensor]:
         "precision_matrix": zeros,
         "confidence_matrix": zeros,
         "pvalue_matrix": ones,
-        "fdr_significant_mask": torch.zeros(NUM_LOBES, NUM_LOBES, dtype=torch.bool, device=device),
-        "low_confidence_mask": torch.ones(NUM_LOBES, NUM_LOBES, dtype=torch.bool, device=device),
+        "fdr_significant_mask": torch.zeros(
+            NUM_LOBES, NUM_LOBES, dtype=torch.bool, device=device
+        ),
+        "low_confidence_mask": torch.ones(
+            NUM_LOBES, NUM_LOBES, dtype=torch.bool, device=device
+        ),
     }
+
 
 def _benjamini_hochberg_reject(p_values: np.ndarray, alpha: float) -> np.ndarray:
     """Return BH rejection mask for a flat vector of p-values."""
@@ -469,6 +499,7 @@ def _benjamini_hochberg_reject(p_values: np.ndarray, alpha: float) -> np.ndarray
     reject_valid = p_valid <= cutoff
     reject[np.where(finite_mask)[0]] = reject_valid
     return reject
+
 
 def _compute_partial_corr_glasso_matrix(
     ts_lobe: torch.Tensor,
@@ -500,7 +531,9 @@ def _compute_partial_corr_glasso_matrix(
         return _partial_corr_zero_payload(ts_lobe.device)
 
     if torch.isnan(ts_lobe).any() or torch.isinf(ts_lobe).any():
-        logger.warning("Input contains NaN/Inf values - returning zero partial-correlation matrix")
+        logger.warning(
+            "Input contains NaN/Inf values - returning zero partial-correlation matrix"
+        )
         return _partial_corr_zero_payload(ts_lobe.device)
 
     ts_mean = ts_lobe.mean(dim=0, keepdim=True)
@@ -520,7 +553,9 @@ def _compute_partial_corr_glasso_matrix(
         glasso.fit(ts_np)
         precision_np = np.asarray(glasso.precision_, dtype=np.float64)
     except Exception as e:
-        logger.warning(f"GraphicalLasso failed ({e}) - returning zero partial-correlation matrix")
+        logger.warning(
+            f"GraphicalLasso failed ({e}) - returning zero partial-correlation matrix"
+        )
         return _partial_corr_zero_payload(ts_lobe.device)
 
     if precision_np.shape != (NUM_LOBES, NUM_LOBES):
@@ -546,7 +581,7 @@ def _compute_partial_corr_glasso_matrix(
     if n_samples_eff > NUM_LOBES + 2:
         dof = max(n_samples_eff - NUM_LOBES, 1)
         abs_r = np.clip(abs_partial, 0.0, 1.0 - _FISHER_EPS)
-        denom = np.maximum(1.0 - abs_r ** 2, _CONFIDENCE_EPS)
+        denom = np.maximum(1.0 - abs_r**2, _CONFIDENCE_EPS)
         t_stat = abs_r * np.sqrt(dof / denom)
         pvalue_np = 2.0 * (1.0 - t_distribution.cdf(t_stat, df=dof))
         pvalue_np = np.nan_to_num(pvalue_np, nan=1.0, posinf=1.0, neginf=1.0)
@@ -603,6 +638,7 @@ def _compute_partial_corr_glasso_matrix(
         "low_confidence_mask": low_conf_t,
     }
 
+
 def _ridge_solve(X: np.ndarray, y: np.ndarray, ridge_lambda: float) -> np.ndarray:
     """Solve ridge regression in closed form with numerical fallback."""
     xtx = X.T @ X
@@ -613,6 +649,7 @@ def _ridge_solve(X: np.ndarray, y: np.ndarray, ridge_lambda: float) -> np.ndarra
     except np.linalg.LinAlgError:
         beta = np.linalg.pinv(xtx + reg) @ rhs
     return beta
+
 
 def _compute_ridge_granger_matrix(
     ts_lobe: torch.Tensor,
@@ -639,7 +676,9 @@ def _compute_ridge_granger_matrix(
         return _zero_ridge_payload(ts_lobe.device)
 
     if torch.isnan(ts_lobe).any() or torch.isinf(ts_lobe).any():
-        logger.warning("Input contains NaN/Inf values - returning zero ridge Granger matrix")
+        logger.warning(
+            "Input contains NaN/Inf values - returning zero ridge Granger matrix"
+        )
         return _zero_ridge_payload(ts_lobe.device)
 
     # Standardize per lobe before regression.
@@ -658,7 +697,9 @@ def _compute_ridge_granger_matrix(
     for dst in range(NUM_LOBES):
         y = ts_np[max_lag:, dst]
 
-        y_lags = np.column_stack([ts_np[max_lag - lag:n_time - lag, dst] for lag in lags])
+        y_lags = np.column_stack(
+            [ts_np[max_lag - lag : n_time - lag, dst] for lag in lags]
+        )
 
         beta_restricted = _ridge_solve(y_lags, y, ridge_lambda)
         y_hat_restricted = y_lags @ beta_restricted
@@ -668,7 +709,9 @@ def _compute_ridge_granger_matrix(
             if src == dst:
                 continue
 
-            x_lags = np.column_stack([ts_np[max_lag - lag:n_time - lag, src] for lag in lags])
+            x_lags = np.column_stack(
+                [ts_np[max_lag - lag : n_time - lag, src] for lag in lags]
+            )
 
             full_design = np.concatenate([y_lags, x_lags], axis=1)
             beta_full = _ridge_solve(full_design, y, ridge_lambda)
@@ -726,6 +769,7 @@ def _compute_ridge_granger_matrix(
         "low_confidence_mask": low_conf,
     }
 
+
 def _compute_ridge_granger_hybrid_matrix(
     ts_lobe: torch.Tensor,
     ridge_lags: tuple[int, ...],
@@ -753,7 +797,10 @@ def _compute_ridge_granger_hybrid_matrix(
     )
 
     b = float(np.clip(beta, 0.0, 1.0))
-    weighted_hybrid = b * ridge_payload["weighted_effect_matrix"] + (1.0 - b) * pearson_payload["weighted_z_matrix"]
+    weighted_hybrid = (
+        b * ridge_payload["weighted_effect_matrix"]
+        + (1.0 - b) * pearson_payload["weighted_z_matrix"]
+    )
     p_hybrid = torch.minimum(ridge_payload["p_matrix"], pearson_payload["p_matrix"])
     conf_hybrid = -torch.log(p_hybrid + _CONFIDENCE_EPS)
     low_conf = p_hybrid >= float(ridge_high_conf_p)
@@ -770,6 +817,7 @@ def _compute_ridge_granger_hybrid_matrix(
         "low_confidence_mask": low_conf,
     }
 
+
 def compute_causality_matrix(
     ts_lobe: torch.Tensor,
     method: str = None,
@@ -785,7 +833,7 @@ def compute_causality_matrix(
             ('ridge_granger', 'ridge_granger_hybrid',
              'lagged_pearson', 'partial_corr_glasso')
                 If None, uses CAUSALITY_METHOD from config
-        max_lag: Max lag in timepoints for Granger causality. If None, uses GRANGER_MAX_LAG from config.
+        max_lag: Max lag in timepoints for Granger causality.
                  For multi-site studies, this allows per-subject adaptation based on TR.
 
     Returns:
@@ -797,13 +845,10 @@ def compute_causality_matrix(
     if method is None:
         method = CAUSALITY_METHOD
 
-    if max_lag is None:
-        max_lag = GRANGER_MAX_LAG
-
     metadata: dict[str, torch.Tensor] = {}
 
     try:
-        if method == 'ridge_granger':
+        if method == "ridge_granger":
             logger.debug(
                 "Computing ridge Granger causality (lags=%s, lambda=%.4f)",
                 RIDGE_GRANGER_LAGS,
@@ -825,7 +870,7 @@ def compute_causality_matrix(
             }
             return (causal_matrix, metadata) if return_metadata else causal_matrix
 
-        elif method == 'ridge_granger_hybrid':
+        elif method == "ridge_granger_hybrid":
             logger.debug(
                 "Computing hybrid ridge-granger graph (beta=%.2f)",
                 float(RIDGE_GRANGER_HYBRID_BETA),
@@ -850,8 +895,10 @@ def compute_causality_matrix(
             }
             return (causal_matrix, metadata) if return_metadata else causal_matrix
 
-        elif method == 'lagged_pearson':
-            logger.debug(f"Computing multi-lag Pearson correlation (lags={LAGGED_PEARSON_LAGS})")
+        elif method == "lagged_pearson":
+            logger.debug(
+                f"Computing multi-lag Pearson correlation (lags={LAGGED_PEARSON_LAGS})"
+            )
             lagged_payload = _compute_lagged_pearson_multilag(
                 ts_lobe=ts_lobe,
                 lags=tuple(LAGGED_PEARSON_LAGS),
@@ -868,7 +915,7 @@ def compute_causality_matrix(
             }
             return (causal_matrix, metadata) if return_metadata else causal_matrix
 
-        elif method == 'partial_corr_glasso':
+        elif method == "partial_corr_glasso":
             logger.debug(
                 "Computing partial-correlation GraphicalLasso (alpha=%.4f)",
                 float(PARTIAL_CORR_GLASSO_ALPHA),
@@ -895,7 +942,9 @@ def compute_causality_matrix(
             return (causal_matrix, metadata) if return_metadata else causal_matrix
 
         else:
-            logger.warning(f"Unknown causality method '{method}', falling back to ridge_granger")
+            logger.warning(
+                f"Unknown causality method '{method}', falling back to ridge_granger"
+            )
             ridge_payload = _compute_ridge_granger_matrix(
                 ts_lobe=ts_lobe,
                 lags=tuple(RIDGE_GRANGER_LAGS),
@@ -913,7 +962,9 @@ def compute_causality_matrix(
             return (causal_matrix, metadata) if return_metadata else causal_matrix
 
     except Exception as e:
-        logger.warning(f"Causality computation failed ({method}): {e}, falling back to ridge_granger")
+        logger.warning(
+            f"Causality computation failed ({method}): {e}, falling back to ridge_granger"
+        )
         try:
             ridge_payload = _compute_ridge_granger_matrix(
                 ts_lobe=ts_lobe,
@@ -934,11 +985,18 @@ def compute_causality_matrix(
             logger.error(f"Ridge fallback failed: {ridge_error}")
             zero_matrix = torch.zeros(NUM_LOBES, NUM_LOBES, device=ts_lobe.device)
             zero_meta = {
-                "pvalue_matrix": torch.ones(NUM_LOBES, NUM_LOBES, device=ts_lobe.device),
-                "confidence_matrix": torch.zeros(NUM_LOBES, NUM_LOBES, device=ts_lobe.device),
-                "low_confidence_mask": torch.ones(NUM_LOBES, NUM_LOBES, dtype=torch.bool, device=ts_lobe.device),
+                "pvalue_matrix": torch.ones(
+                    NUM_LOBES, NUM_LOBES, device=ts_lobe.device
+                ),
+                "confidence_matrix": torch.zeros(
+                    NUM_LOBES, NUM_LOBES, device=ts_lobe.device
+                ),
+                "low_confidence_mask": torch.ones(
+                    NUM_LOBES, NUM_LOBES, dtype=torch.bool, device=ts_lobe.device
+                ),
             }
             return (zero_matrix, zero_meta) if return_metadata else zero_matrix
+
 
 def _repair_dead_lobes(
     adj_matrix: torch.Tensor,
@@ -1020,6 +1078,7 @@ def _repair_dead_lobes(
     )
     return repaired, added_edges, unresolved_dead_lobes
 
+
 def adaptive_sparsification(
     causal_matrix: torch.Tensor,
     method: str = None,
@@ -1086,9 +1145,9 @@ def adaptive_sparsification(
     if pvalue_matrix is not None:
         p_matrix = pvalue_matrix.to(causal_matrix.device).clone()
         p_matrix.fill_diagonal_(1.0)
-        if str(CAUSALITY_METHOD) == 'partial_corr_glasso':
+        if str(CAUSALITY_METHOD) == "partial_corr_glasso":
             prune_threshold = float(max(min(PARTIAL_CORR_FDR_ALPHA, 1.0), 0.0))
-        elif str(CAUSALITY_METHOD).startswith('ridge_granger'):
+        elif str(CAUSALITY_METHOD).startswith("ridge_granger"):
             prune_threshold = float(RIDGE_GRANGER_P_PRUNE_THRESHOLD)
         else:
             prune_threshold = float(LAGGED_PEARSON_P_PRUNE_THRESHOLD)
@@ -1096,13 +1155,17 @@ def adaptive_sparsification(
         retained_mask = (~weak_mask) & offdiag_mask
         fallback_info["significance_pruning_applied"] = True
         fallback_info["pruned_edge_candidates"] = int(weak_mask.sum().item())
-        fallback_info["retained_candidates_after_pruning"] = int(retained_mask.sum().item())
-        causal_matrix = torch.where(retained_mask, causal_matrix, torch.tensor(0.0, device=causal_matrix.device))
+        fallback_info["retained_candidates_after_pruning"] = int(
+            retained_mask.sum().item()
+        )
+        causal_matrix = torch.where(
+            retained_mask, causal_matrix, torch.tensor(0.0, device=causal_matrix.device)
+        )
 
     abs_matrix = torch.abs(causal_matrix)
     offdiag_values = abs_matrix[offdiag_mask]
 
-    if method == 'topk_per_node':
+    if method == "topk_per_node":
         # Structural safeguard: guarantee each lobe contributes strong edges before
         # any fallback repair is considered.
         k = int(max(1, min(SPARSITY_TOPK_PER_NODE, NUM_LOBES - 1)))
@@ -1132,9 +1195,7 @@ def adaptive_sparsification(
 
         keep_mask &= offdiag_mask
         adj_matrix = torch.where(
-            keep_mask,
-            causal_matrix,
-            torch.tensor(0.0, device=causal_matrix.device)
+            keep_mask, causal_matrix, torch.tensor(0.0, device=causal_matrix.device)
         )
         fallback_info["topk_per_node_k"] = k
 
@@ -1149,14 +1210,16 @@ def adaptive_sparsification(
             adj_matrix = torch.where(
                 (abs_matrix >= threshold_value) & offdiag_mask,
                 causal_matrix,
-                torch.tensor(0.0, device=causal_matrix.device)
+                torch.tensor(0.0, device=causal_matrix.device),
             )
 
-    elif method == 'adaptive_proportional':
+    elif method == "adaptive_proportional":
         # Keep edges proportional to network strength
         total_strength = abs_matrix.sum().item()
         target_edges = max(min_edges, int(np.sqrt(total_strength) * 10))
-        target_edges = min(target_edges, NUM_LOBES * (NUM_LOBES - 1))  # Exclude diagonal
+        target_edges = min(
+            target_edges, NUM_LOBES * (NUM_LOBES - 1)
+        )  # Exclude diagonal
 
         # Keep top target_edges by absolute weight
         flat_values = offdiag_values
@@ -1171,14 +1234,14 @@ def adaptive_sparsification(
         adj_matrix = torch.where(
             (abs_matrix >= threshold_value) & offdiag_mask,
             causal_matrix,
-            torch.tensor(0.0, device=causal_matrix.device)
+            torch.tensor(0.0, device=causal_matrix.device),
         )
 
-    elif method == 'adaptive_statistical':
+    elif method == "adaptive_statistical":
         # Keep edges above statistical significance threshold.
         # For Granger causality use subject-adaptive thresholding.
         # For other methods: use median + 1 std as threshold.
-        if CAUSALITY_METHOD == 'granger':
+        if CAUSALITY_METHOD == "granger":
             non_zero_vals = offdiag_values[offdiag_values > 0]
             if non_zero_vals.numel() > min_edges:
                 threshold_value = torch.quantile(non_zero_vals, 0.70)
@@ -1194,7 +1257,7 @@ def adaptive_sparsification(
         adj_matrix = torch.where(
             (abs_matrix >= threshold_value) & offdiag_mask,
             causal_matrix,
-            torch.tensor(0.0, device=causal_matrix.device)
+            torch.tensor(0.0, device=causal_matrix.device),
         )
 
         # Ensure minimum edges
@@ -1209,10 +1272,10 @@ def adaptive_sparsification(
             adj_matrix = torch.where(
                 (abs_matrix >= threshold_value) & offdiag_mask,
                 causal_matrix,
-                torch.tensor(0.0, device=causal_matrix.device)
+                torch.tensor(0.0, device=causal_matrix.device),
             )
 
-    elif method == 'fixed':
+    elif method == "fixed":
         # Quantile over off-diagonal values only — including the zero-padded diagonal
         # inflates the quantile and causes over-dense graphs.
         # Target density: GRAPH_DENSITY_TARGET (default 20%) of directed edges.
@@ -1221,7 +1284,7 @@ def adaptive_sparsification(
         adj_matrix = torch.where(
             (abs_matrix >= thresh) & offdiag_mask,
             causal_matrix,
-            torch.tensor(0.0, device=causal_matrix.device)
+            torch.tensor(0.0, device=causal_matrix.device),
         )
 
         # Ensure minimum edges
@@ -1235,7 +1298,7 @@ def adaptive_sparsification(
             adj_matrix = torch.where(
                 (abs_matrix >= threshold_value) & offdiag_mask,
                 causal_matrix,
-                torch.tensor(0.0, device=causal_matrix.device)
+                torch.tensor(0.0, device=causal_matrix.device),
             )
 
     else:
@@ -1245,13 +1308,15 @@ def adaptive_sparsification(
         adj_matrix = torch.where(
             (abs_matrix >= thresh) & offdiag_mask,
             causal_matrix,
-            torch.tensor(0.0, device=causal_matrix.device)
+            torch.tensor(0.0, device=causal_matrix.device),
         )
     adj_matrix.fill_diagonal_(0.0)
     primary_edge_mask = adj_matrix != 0
     fallback_info["primary_edge_count"] = int(primary_edge_mask.sum().item())
     fallback_info["primary_dead_lobes"] = int(
-        ((primary_edge_mask.sum(dim=0) == 0) & (primary_edge_mask.sum(dim=1) == 0)).sum().item()
+        ((primary_edge_mask.sum(dim=0) == 0) & (primary_edge_mask.sum(dim=1) == 0))
+        .sum()
+        .item()
     )
 
     # Ensure no lobe is completely isolated (zero in-degree and zero out-degree).
@@ -1277,7 +1342,14 @@ def adaptive_sparsification(
 
     return adj_matrix, fallback_info
 
-def construct_graph(subject_id: str, split: str, tr: float = 2.0, method: str = None, output_dir: Path = None) -> tuple[bool, dict[str, object]]:
+
+def construct_graph(
+    subject_id: str,
+    split: str,
+    tr: float = 2.0,
+    method: str = None,
+    output_dir: Path = None,
+) -> tuple[bool, dict[str, object]]:
     method = method or CAUSALITY_METHOD
     output_dir = output_dir or CAUSAL_GRAPHS_DIR
     """
@@ -1309,12 +1381,12 @@ def construct_graph(subject_id: str, split: str, tr: float = 2.0, method: str = 
         # on their valid timepoints.  All-NaN columns remain NaN and are filtered
         # by valid_roi_mask inside aggregate_to_lobes.
         ts_mean = torch.nanmean(ts_data, dim=0, keepdim=True)
-        ts_var  = torch.nanmean((ts_data - ts_mean).pow(2), dim=0, keepdim=True)
-        ts_std  = ts_var.sqrt()
+        ts_var = torch.nanmean((ts_data - ts_mean).pow(2), dim=0, keepdim=True)
+        ts_std = ts_var.sqrt()
         # Floor non-NaN std at 1e-8 (prevents division by zero for constant ROIs).
         # NaN std (all-NaN column) is intentionally preserved so valid_roi_mask
         # can detect and drop those columns in aggregate_to_lobes.
-        ts_std  = torch.where(torch.isnan(ts_std), ts_std, ts_std.clamp(min=1e-8))
+        ts_std = torch.where(torch.isnan(ts_std), ts_std, ts_std.clamp(min=1e-8))
         ts_data = (ts_data - ts_mean) / ts_std
 
         # Fill NaN values with 0 before Granger computation
@@ -1324,7 +1396,9 @@ def construct_graph(subject_id: str, split: str, tr: float = 2.0, method: str = 
 
         # Validate input data
         if ts_data.shape[0] < 10:
-            logger.warning(f"{subject_id}: Insufficient timepoints ({ts_data.shape[0]})")
+            logger.warning(
+                f"{subject_id}: Insufficient timepoints ({ts_data.shape[0]})"
+            )
             return False, _empty_sparsification_info()
 
         # 1. Smart Aggregation (PCA + Regional Homogeneity)
@@ -1354,13 +1428,13 @@ def construct_graph(subject_id: str, split: str, tr: float = 2.0, method: str = 
 
         # Log pre-sparsification statistics
         pre_sparse_stats = {
-            'max': float(causal_matrix.abs().max()),
-            'mean': float(causal_matrix.abs().mean()),
-            'non_zero': int((causal_matrix != 0).sum())
+            "max": float(causal_matrix.abs().max()),
+            "mean": float(causal_matrix.abs().mean()),
+            "non_zero": int((causal_matrix != 0).sum()),
         }
 
         # 3. Adaptive Sparsification (Phase 1: subject-specific thresholding)
-        pvalue_matrix = causal_metadata.get('pvalue_matrix')
+        pvalue_matrix = causal_metadata.get("pvalue_matrix")
         adj_matrix, sparsification_info = adaptive_sparsification(
             causal_matrix,
             pvalue_matrix=pvalue_matrix,
@@ -1381,41 +1455,80 @@ def construct_graph(subject_id: str, split: str, tr: float = 2.0, method: str = 
             return False, sparsification_info
 
         # Log success statistics
-        if str(CAUSALITY_METHOD).startswith('ridge_granger'):
+        if str(CAUSALITY_METHOD).startswith("ridge_granger"):
             high_conf_threshold = float(RIDGE_GRANGER_HIGH_CONF_P_THRESHOLD)
-        elif str(CAUSALITY_METHOD) == 'lagged_pearson':
+        elif str(CAUSALITY_METHOD) == "lagged_pearson":
             high_conf_threshold = float(LAGGED_PEARSON_P_SELECT_THRESHOLD)
         else:
-            high_conf_threshold = float('nan')
+            high_conf_threshold = float("nan")
 
-        pvalue_matrix_for_stats = causal_metadata.get('pvalue_matrix')
+        pvalue_matrix_for_stats = causal_metadata.get("pvalue_matrix")
         if pvalue_matrix_for_stats is not None and np.isfinite(high_conf_threshold):
-            high_confidence_edges_pre_topk = int((pvalue_matrix_for_stats < high_conf_threshold).sum().item())
+            high_confidence_edges_pre_topk = int(
+                (pvalue_matrix_for_stats < high_conf_threshold).sum().item()
+            )
         else:
             high_confidence_edges_pre_topk = 0
 
         post_sparse_stats = {
-            'edges': num_edges,
-            'density': num_edges / (NUM_LOBES * (NUM_LOBES - 1)),
-            'max_weight': float(adj_matrix.abs().max()),
-            'mean_weight': float(adj_matrix[adj_matrix != 0].abs().mean()),
-            'high_confidence_edges_pre_topk': high_confidence_edges_pre_topk,
-            'partial_corr_fdr_enabled': bool(PARTIAL_CORR_FDR_ENABLED) if str(CAUSALITY_METHOD) == 'partial_corr_glasso' else False,
-            'partial_corr_fdr_alpha': float(PARTIAL_CORR_FDR_ALPHA) if str(CAUSALITY_METHOD) == 'partial_corr_glasso' else None,
-            'partial_corr_fdr_significant_edges_pre_topk': int(
-                causal_metadata.get('fdr_significant_mask', torch.zeros_like(causal_matrix, dtype=torch.bool)).sum().item()
-            ) if str(CAUSALITY_METHOD) == 'partial_corr_glasso' else 0,
-            'topk_per_node_k': int(sparsification_info.get('topk_per_node_k', 0)),
-            'sparsification_fallback_triggered': bool(sparsification_info.get('triggered', False)),
-            'significance_pruning_applied': bool(sparsification_info.get('significance_pruning_applied', False)),
-            'pruned_edge_candidates': int(sparsification_info.get('pruned_edge_candidates', 0)),
-            'retained_candidates_after_pruning': int(sparsification_info.get('retained_candidates_after_pruning', 0)),
-            'min_edge_fallback': bool(sparsification_info.get('min_edge_fallback', False)),
-            'dead_lobe_repair': bool(sparsification_info.get('dead_lobe_repair', False)),
-            'dead_lobe_repair_added_edges': int(sparsification_info.get('dead_lobe_repair_added_edges', 0)),
-            'unresolved_dead_lobes': int(sparsification_info.get('unresolved_dead_lobes', 0)),
-            'primary_edges_before_repair': int(sparsification_info.get('primary_edge_count', 0)),
-            'primary_dead_lobes_before_repair': int(sparsification_info.get('primary_dead_lobes', 0)),
+            "edges": num_edges,
+            "density": num_edges / (NUM_LOBES * (NUM_LOBES - 1)),
+            "max_weight": float(adj_matrix.abs().max()),
+            "mean_weight": float(adj_matrix[adj_matrix != 0].abs().mean()),
+            "high_confidence_edges_pre_topk": high_confidence_edges_pre_topk,
+            "partial_corr_fdr_enabled": (
+                bool(PARTIAL_CORR_FDR_ENABLED)
+                if str(CAUSALITY_METHOD) == "partial_corr_glasso"
+                else False
+            ),
+            "partial_corr_fdr_alpha": (
+                float(PARTIAL_CORR_FDR_ALPHA)
+                if str(CAUSALITY_METHOD) == "partial_corr_glasso"
+                else None
+            ),
+            "partial_corr_fdr_significant_edges_pre_topk": (
+                int(
+                    causal_metadata.get(
+                        "fdr_significant_mask",
+                        torch.zeros_like(causal_matrix, dtype=torch.bool),
+                    )
+                    .sum()
+                    .item()
+                )
+                if str(CAUSALITY_METHOD) == "partial_corr_glasso"
+                else 0
+            ),
+            "topk_per_node_k": int(sparsification_info.get("topk_per_node_k", 0)),
+            "sparsification_fallback_triggered": bool(
+                sparsification_info.get("triggered", False)
+            ),
+            "significance_pruning_applied": bool(
+                sparsification_info.get("significance_pruning_applied", False)
+            ),
+            "pruned_edge_candidates": int(
+                sparsification_info.get("pruned_edge_candidates", 0)
+            ),
+            "retained_candidates_after_pruning": int(
+                sparsification_info.get("retained_candidates_after_pruning", 0)
+            ),
+            "min_edge_fallback": bool(
+                sparsification_info.get("min_edge_fallback", False)
+            ),
+            "dead_lobe_repair": bool(
+                sparsification_info.get("dead_lobe_repair", False)
+            ),
+            "dead_lobe_repair_added_edges": int(
+                sparsification_info.get("dead_lobe_repair_added_edges", 0)
+            ),
+            "unresolved_dead_lobes": int(
+                sparsification_info.get("unresolved_dead_lobes", 0)
+            ),
+            "primary_edges_before_repair": int(
+                sparsification_info.get("primary_edge_count", 0)
+            ),
+            "primary_dead_lobes_before_repair": int(
+                sparsification_info.get("primary_dead_lobes", 0)
+            ),
         }
 
         logger.debug(
@@ -1427,17 +1540,25 @@ def construct_graph(subject_id: str, split: str, tr: float = 2.0, method: str = 
 
         # 4. Save structured data for Graph Factory
         graph_package = {
-            'adj': adj_matrix.cpu(),
-            'internal_features': internal_features.cpu(),  # (12, 2) ReHo features
-            'zero_lobe_mask': zero_lobe_mask.cpu(),        # (12,) bool — True = atlas gap / zero-signal
-            'edge_confidence': causal_metadata.get('confidence_matrix', torch.zeros_like(causal_matrix)).cpu(),
-            'edge_pvalues': causal_metadata.get('pvalue_matrix', torch.ones_like(causal_matrix)).cpu(),
-            'selected_lag_matrix': causal_metadata.get('selected_lag_matrix', torch.zeros_like(causal_matrix, dtype=torch.long)).cpu(),
-            'low_confidence_mask': causal_metadata.get('low_confidence_mask', torch.zeros_like(causal_matrix, dtype=torch.bool)).cpu(),
-            'subject_id': subject_id,
-            'lobe_order': [LOBE_NAMES[i] for i in range(NUM_LOBES)],
-            'sparsification_info': sparsification_info,
-            'stats': post_sparse_stats  # Useful for debugging
+            "adj": adj_matrix.cpu(),
+            "internal_features": internal_features.cpu(),  # (12, 2) ReHo features
+            "zero_lobe_mask": zero_lobe_mask.cpu(),  # (12,) bool — True = atlas gap / zero-signal
+            "edge_confidence": causal_metadata.get(
+                "confidence_matrix", torch.zeros_like(causal_matrix)
+            ).cpu(),
+            "edge_pvalues": causal_metadata.get(
+                "pvalue_matrix", torch.ones_like(causal_matrix)
+            ).cpu(),
+            "selected_lag_matrix": causal_metadata.get(
+                "selected_lag_matrix", torch.zeros_like(causal_matrix, dtype=torch.long)
+            ).cpu(),
+            "low_confidence_mask": causal_metadata.get(
+                "low_confidence_mask", torch.zeros_like(causal_matrix, dtype=torch.bool)
+            ).cpu(),
+            "subject_id": subject_id,
+            "lobe_order": [LOBE_NAMES[i] for i in range(NUM_LOBES)],
+            "sparsification_info": sparsification_info,
+            "stats": post_sparse_stats,  # Useful for debugging
         }
 
         torch.save(graph_package, output_path)
@@ -1448,7 +1569,10 @@ def construct_graph(subject_id: str, split: str, tr: float = 2.0, method: str = 
         logger.debug(traceback.format_exc())
         return False, _empty_sparsification_info()
 
-def _construct_single_graph(args: tuple[str, str, float]) -> tuple[str, bool, dict[str, object], str | None]:
+
+def _construct_single_graph(
+    args: tuple[str, str, float],
+) -> tuple[str, bool, dict[str, object], str | None]:
     """
     Process a single subject to construct causal graph.
     Designed to be run in parallel via joblib.
@@ -1469,46 +1593,50 @@ def _construct_single_graph(args: tuple[str, str, float]) -> tuple[str, bool, di
         reason = "missing_ts" if not ts_path.exists() else "zero_edges"
         return subject_id, False, fallback_info, reason
 
+
 def main(n_jobs: int = -1):
     """Construct causal graphs for all subjects.
 
     Args:
         n_jobs: Number of parallel workers (-1 = all cores, default: -1)
     """
-    logger.info("="*60)
-    logger.info(f"CONSTRUCTING 12×12 CAUSAL GRAPHS (Method={CAUSALITY_METHOD}, MaxLag={GRANGER_MAX_LAG_SECONDS}s)")
+    logger.info("=" * 60)
+    logger.info(
+        f"CONSTRUCTING 12×12 CAUSAL GRAPHS (Method={CAUSALITY_METHOD}, MaxLag={GRANGER_MAX_LAG_SECONDS}s)"
+    )
     if SPARSITY_METHOD == "topk_per_node":
         logger.info(f"Sparsity: top-k per node (k={SPARSITY_TOPK_PER_NODE})")
     else:
         logger.info(f"Sparsity: Keep top {(1-SPARSITY_QUANTILE)*100:.0f}% of edges")
     logger.info(f"Parallel workers: {n_jobs}")
-    logger.info("="*60)
+    logger.info("=" * 60)
 
     CAUSAL_GRAPHS_DIR.mkdir(parents=True, exist_ok=True)
 
     manifest = pd.read_csv(MASTER_MANIFEST)
     subject_to_dxgroup: dict[str, int] = {
-        row['subject_id']: int(row.get('DX_GROUP', -1))
+        row["subject_id"]: int(row.get("DX_GROUP", -1))
         for _, row in manifest.iterrows()
     }
 
     tasks = [
-        (row['subject_id'], row['split'], row.get('TR', 2.0))
+        (row["subject_id"], row["split"], row.get("TR", 2.0))
         for _, row in manifest.iterrows()
     ]
 
     logger.info(f"Processing {len(tasks)} subjects...")
 
     results = Parallel(n_jobs=n_jobs, prefer="processes", verbose=0)(
-        delayed(_construct_single_graph)(task) for task in tqdm(tasks, desc="Building Graphs", mininterval=10.0)
+        delayed(_construct_single_graph)(task)
+        for task in tqdm(tasks, desc="Building Graphs", mininterval=10.0)
     )
 
     stats = {
-        'total': len(tasks),
-        'success': 0,
-        'failed': 0,
-        'zero_edges': 0,
-        'missing_ts': 0
+        "total": len(tasks),
+        "success": 0,
+        "failed": 0,
+        "zero_edges": 0,
+        "missing_ts": 0,
     }
     fallback_by_group: dict[int, int] = {}
     min_edge_fallback_by_group: dict[int, int] = {}
@@ -1519,32 +1647,36 @@ def main(n_jobs: int = -1):
 
     for subject_id, success, fallback_info, reason in results:
         if success:
-            stats['success'] += 1
+            stats["success"] += 1
             dx_group = subject_to_dxgroup.get(subject_id, -1)
             if dx_group != -1:
-                if bool(fallback_info.get('triggered', False)):
+                if bool(fallback_info.get("triggered", False)):
                     fallback_by_group[dx_group] = fallback_by_group.get(dx_group, 0) + 1
                     total_fallback_triggered += 1
-                if bool(fallback_info.get('min_edge_fallback', False)):
-                    min_edge_fallback_by_group[dx_group] = min_edge_fallback_by_group.get(dx_group, 0) + 1
+                if bool(fallback_info.get("min_edge_fallback", False)):
+                    min_edge_fallback_by_group[dx_group] = (
+                        min_edge_fallback_by_group.get(dx_group, 0) + 1
+                    )
                     total_min_edge_fallback += 1
-                if bool(fallback_info.get('dead_lobe_repair', False)):
-                    dead_repair_by_group[dx_group] = dead_repair_by_group.get(dx_group, 0) + 1
+                if bool(fallback_info.get("dead_lobe_repair", False)):
+                    dead_repair_by_group[dx_group] = (
+                        dead_repair_by_group.get(dx_group, 0) + 1
+                    )
                     total_dead_repair += 1
         else:
-            stats['failed'] += 1
+            stats["failed"] += 1
             if reason == "missing_ts":
-                stats['missing_ts'] += 1
+                stats["missing_ts"] += 1
             else:
-                stats['zero_edges'] += 1
+                stats["zero_edges"] += 1
 
     # Calculate zero_edges count
-    stats['zero_edges'] = stats['failed'] - stats['missing_ts']
+    stats["zero_edges"] = stats["failed"] - stats["missing_ts"]
 
     # Print comprehensive report
-    logger.info("\n" + "="*60)
+    logger.info("\n" + "=" * 60)
     logger.info("GRAPH CONSTRUCTION SUMMARY")
-    logger.info("="*60)
+    logger.info("=" * 60)
     logger.info(f"Total subjects: {stats['total']}")
     logger.info(f"✓ Successfully constructed: {stats['success']}")
     logger.info(f"✗ Failed: {stats['failed']}")
@@ -1552,18 +1684,18 @@ def main(n_jobs: int = -1):
     logger.info(f"  ↳ Missing time series: {stats['missing_ts']}")
     logger.info(f"\nSuccess rate: {stats['success']/stats['total']*100:.1f}%")
     logger.info(f"Output directory: {CAUSAL_GRAPHS_DIR}")
-    logger.info("="*60)
+    logger.info("=" * 60)
 
     # Report sparsification interventions by diagnostic group.
-    if stats['success'] > 0:
+    if stats["success"] > 0:
         logger.info(
             "Sparsification interventions: triggered=%d (%.1f%%), min-edge=%d (%.1f%%), dead-lobe-repair=%d (%.1f%%)",
             total_fallback_triggered,
-            100.0 * total_fallback_triggered / stats['success'],
+            100.0 * total_fallback_triggered / stats["success"],
             total_min_edge_fallback,
-            100.0 * total_min_edge_fallback / stats['success'],
+            100.0 * total_min_edge_fallback / stats["success"],
             total_dead_repair,
-            100.0 * total_dead_repair / stats['success'],
+            100.0 * total_dead_repair / stats["success"],
         )
 
     if fallback_by_group:
@@ -1606,18 +1738,18 @@ def main(n_jobs: int = -1):
             )
 
     # Warning if too many zero-edge graphs
-    if stats['zero_edges'] > stats['total'] * 0.1:  # More than 10%
+    if stats["zero_edges"] > stats["total"] * 0.1:  # More than 10%
         logger.warning(
             f"\n⚠️  HIGH ZERO-EDGE RATE: {stats['zero_edges']} subjects ({stats['zero_edges']/stats['total']*100:.1f}%)"
         )
         logger.warning(
             f"Consider lowering SPARSITY_QUANTILE from {SPARSITY_QUANTILE} to 0.70 or 0.60"
         )
-        logger.warning(
-            "This will keep more edges (top 30% or 40% instead of top 20%)"
-        )
+        logger.warning("This will keep more edges (top 30% or 40% instead of top 20%)")
+
 
 # ─── TASK 2: Multi-View Causal Graph Construction (DD-010) ───────────────────────
+
 
 def construct_multiview_graphs(
     subject_id: str,
@@ -1657,17 +1789,21 @@ def construct_multiview_graphs(
 
     base_path = CAUSAL_GRAPHS_DIR / f"{subject_id}_graph.pt"
     if not base_path.exists():
-        logger.warning("Base graph not found for %s; skipping multiview construction.", subject_id)
+        logger.warning(
+            "Base graph not found for %s; skipping multiview construction.", subject_id
+        )
         return False
 
     try:
         base_graph = torch.load(base_path, weights_only=True)
-        adj_base = base_graph['adj'].float()
+        adj_base = base_graph["adj"].float()
     except Exception as e:
         logger.warning("Failed to load base graph for %s: %s", subject_id, e)
         return False
 
-    ts_np = time_series.numpy() if isinstance(time_series, torch.Tensor) else time_series
+    ts_np = (
+        time_series.numpy() if isinstance(time_series, torch.Tensor) else time_series
+    )
     T, num_rois = ts_np.shape
 
     # Very short runs cannot support stable Granger estimation; build safe
@@ -1741,7 +1877,9 @@ def construct_multiview_graphs(
                     raise ValueError("bootstrap causality returned all-zero matrix")
                 adj_bootstraps.append(torch.tensor(adj_np, dtype=torch.float32))
             except Exception as e:
-                logger.warning("Bootstrap %d Granger failed for %s: %s", seed, subject_id, e)
+                logger.warning(
+                    "Bootstrap %d Granger failed for %s: %s", seed, subject_id, e
+                )
                 adj_bootstraps.append(adj_base.clone())
 
     # 5. High-confidence view: keep top-15% edges from base
@@ -1754,12 +1892,12 @@ def construct_multiview_graphs(
         adj_high_conf = adj_base.clone()
 
     views = {
-        "base":             adj_base,
-        "extended_lag":     adj_extended,
-        "bootstrap_0":      adj_bootstraps[0],
-        "bootstrap_1":      adj_bootstraps[1],
-        "bootstrap_2":      adj_bootstraps[2],
-        "high_confidence":  adj_high_conf,
+        "base": adj_base,
+        "extended_lag": adj_extended,
+        "bootstrap_0": adj_bootstraps[0],
+        "bootstrap_1": adj_bootstraps[1],
+        "bootstrap_2": adj_bootstraps[2],
+        "high_confidence": adj_high_conf,
     }
 
     out_path = output_dir / subject_id / "multiview_graphs.pt"
@@ -1773,11 +1911,14 @@ def construct_multiview_graphs(
             "bootstrap_0": bool(torch.equal(views["bootstrap_0"], views["base"])),
             "bootstrap_1": bool(torch.equal(views["bootstrap_1"], views["base"])),
             "bootstrap_2": bool(torch.equal(views["bootstrap_2"], views["base"])),
-            "high_confidence": bool(torch.equal(views["high_confidence"], views["base"])),
+            "high_confidence": bool(
+                torch.equal(views["high_confidence"], views["base"])
+            ),
         },
     }
     torch.save(package, out_path)
     return True
+
 
 def _assess_multiview_generation_quality(multiview_dir: Path) -> dict:
     """Compute zero-edge rates per multiview type from generated artifacts."""
@@ -1818,8 +1959,7 @@ def _assess_multiview_generation_quality(multiview_dir: Path) -> dict:
                 zero_counts[view] += 1
 
     rates = {
-        view: (zero_counts[view] / max(checked, 1))
-        for view in _MULTIVIEW_VIEW_ORDER
+        view: (zero_counts[view] / max(checked, 1)) for view in _MULTIVIEW_VIEW_ORDER
     }
     failing = [
         view
@@ -1832,6 +1972,7 @@ def _assess_multiview_generation_quality(multiview_dir: Path) -> dict:
         "zero_edge_rates": rates,
         "failing_views": failing,
     }
+
 
 def _package_has_degenerate_non_base_views(package_path: Path) -> bool:
     """Return True when an existing multiview package is malformed/degenerate."""
@@ -1868,6 +2009,7 @@ def _package_has_degenerate_non_base_views(package_path: Path) -> bool:
 
     return False
 
+
 def main_multiview():
     """
     Task 2 entry point: generate multi-view causal graphs for all subjects.
@@ -1886,9 +2028,9 @@ def main_multiview():
     logger.info("=" * 70)
 
     manifest = pd.read_csv(MASTER_MANIFEST)
-    all_subjects = manifest['subject_id'].astype(str).tolist()
+    all_subjects = manifest["subject_id"].astype(str).tolist()
     subject_to_tr: dict[str, float] = {
-        str(row['subject_id']): float(row.get('TR', 2.0))
+        str(row["subject_id"]): float(row.get("TR", 2.0))
         for _, row in manifest.iterrows()
     }
 
@@ -1914,7 +2056,9 @@ def main_multiview():
                 try:
                     out_file.unlink()
                 except Exception as exc:
-                    logger.warning("Failed to remove stale package for %s: %s", sub_id, exc)
+                    logger.warning(
+                        "Failed to remove stale package for %s: %s", sub_id, exc
+                    )
                 failed += 1
                 continue
 
@@ -1931,7 +2075,9 @@ def main_multiview():
                 out_file.unlink()
                 regenerated += 1
             except Exception as exc:
-                logger.warning("Failed to remove existing package for %s: %s", sub_id, exc)
+                logger.warning(
+                    "Failed to remove existing package for %s: %s", sub_id, exc
+                )
                 failed += 1
                 continue
 
@@ -1951,6 +2097,7 @@ def main_multiview():
         if ts_path is None:
             # Fall back to processed dir
             from src.core.paths import DATA_TIME_SERIES as _DTS
+
             candidate2 = _DTS / f"{sub_id}_ts.npy"
             if candidate2.exists():
                 ts_path = candidate2
@@ -1959,14 +2106,21 @@ def main_multiview():
             logger.debug("No time series for %s; copying base graph only.", sub_id)
             # Still create multiview with base-derived views only (no bootstrap)
             base_graph = torch.load(base_path, weights_only=True)
-            adj_base = base_graph['adj'].float()
+            adj_base = base_graph["adj"].float()
             adj_flat = adj_base.flatten()
             nz = adj_flat[adj_flat > 0]
-            adj_hc = (adj_base >= float(torch.quantile(nz, 0.85))).float() * adj_base if nz.numel() > 0 else adj_base.clone()
+            adj_hc = (
+                (adj_base >= float(torch.quantile(nz, 0.85))).float() * adj_base
+                if nz.numel() > 0
+                else adj_base.clone()
+            )
             views = {
-                "base": adj_base, "extended_lag": adj_base.clone(),
-                "bootstrap_0": adj_base.clone(), "bootstrap_1": adj_base.clone(),
-                "bootstrap_2": adj_base.clone(), "high_confidence": adj_hc,
+                "base": adj_base,
+                "extended_lag": adj_base.clone(),
+                "bootstrap_0": adj_base.clone(),
+                "bootstrap_1": adj_base.clone(),
+                "bootstrap_2": adj_base.clone(),
+                "high_confidence": adj_hc,
             }
             out_file.parent.mkdir(parents=True, exist_ok=True)
             package = {
@@ -1999,7 +2153,10 @@ def main_multiview():
 
     logger.info(
         "Multi-view construction complete: %d success | %d regenerated | %d skipped | %d failed",
-        success, regenerated, skipped, failed,
+        success,
+        regenerated,
+        skipped,
+        failed,
     )
     logger.info("Output directory: %s", CAUSAL_GRAPHS_MULTIVIEW_DIR)
 
@@ -2041,11 +2198,22 @@ def main_multiview():
                 raise RuntimeError(msg)
             logger.warning(msg)
 
+
 if __name__ == "__main__":
     import argparse
+
     _parser = argparse.ArgumentParser()
-    _parser.add_argument("--multiview", action="store_true", help="Run multi-view graph construction (Task 2)")
-    _parser.add_argument("--n-jobs", type=int, default=-1, help="Number of parallel workers (-1=all cores)")
+    _parser.add_argument(
+        "--multiview",
+        action="store_true",
+        help="Run multi-view graph construction (Task 2)",
+    )
+    _parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=-1,
+        help="Number of parallel workers (-1=all cores)",
+    )
     _args = _parser.parse_args()
     if _args.multiview:
         main_multiview()

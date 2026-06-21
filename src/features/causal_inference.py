@@ -49,7 +49,9 @@ def compute_granger_causality(
 
     # Validate input
     if n_timepoints < max_lag + 10:
-        logger.warning(f"Time series too short ({n_timepoints} points) for lag {max_lag}")
+        logger.warning(
+            f"Time series too short ({n_timepoints} points) for lag {max_lag}"
+        )
         return np.zeros((n_regions, n_regions))
 
     if np.isnan(ts_matrix).any() or np.isinf(ts_matrix).any():
@@ -69,7 +71,9 @@ def compute_granger_causality(
             data = np.column_stack([ts_matrix[:, j], ts_matrix[:, i]])
 
             results = grangercausalitytests(data, maxlag=max_lag, verbose=False)
-            p_values = [results[lag][0]['ssr_ftest'][1] for lag in range(1, max_lag + 1)]
+            p_values = [
+                results[lag][0]["ssr_ftest"][1] for lag in range(1, max_lag + 1)
+            ]
 
             # Use minimum p-value across lags (strongest evidence)
             min_p_value = min(p_values)
@@ -132,11 +136,11 @@ def validate_causality_matrix(causal_matrix: np.ndarray) -> dict[str, float]:
     non_zero = (causal_matrix != 0).sum() - n_regions  # Exclude diagonal
 
     metrics = {
-        'symmetry': float(symmetry),
-        'directionality': float(mean_directionality),
-        'non_zero_edges': int(non_zero),
-        'mean_strength': float(np.abs(causal_matrix).mean()),
-        'max_strength': float(np.abs(causal_matrix).max()),
+        "symmetry": float(symmetry),
+        "directionality": float(mean_directionality),
+        "non_zero_edges": int(non_zero),
+        "mean_strength": float(np.abs(causal_matrix).mean()),
+        "max_strength": float(np.abs(causal_matrix).max()),
     }
 
     return metrics

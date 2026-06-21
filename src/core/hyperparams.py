@@ -1,3 +1,5 @@
+import os
+
 import torch
 
 from src.core.paths import RESULTS_DIR
@@ -5,7 +7,14 @@ from src.core.paths import RESULTS_DIR
 # --- YOLO DETECTION PARAMETERS (Fixed for Medical Integrity) ---
 YOLO_MODEL_SIZE = "yolo26n.pt"
 YOLO_PROJECT_NAME = "ROI_Detection_v29"  # Output directory name from training
-YOLO_WEIGHTS_PATH = RESULTS_DIR / "experiments" / "detection" / "ROI_Detection_v29" / "weights" / "best.pt"
+YOLO_WEIGHTS_PATH = (
+    RESULTS_DIR
+    / "experiments"
+    / "detection"
+    / "ROI_Detection_v29"
+    / "weights"
+    / "best.pt"
+)
 YOLO_IMGSZ = 640
 YOLO_BATCH_SIZE = 32
 YOLO_EPOCHS = 100
@@ -52,9 +61,7 @@ YOLO_TRAIN_CONFIG = {
 }
 
 # GNN training seed for reproducibility
-# Can be overridden via NEURO_CXG_SEED environment variable (propagated from run_pipeline.py --seed)
-import os
-
+# Can be overridden via NEURO_CXG_SEED env var (propagated from run_pipeline.py --seed)
 GNN_SEED = int(os.environ.get("NEURO_CXG_SEED", "42"))
 
 # --- CAUSAL GRAPH PARAMETERS ---
@@ -62,15 +69,17 @@ SPARSITY_QUANTILE = 0.70  # Keep top 30% edges (high selectivity - Phase 3)
 # Target graph density: keep only the top GRAPH_DENSITY_TARGET fraction of edges.
 # Literature recommends 10-30% for functional connectivity graphs.
 # The fixed sparsification method quantiles over off-diagonal values only.
-GRAPH_DENSITY_TARGET = 0.30  # Keep top 30% of directional edges (~40/132 for 12-node graphs)
+GRAPH_DENSITY_TARGET = (
+    0.30  # Keep top 30% of directional edges (~40/132 for 12-node graphs)
+)
 
 # Phase 1/2 enhancements (Apr 2026)
 # Default to ridge-regularized Granger edges for stronger statistical signal.
 CAUSALITY_METHOD = "ridge_granger_hybrid"  # Hybrid: 70% ridge_granger + 30% lagged_pearson  # Options: 'granger', 'ridge_granger', 'ridge_granger_hybrid', 'lagged_pearson', 'partial_corr_glasso'
-GRANGER_MAX_LAG = 5  # Test lags 1-5 TRs (legacy, kept for backward compatibility)
-GRANGER_MAX_LAG_SECONDS = 10.0  # Test causality up to 10s of history; adjusted by subject TR
+GRANGER_MAX_LAG_SECONDS = (
+    10.0  # Test causality up to 10s of history; adjusted by subject TR
+)
 GRANGER_SIGNIFICANCE_LEVEL = 0.05  # Statistical significance threshold
-GRANGER_USE_GPU = True  # Use GPU-accelerated Granger causality (auto-detects CUDA availability)
 
 # Ridge-regularized pairwise VAR Granger controls.
 RIDGE_GRANGER_LAGS = (1, 2, 3, 4, 5)
@@ -85,7 +94,9 @@ RIDGE_GRANGER_HYBRID_BETA = 0.70
 # Lagged-Pearson edge construction controls (signal recovery pass)
 LAGGED_PEARSON_LAGS = (1, 2, 3, 4)  # Multi-lag candidates evaluated per directed edge
 LAGGED_PEARSON_P_SELECT_THRESHOLD = 0.10  # Prefer lag with max |z| among p < threshold
-LAGGED_PEARSON_P_PRUNE_THRESHOLD = 0.20  # Zero weak edges before top-k candidate selection
+LAGGED_PEARSON_P_PRUNE_THRESHOLD = (
+    0.20  # Zero weak edges before top-k candidate selection
+)
 LAGGED_PEARSON_CONFIDENCE_ALPHA = 0.75  # w = z * sigmoid(alpha * confidence)
 
 # GraphicalLasso partial-correlation controls.
@@ -105,8 +116,6 @@ PARTIAL_CORR_FDR_ALPHA = 0.10
 SPARSITY_METHOD = "topk_per_node"  # Options: topk_per_node/adaptive_proportional/adaptive_statistical/fixed
 SPARSITY_TOPK_PER_NODE = 3  # Strongest outgoing/incoming edges retained per node
 MIN_EDGES_PER_GRAPH = 12  # Ensure minimum connectivity for 12-region graphs
-
-# --- DATA QUALITY FILTERS ---
 
 # --- DATA QUALITY FILTERS ---
 # Curated removal list used to reduce the source ABIDE cohort from 1035 -> 1015.
@@ -147,20 +156,19 @@ MAX_NAN_ROIS: int = 30
 # +2.3% AUC vs canonical (0.8657), +1.7% vs prior best (0.8798)
 GNN_HIDDEN_CHANNELS = 48  # Optimal: 32→64 tested, 48 is sweet spot
 GNN_NUM_HEADS = 4  # Optimal: 2→4 tested, 4 is best
-GNN_NUM_CLASSES = 2  # 0: Control, 1: ASD
 GNN_DROPOUT = 0.33  # Optimal: 0.20→0.45 tested, 0.33 is best
 GNN_NUM_LAYERS = 3  # Optimal: 2→3 tested, 3 is best
 GNN_WEIGHT_DECAY = 5e-4
-GNN_LEARNING_RATE = 0.001
 GNN_BATCH_SIZE = 32
 GNN_EPOCHS = 100  # Canonical
 K_FOLDS = 5
-GNN_SKIP_CONNECTIONS = True
 GNN_USE_SITE_EMBEDDING = True
 GNN_SITE_EMBEDDING_DIM = 16
 GNN_NODE_EMB_DIM = 16
 GNN_USE_DEMOGRAPHICS = True
-GNN_EARLY_STOPPING_PATIENCE = 50  # Increased from 30 to prevent Fold 0 premature stopping
+GNN_EARLY_STOPPING_PATIENCE = (
+    50  # Increased from 30 to prevent Fold 0 premature stopping
+)
 # Guardrail against premature stopping on noisy/unstable folds.
 GNN_MIN_EPOCHS_BEFORE_STOPPING = 30
 GNN_POOLING = "anatomical"  # Options: 'anatomical', 'attention', 'mean_max_sum'
@@ -173,14 +181,20 @@ GNN_SITE_LOSS_WEIGHT = 0.15
 GNN_EDGE_GATE = True
 GNN_ONECYCLE_MAX_LR = 0.001  # Canonical max LR
 GNN_ONECYCLE_PCT_START = 0.2
-GNN_ONECYCLE_WARMUP_FRACTION = 0.20  # was 0.05, increased to delay LR ramp-up and avoid destabilization with GRL
+GNN_ONECYCLE_WARMUP_FRACTION = (
+    0.20  # was 0.05, increased to delay LR ramp-up and avoid destabilization with GRL
+)
 
 # Auxiliary regularization defaults (kept conservative by default).
 # These were previously hardcoded in gnn_model.py and can now be tuned safely.
 # NOTE: Setting structural_dropout and edge_contrastive to force graph learning
 # (previously disabled due to known issue DD-009 - model ignoring graph structure)
-GNN_STRUCTURAL_DROPOUT_PROB = 0.0  # Disabled - counterproductive without contrastive complement
-GNN_EDGE_CONTRASTIVE_WEIGHT = 0.0  # Keep auxiliary contrastive objective off for baseline stability
+GNN_STRUCTURAL_DROPOUT_PROB = (
+    0.0  # Disabled - counterproductive without contrastive complement
+)
+GNN_EDGE_CONTRASTIVE_WEIGHT = (
+    0.0  # Keep auxiliary contrastive objective off for baseline stability
+)
 GNN_INVARIANCE_WEIGHT = 0.0
 GNN_SPATIAL_INVARIANCE_WEIGHT = 0.0
 
@@ -229,17 +243,12 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 FOCAL_LOSS_ALPHA = 0.50
 FOCAL_LOSS_GAMMA = 1.5
 
-DEFAULT_THRESHOLD = 0.5
-OPTIMIZE_THRESHOLD = True
-
 # Evaluation operating-point policy.
 # - "f1": max-F1 threshold on held-out calibration fold
 # - "youden": max(sensitivity + specificity - 1) - reduces false negatives
 # - "fixed": use EVAL_FIXED_THRESHOLD directly (deployment lock)
 EVAL_THRESHOLD_POLICY = "youden"
 EVAL_FIXED_THRESHOLD = 0.5263  # Kept for backward compatibility
-EVAL_PER_SITE_MIN_SAMPLES = 20  # Minimum samples per site for reliable AUC estimation
-EVAL_SEED = 42  # Random seed for bootstrap/permutation tests
 
 # Site robustness gate derived from cross-site experiment output
 # (`results/experiments/data_quality/cross_site_auc.csv`).
@@ -251,24 +260,6 @@ SITE_ROBUSTNESS_GATE_POLICY = "warn"  # Options: "warn", "fail"
 
 USE_FOCAL_LOSS = True
 USE_CLASS_WEIGHTS = False
-USE_BALANCED_SAMPLING = False
-
-# EVAL_FREQUENCY removed in Task 6 (DD-014) — was unused throughout the codebase.
-
-# --- DIAGNOSTIC THRESHOLDS ---
-AUC_RANDOM_THRESHOLD = 0.52
-AUC_WEAK_THRESHOLD = 0.60
-AUC_GOOD_THRESHOLD = 0.70
-AUC_EXCELLENT_THRESHOLD = 0.80
-
-F1_BROKEN_THRESHOLD = 0.01
-F1_WEAK_THRESHOLD = 0.30
-F1_GOOD_THRESHOLD = 0.50
-F1_EXCELLENT_THRESHOLD = 0.70
-
-LOSS_RANDOM_THRESHOLD = 0.693
-LOSS_LEARNING_THRESHOLD = 0.65
-LOSS_CONVERGED_THRESHOLD = 0.50
 
 # --- MULTIVIEW GRAPH CONFIG ---
 _MULTIVIEW_VIEW_ORDER = (

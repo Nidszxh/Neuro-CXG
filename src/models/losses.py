@@ -29,11 +29,15 @@ class FocalLoss(nn.Module):
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """Compute focal loss from logits and class targets."""
         if inputs.dim() != 2:
-            raise ValueError(f"FocalLoss expects logits shape (B, C), got {tuple(inputs.shape)}")
+            raise ValueError(
+                f"FocalLoss expects logits shape (B, C), got {tuple(inputs.shape)}"
+            )
 
         num_classes = int(inputs.size(1))
         if num_classes < 2:
-            raise ValueError(f"FocalLoss requires at least 2 classes, got C={num_classes}")
+            raise ValueError(
+                f"FocalLoss requires at least 2 classes, got C={num_classes}"
+            )
 
         targets = targets.view(-1).long()
         if targets.numel() != int(inputs.size(0)):
@@ -58,14 +62,15 @@ class FocalLoss(nn.Module):
         pt = (probs * targets_one_hot).sum(dim=1).clamp(min=1e-8, max=1.0)
 
         focal_weight = (1.0 - pt) ** self.gamma
-        alpha_weight = (
-            targets_one_hot[:, 1] * self.alpha
-            + targets_one_hot[:, 0] * (1.0 - self.alpha)
+        alpha_weight = targets_one_hot[:, 1] * self.alpha + targets_one_hot[:, 0] * (
+            1.0 - self.alpha
         )
 
         ce_loss = F.cross_entropy(inputs, targets, reduction="none")
         if self.pos_weight is not None:
-            class_weight = targets_one_hot[:, 1] * self.pos_weight + targets_one_hot[:, 0]
+            class_weight = (
+                targets_one_hot[:, 1] * self.pos_weight + targets_one_hot[:, 0]
+            )
             ce_loss = ce_loss * class_weight
 
         return (alpha_weight * focal_weight * ce_loss).mean()
@@ -114,6 +119,7 @@ def build_criterion(
 
 # ── Causal Invariance Loss (DD-010) ───────────────────────────────────────────────
 
+
 class CausalInvarianceLoss(nn.Module):
     """NT-Xent contrastive loss across multiple causal graph views of the same subject.
 
@@ -145,11 +151,15 @@ class CausalInvarianceLoss(nn.Module):
         """
         V = len(embeddings_list)
         if V < 2:
-            return torch.tensor(0.0, device=embeddings_list[0].device, requires_grad=True)
+            return torch.tensor(
+                0.0, device=embeddings_list[0].device, requires_grad=True
+            )
 
         B = embeddings_list[0].size(0)
         if B < 2:
-            return torch.tensor(0.0, device=embeddings_list[0].device, requires_grad=True)
+            return torch.tensor(
+                0.0, device=embeddings_list[0].device, requires_grad=True
+            )
 
         zs = [F.normalize(e, dim=1) for e in embeddings_list]
 
@@ -168,6 +178,7 @@ class CausalInvarianceLoss(nn.Module):
 
 
 # ── Spatial Invariance Loss (DD-012) ──────────────────────────────────────
+
 
 class SpatialInvarianceLoss(nn.Module):
     """Gradient reversal applied to spatial feature slice for site invariance.
@@ -204,55 +215,7 @@ class SpatialInvarianceLoss(nn.Module):
         """
         from src.models.causal_gnn import GradientReversal
 
-        spatial = x[:, self.spatial_start_idx:]
+        spatial = x[:, self.spatial_start_idx :]
         spatial_rev = GradientReversal.apply(spatial, self.reversal_weight)
         site_logits = self.site_head(spatial_rev)
         return F.cross_entropy(site_logits, site_targets)
-
-
-# ── Edge Structure Contrastive Loss (DD-009) ───────────────────────────
-
-class EdgeStructureContrastiveLoss(nn.Module):
-    """NT-Xent style contrastive loss for structural learning.
-
-    Args:
-        temperature: Softmax temperature τ. Default 0.5.
-    """
-
-    def __init__(self, temperature: float = 0.5):
-        super().__init__()
-        self.temperature = temperature
-
-    def forward(
-        self,
-        z_full: torch.Tensor,
-        z_edge_only: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute alignment loss between full-feature and edge-only views.
-
-        Args:
-            z_full: Embeddings from full-feature pass, shape (B, D).
-            z_edge_only: Embeddings from edge-only pass, shape (B, D).
-        Returns:
-            Scalar contrastive loss.
-        """
-        B = z_full.size(0)
-        if B < 2:
-            return torch.tensor(0.0, device=z_full.device, requires_grad=True)
-
-        z_f = F.normalize(z_full, dim=1)
-        z_e = F.normalize(z_edge_only, dim=1)
-
-        z = torch.cat([z_f, z_e], dim=0)
-
-        sim = torch.mm(z, z.t()) / self.temperature
-
-        eye = torch.eye(2 * B, dtype=torch.bool, device=z.device)
-        sim = sim.masked_fill(eye, float('-inf'))
-
-        labels = torch.cat([
-            torch.arange(B, 2 * B, device=z.device),
-            torch.arange(0, B, device=z.device),
-        ])
-
-        return F.cross_entropy(sim, labels)

@@ -22,9 +22,16 @@ from tqdm import tqdm
 # Suppress nilearn FutureWarnings (already addressed in code with explicit parameters)
 warnings.filterwarnings("ignore", category=FutureWarning, module="nilearn")
 # Suppress torch CUDA UserWarning on hardware without matching CUDA driver support
-warnings.filterwarnings("ignore", message=".*CUDA initialization.*", category=UserWarning)
+warnings.filterwarnings(
+    "ignore", message=".*CUDA initialization.*", category=UserWarning
+)
 # Suppress scipy RuntimeWarning for empty ROIs (NiftiLabelsMasker mean of zero-voxel regions)
-warnings.filterwarnings("ignore", message="invalid value encountered in divide", category=RuntimeWarning, module="scipy")
+warnings.filterwarnings(
+    "ignore",
+    message="invalid value encountered in divide",
+    category=RuntimeWarning,
+    module="scipy",
+)
 
 # PATHS - Import from config to ensure single source of truth
 from src.core.config import (
@@ -45,16 +52,17 @@ from src.core.config import (
     SITE_TR_MAP,
 )
 
-PNG_OUTPUT   = DATA_IMAGES
+PNG_OUTPUT = DATA_IMAGES
 # Prefer dedicated time-series directory when available, keep legacy fallback.
-TS_OUTPUT    = DATA_TIME_SERIES if DATA_TIME_SERIES.exists() else DATA_PROCESSED
-META_DIR     = DATA_METADATA
+TS_OUTPUT = DATA_TIME_SERIES if DATA_TIME_SERIES.exists() else DATA_PROCESSED
+META_DIR = DATA_METADATA
 MASK_S3_TEMPLATE = "data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/func_mask/{sub_id}_func_mask.nii.gz"
 
 logger = logging.getLogger(__name__)
 
 _S3_CLIENT = None
 _MNI_MASK_TEMPLATE = None
+
 
 # HELPER: ATLAS PREP
 def save_atlas_metadata():
@@ -80,24 +88,28 @@ def save_atlas_metadata():
         mean_vox = indices.mean(axis=0)
         # Add 1 for the affine transformation math
         mni_coord = affine @ np.append(mean_vox, 1)
-        coords.append({
-            "roi_id": int(label),
-            "x": float(mni_coord[0]),
-            "y": float(mni_coord[1]),
-            "z": float(mni_coord[2])
-        })
+        coords.append(
+            {
+                "roi_id": int(label),
+                "x": float(mni_coord[0]),
+                "y": float(mni_coord[1]),
+                "z": float(mni_coord[2]),
+            }
+        )
 
     META_DIR.mkdir(parents=True, exist_ok=True)
-    with open(ROI_CENTROIDS_PATH, 'w') as f:
+    with open(ROI_CENTROIDS_PATH, "w") as f:
         json.dump(coords, f)
     logger.info(f"Saved ROI centroids to {ROI_CENTROIDS_PATH}")
     return atlas_img
+
 
 # THE CORE PROCESS
 def init_worker():
     global _S3_CLIENT, _MNI_MASK_TEMPLATE
     _S3_CLIENT = boto3.client("s3", config=Config(signature_version=UNSIGNED))
     _MNI_MASK_TEMPLATE = load_mni152_brain_mask()
+
 
 def get_s3_client():
     if _S3_CLIENT is None:
@@ -107,6 +119,7 @@ def get_s3_client():
         )
         return boto3.client("s3", config=Config(signature_version=UNSIGNED))
     return _S3_CLIENT
+
 
 def process_subject(sub_id, tr_val):
     # 1. Skip only when the subject is fully complete (TS + ROI labels + all slices).
@@ -133,8 +146,16 @@ def process_subject(sub_id, tr_val):
             m_p = tmp_path / f"{sub_id}_mask.nii.gz"
 
             # Download only if necessary
-            s3.download_file("fcp-indi", f"data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/func_preproc/{sub_id}_func_preproc.nii.gz", str(f_p))
-            s3.download_file("fcp-indi", f"data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/alff/{sub_id}_alff.nii.gz", str(a_p))
+            s3.download_file(
+                "fcp-indi",
+                f"data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/func_preproc/{sub_id}_func_preproc.nii.gz",
+                str(f_p),
+            )
+            s3.download_file(
+                "fcp-indi",
+                f"data/Projects/ABIDE_Initiative/Outputs/cpac/filt_global/alff/{sub_id}_alff.nii.gz",
+                str(a_p),
+            )
 
             # 1. Load and Fix Orientation
             func_img = nib.as_closest_canonical(nib.load(str(f_p)))
@@ -147,15 +168,13 @@ def process_subject(sub_id, tr_val):
                 func_img,
                 interpolation="nearest",
                 force_resample=True,  # Suppress future warning
-                copy_header=True      # Use new header behavior
+                copy_header=True,  # Use new header behavior
             )
 
             # 3. Time Series Extraction with finite check
             try:
                 s3.download_file(
-                    "fcp-indi",
-                    MASK_S3_TEMPLATE.format(sub_id=sub_id),
-                    str(m_p)
+                    "fcp-indi", MASK_S3_TEMPLATE.format(sub_id=sub_id), str(m_p)
                 )
                 mask_img_obj = resample_to_img(
                     nib.load(str(m_p)),
@@ -192,7 +211,7 @@ def process_subject(sub_id, tr_val):
                 high_pass=BANDPASS_LOW,  # config.BANDPASS_LOW  = 0.01 Hz
                 ensure_finite=True,  # Safety for NaN values
                 strategy="mean",
-                memory_level=0  # Saves RAM by not caching to disk
+                memory_level=0,  # Saves RAM by not caching to disk
             )
 
             ts = masker.fit_transform(func_img)
@@ -222,7 +241,9 @@ def process_subject(sub_id, tr_val):
 
             # Additional validation: ensure no NaN/Inf after masker processing
             if not np.isfinite(ts).all():
-                raise ValueError(f"Non-finite values detected in time series for {sub_id}")
+                raise ValueError(
+                    f"Non-finite values detected in time series for {sub_id}"
+                )
 
             # CRITICAL FIX FOR AAL3v1 INDEX SHIFT
             full_ts = np.zeros((ts.shape[0], 170), dtype=np.float32)
@@ -231,7 +252,11 @@ def process_subject(sub_id, tr_val):
                     full_ts[:, roi_id - 1] = ts[:, col_idx]
                 else:
                     # ROI id 0 is the atlas background label — skip silently
-                    logger.debug("Subject %s: ROI id %s out of range (background label)", sub_id, roi_id)
+                    logger.debug(
+                        "Subject %s: ROI id %s out of range (background label)",
+                        sub_id,
+                        roi_id,
+                    )
 
             if np.any(np.all(full_ts == 0, axis=0)):
                 zero_rois = np.where(np.all(full_ts == 0, axis=0))[0]
@@ -251,12 +276,14 @@ def process_subject(sub_id, tr_val):
                     if affected:
                         affected_lobes[LOBE_NAMES[lobe_id]] = affected
 
-                lobe_summary = ", ".join([f"{lobe}: {rois}" for lobe, rois in affected_lobes.items()])
+                lobe_summary = ", ".join(
+                    [f"{lobe}: {rois}" for lobe, rois in affected_lobes.items()]
+                )
                 logger.warning(
                     "Subject %s: patched %d empty ROIs | %s",
                     sub_id,
                     len(zero_rois),
-                    lobe_summary if lobe_summary else "unknown lobes"
+                    lobe_summary if lobe_summary else "unknown lobes",
                 )
 
             np.save(final_ts_path, full_ts)
@@ -281,7 +308,9 @@ def process_subject(sub_id, tr_val):
 
                 img = Image.fromarray((norm * 255).astype(np.uint8))
                 # Using Lanczos for better downsampling quality if reducing size
-                img.resize((640, 640), resample=Image.LANCZOS).save(PNG_OUTPUT / f"{sub_id}_z{z}.png")
+                img.resize((640, 640), resample=Image.LANCZOS).save(
+                    PNG_OUTPUT / f"{sub_id}_z{z}.png"
+                )
 
             # Manual RAM cleanup to reduce peak usage per worker.
             del func_img, atlas_img, resampled_atlas, mask_img_obj, masker, ts, alff_img
@@ -291,6 +320,7 @@ def process_subject(sub_id, tr_val):
 
     except Exception as e:
         return sub_id, "Failed", str(e)
+
 
 # EXECUTION
 if __name__ == "__main__":
@@ -311,8 +341,12 @@ if __name__ == "__main__":
         with open(path, "rb") as f:
             file_hash = hashlib.md5(f.read()).hexdigest()
         if file_hash != EXPECTED_PHENO_MD5:
-            logger.error(f"Phenotype MD5 mismatch! Expected {EXPECTED_PHENO_MD5}, got {file_hash}")
-            logger.error("The upstream CPAC pipeline may have updated the preprocessing artifacts.")
+            logger.error(
+                f"Phenotype MD5 mismatch! Expected {EXPECTED_PHENO_MD5}, got {file_hash}"
+            )
+            logger.error(
+                "The upstream CPAC pipeline may have updated the preprocessing artifacts."
+            )
             return False
         logger.info("Phenotype checksum verified.")
         return True
@@ -327,18 +361,22 @@ if __name__ == "__main__":
     else:
         logger.info("Phenotypic file exists, verifying checksum...")
         if not verify_phenotype_md5(PHENO_PATH):
-            logger.warning("Existing phenotype file failed checksum validation. Proceeding with caution.")
+            logger.warning(
+                "Existing phenotype file failed checksum validation. Proceeding with caution."
+            )
 
     df = pd.read_csv(PHENO_PATH)
     # Strip whitespace from FILE_ID to prevent match failures
-    df['FILE_ID'] = df['FILE_ID'].astype(str).str.strip()
+    df["FILE_ID"] = df["FILE_ID"].astype(str).str.strip()
 
     # Handle TR column: ALWAYS APPLY SITE-SPECIFIC MAPPING (imported from config)
     # Even if phenotype CSV has a TR column, we override with site-specific values
     # (phenotype CSVs often have generic/default TR values, not actual site-specific ones)
     logger.info("Applying site-specific TR mapping based on SITE_ID...")
-    df['TR'] = df['SITE_ID'].map(SITE_TR_MAP).fillna(2.0)
-    logger.info("Assigned site-specific TRs: %s", df.groupby('SITE_ID')['TR'].first().to_dict())
+    df["TR"] = df["SITE_ID"].map(SITE_TR_MAP).fillna(2.0)
+    logger.info(
+        "Assigned site-specific TRs: %s", df.groupby("SITE_ID")["TR"].first().to_dict()
+    )
 
     # Filter valid subjects and enforce curated 1035->1015 exclusion policy.
     subjects_df = df[df["FILE_ID"] != "no_filename"].dropna(subset=["FILE_ID"])
@@ -365,12 +403,12 @@ if __name__ == "__main__":
     with ProcessPoolExecutor(max_workers=6, initializer=init_worker) as exe:
         futures = [exe.submit(process_subject, row[0], row[1]) for row in tasks]
 
-        with open(DOWNLOAD_LOG, 'w') as log_file:
+        with open(DOWNLOAD_LOG, "w") as log_file:
             log_file.write("subject_id,status,error\n")
 
             for fut in tqdm(as_completed(futures), total=len(tasks)):
                 sub_id, status, err = fut.result()
-                clean_err = str(err).replace(',', ';') if err else ""
+                clean_err = str(err).replace(",", ";") if err else ""
                 log_file.write(f"{sub_id},{status.lower()},{clean_err}\n")
                 log_file.flush()  # Ensure real-time logging
 

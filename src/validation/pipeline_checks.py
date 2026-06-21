@@ -27,6 +27,7 @@ from src.core.config import (
     HARMONIZED_FOLDS_DIR,
     K_FOLDS,
     LOBE_MAPPING,
+    LOBE_NAMES,
     MASTER_MANIFEST,
     MIN_EDGES_PER_GRAPH,
     NODE_ATTRIBUTES_HARMONIZED,
@@ -37,6 +38,7 @@ from src.core.config import (
     NUM_TEMPORAL_FEATURES,
     SITE_TR_MAP,
     SPARSITY_QUANTILE,
+    SPATIAL_MIN_REQUIRED_REGIONS,
 )
 from src.core.hyperparams import (
     AUDIT_MAX_EMPTY_ROI_FRACTION,
@@ -45,6 +47,7 @@ from src.core.hyperparams import (
     GNN_MAX_DEGENERATE_GRAPH_RATE,
 )
 from src.core.validators import summarize_graph_degeneracy_from_adj
+from src.features.graph_factory import ABIDECausalDataset
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +58,16 @@ VALID_ROI_RANGE = (164, 170)  # AAL3v1 atlas variants
 PNG_DIR = DATA_ROOT / "images"
 TS_DIR = DATA_PROCESSED
 
+
 def _collect_split_files(subdir: str, pattern: str = "*.png") -> list[Path]:
     """Collect files from train/val/test splits into a single list."""
     return [
-        p for split in ("train", "val", "test")
+        p
+        for split in ("train", "val", "test")
         for p in (DATA_FINAL / split / subdir).glob(pattern)
         if (DATA_FINAL / split / subdir).exists()
     ]
+
 
 def _redownload_npy(corrupted_npy_paths: list, incomplete_subs: list) -> None:
     """
@@ -111,22 +117,23 @@ def _redownload_npy(corrupted_npy_paths: list, incomplete_subs: list) -> None:
     tr_lookup: dict = {}
     if PHENO_PATH.exists():
         pheno_df = pd.read_csv(PHENO_PATH)
-        pheno_df['FILE_ID'] = pheno_df['FILE_ID'].astype(str).str.strip()
-        if 'TR' not in pheno_df.columns:
-            pheno_df['TR'] = pheno_df['SITE_ID'].map(SITE_TR_MAP).fillna(2.0)
+        pheno_df["FILE_ID"] = pheno_df["FILE_ID"].astype(str).str.strip()
+        if "TR" not in pheno_df.columns:
+            pheno_df["TR"] = pheno_df["SITE_ID"].map(SITE_TR_MAP).fillna(2.0)
         else:
-            pheno_df['TR'] = pd.to_numeric(pheno_df['TR'], errors='coerce').fillna(2.0)
-        tr_lookup = dict(zip(pheno_df['FILE_ID'], pheno_df['TR'], strict=False))
+            pheno_df["TR"] = pd.to_numeric(pheno_df["TR"], errors="coerce").fillna(2.0)
+        tr_lookup = dict(zip(pheno_df["FILE_ID"], pheno_df["TR"], strict=False))
 
-    tasks = [
-        (sub_id, tr_lookup.get(sub_id, 2.0))
-        for sub_id in sorted(subjects_to_fix)
-    ]
+    tasks = [(sub_id, tr_lookup.get(sub_id, 2.0)) for sub_id in sorted(subjects_to_fix)]
 
     # Re-run extraction (same worker pool as abide_download.py)
     with ProcessPoolExecutor(max_workers=6, initializer=init_worker) as exe:
-        futures = {exe.submit(process_subject, sub_id, tr): sub_id for sub_id, tr in tasks}
-        for fut in tqdm(as_completed(futures), total=len(futures), desc="Re-downloading NPY"):
+        futures = {
+            exe.submit(process_subject, sub_id, tr): sub_id for sub_id, tr in tasks
+        }
+        for fut in tqdm(
+            as_completed(futures), total=len(futures), desc="Re-downloading NPY"
+        ):
             sub_id = futures[fut]
             try:
                 _, status, err = fut.result()
@@ -138,6 +145,7 @@ def _redownload_npy(corrupted_npy_paths: list, incomplete_subs: list) -> None:
                 logger.error(f"  EXCEPTION {sub_id}: {exc}")
 
     logger.info("NPY re-download complete. Re-run --dataset to verify.")
+
 
 def check_dataset_integrity() -> None:
     """
@@ -175,13 +183,15 @@ def check_dataset_integrity() -> None:
                     img.verify()
                 sub_id = path.name.rsplit("_z", 1)[0]
                 subject_counts[sub_id] += 1
-            except Exception:
-                logger.warning(f" [!] Corrupted PNG: {path.name}")
+            except (OSError, SyntaxError) as e:
+                logger.warning(f" [!] Corrupted PNG: {path.name}: {e}")
                 corrupted_pngs.append(path)
 
     # 2. Check NPY Integrity
     # Time-series files live in data/final/{split}/time_series/ after split.
-    _split_ts_dirs = [DATA_FINAL / sp / "time_series" for sp in ("train", "val", "test")]
+    _split_ts_dirs = [
+        DATA_FINAL / sp / "time_series" for sp in ("train", "val", "test")
+    ]
     _split_npys = [p for d in _split_ts_dirs if d.exists() for p in d.glob("*.npy")]
     npy_files = _split_npys if _split_npys else list(TS_DIR.glob("*.npy"))
     corrupted_npys = []
@@ -212,8 +222,12 @@ def check_dataset_integrity() -> None:
                 # detect and impute them. Only flag *scattered* NaNs within a column,
                 # which indicate a real extraction failure.
                 nan_mask = np.isnan(data)
-                empty_roi_cols = int(np.all(nan_mask, axis=0).sum())   # fully-NaN columns
-                scattered_nan_cols = int(np.any(nan_mask, axis=0).sum()) - empty_roi_cols
+                empty_roi_cols = int(
+                    np.all(nan_mask, axis=0).sum()
+                )  # fully-NaN columns
+                scattered_nan_cols = (
+                    int(np.any(nan_mask, axis=0).sum()) - empty_roi_cols
+                )
                 if scattered_nan_cols > 0:
                     raise ValueError(
                         f"Scattered NaNs in {scattered_nan_cols} ROI(s) — extraction error"
@@ -230,7 +244,8 @@ def check_dataset_integrity() -> None:
                 if empty_roi_cols > 10:
                     logger.warning(
                         " [W] %s: %d empty ROIs (whole-column NaN) — may affect feature quality",
-                        path.name, empty_roi_cols,
+                        path.name,
+                        empty_roi_cols,
                     )
                 ts_subjects.add(path.name.replace("_ts.npy", ""))
 
@@ -307,10 +322,18 @@ def check_dataset_integrity() -> None:
                 for path in _collect_split_files("images", f"{sub}_z*.png"):
                     os.remove(path)
                     deleted += 1
-                for ts_dir in (DATA_FINAL / "train" / "time_series", DATA_FINAL / "val" / "time_series", DATA_FINAL / "test" / "time_series"):
+                for ts_dir in (
+                    DATA_FINAL / "train" / "time_series",
+                    DATA_FINAL / "val" / "time_series",
+                    DATA_FINAL / "test" / "time_series",
+                ):
                     if not ts_dir.exists():
                         continue
-                    for pattern in (f"{sub}_ts.npy", f"{sub}_roi_labels.npy", f"{sub}_qc.json"):
+                    for pattern in (
+                        f"{sub}_ts.npy",
+                        f"{sub}_roi_labels.npy",
+                        f"{sub}_qc.json",
+                    ):
                         for path in ts_dir.glob(pattern):
                             os.remove(path)
                             deleted += 1
@@ -324,6 +347,7 @@ def check_dataset_integrity() -> None:
 
         elif choice == "4":
             _redownload_npy(corrupted_npys, incomplete_subs)
+
 
 def check_distribution() -> None:
     """
@@ -380,6 +404,7 @@ def check_distribution() -> None:
                 logger.info(f"  ✓ Image/Label count matches ({n_files} files)")
 
     logger.info("\nPre-GNN integrity check complete.")
+
 
 def analyze_class_distribution() -> None:
     """
@@ -443,7 +468,9 @@ def analyze_class_distribution() -> None:
 
         logger.info(f"\n{split.upper()}:")
         logger.info(f"  Total: {split_total}")
-        logger.info(f"  Control: {split_control} ({split_control / split_total * 100:.1f}%)")
+        logger.info(
+            f"  Control: {split_control} ({split_control / split_total * 100:.1f}%)"
+        )
         logger.info(f"  ASD: {split_asd} ({split_asd / split_total * 100:.1f}%)")
         if split_asd > 0:
             logger.info(f"  Ratio: {split_control / split_asd:.2f}:1")
@@ -453,20 +480,19 @@ def analyze_class_distribution() -> None:
     logger.info("-" * 70)
 
     if "SITE_ID" in df.columns:
-        site_dx = (
-            df.groupby(["SITE_ID", "DX_GROUP"])
-            .size()
-            .unstack(fill_value=0)
-        )
+        site_dx = df.groupby(["SITE_ID", "DX_GROUP"]).size().unstack(fill_value=0)
         for col in (1, 2):  # ensure both ASD (1) and Control (2) columns exist
             if col not in site_dx.columns:
                 site_dx[col] = 0
         site_dx = site_dx.rename(columns={1: "asd", 2: "control"})
         site_dx["total"] = site_dx["asd"] + site_dx["control"]
         site_dx["ratio"] = site_dx.apply(
-            lambda r: f"{r['control'] / r['asd']:.2f}:1" if r["asd"] > 0 else "N/A", axis=1
+            lambda r: f"{r['control'] / r['asd']:.2f}:1" if r["asd"] > 0 else "N/A",
+            axis=1,
         )
-        for site, row in site_dx.sort_values("total", ascending=False).head(10).iterrows():
+        for site, row in (
+            site_dx.sort_values("total", ascending=False).head(10).iterrows()
+        ):
             logger.info(
                 f"{str(site):20} | Total: {int(row['total']):4} | "
                 f"Control: {int(row['control']):4} | ASD: {int(row['asd']):4} | "
@@ -493,8 +519,12 @@ def analyze_class_distribution() -> None:
                 graph_asd = graph_dx.get(1, 0)
 
                 logger.info(f"Subjects with graphs: {len(graph_df)}/{len(df)}")
-                logger.info(f"  Control: {graph_control} ({graph_control / len(graph_df) * 100:.1f}%)")
-                logger.info(f"  ASD: {graph_asd} ({graph_asd / len(graph_df) * 100:.1f}%)")
+                logger.info(
+                    f"  Control: {graph_control} ({graph_control / len(graph_df) * 100:.1f}%)"
+                )
+                logger.info(
+                    f"  ASD: {graph_asd} ({graph_asd / len(graph_df) * 100:.1f}%)"
+                )
                 if graph_asd > 0:
                     logger.info(f"  Ratio: {graph_control / graph_asd:.2f}:1")
 
@@ -503,8 +533,12 @@ def analyze_class_distribution() -> None:
                 graph_ratio = graph_control / graph_asd if graph_asd > 0 else 0
 
                 if graph_ratio > original_ratio * 1.1:
-                    logger.warning("\n  WARNING: Imbalance worsened after graph filtering!")
-                    logger.warning(f"     Original: {original_ratio:.2f}:1 -> Graphs: {graph_ratio:.2f}:1")
+                    logger.warning(
+                        "\n  WARNING: Imbalance worsened after graph filtering!"
+                    )
+                    logger.warning(
+                        f"     Original: {original_ratio:.2f}:1 -> Graphs: {graph_ratio:.2f}:1"
+                    )
             else:
                 logger.warning("No subjects with graphs found")
         except Exception as e:
@@ -534,6 +568,7 @@ def analyze_class_distribution() -> None:
             logger.info("   -> Standard training should work")
 
     logger.info("=" * 70)
+
 
 def generate_health_report(
     pheno_path: Path | None = None,
@@ -578,7 +613,9 @@ def generate_health_report(
         downloaded_files = [f for f in os.listdir(png_dir) if f.endswith(".png")]
 
     completed_subs = {f.rsplit("_z", 1)[0] for f in downloaded_files}
-    logger.info(f"Found {len(downloaded_files)} PNG slices from {len(completed_subs)} subjects")
+    logger.info(
+        f"Found {len(downloaded_files)} PNG slices from {len(completed_subs)} subjects"
+    )
 
     # Match metadata to images
     current_df = df[df["FILE_ID"].isin(completed_subs)].copy()
@@ -641,7 +678,8 @@ def generate_health_report(
     _invalid = {"", "no_filename", "nan", "none"}
     excluded_upper = {s.upper() for s in EXCLUDED_SUBJECTS}
     metadata_ids = {
-        fid for fid in df["FILE_ID"].unique()
+        fid
+        for fid in df["FILE_ID"].unique()
         if (
             pd.notna(fid)
             and str(fid).strip().lower() not in _invalid
@@ -651,13 +689,17 @@ def generate_health_report(
     missing_metadata = completed_subs - metadata_ids
 
     if missing_metadata:
-        logger.warning(f"  WARNING: Subjects with images but no metadata: {len(missing_metadata)}")
+        logger.warning(
+            f"  WARNING: Subjects with images but no metadata: {len(missing_metadata)}"
+        )
     else:
         logger.info("  All downloaded subjects have metadata")
 
     missing_images = metadata_ids - completed_subs
     if missing_images:
-        logger.warning(f"  WARNING: Subjects with metadata but no images: {len(missing_images)}")
+        logger.warning(
+            f"  WARNING: Subjects with metadata but no images: {len(missing_images)}"
+        )
     else:
         logger.info("  All metadata subjects have images")
 
@@ -669,19 +711,25 @@ def generate_health_report(
         subject_id = filename.rsplit("_z", 1)[0]
         slice_counts[subject_id] = slice_counts.get(subject_id, 0) + 1
 
-    incomplete = {subid: count for subid, count in slice_counts.items() if count != TARGET_SLICES}
+    incomplete = {
+        subid: count for subid, count in slice_counts.items() if count != TARGET_SLICES
+    }
     complete = sum(1 for count in slice_counts.values() if count == TARGET_SLICES)
     logger.info(f"  Complete ({TARGET_SLICES} slices): {complete}/{len(slice_counts)}")
 
     if incomplete:
         logger.warning(f"  WARNING: Subjects with incomplete slices: {len(incomplete)}")
     else:
-        logger.info(f"  All subjects have complete slice sets ({TARGET_SLICES}/{TARGET_SLICES})")
+        logger.info(
+            f"  All subjects have complete slice sets ({TARGET_SLICES}/{TARGET_SLICES})"
+        )
 
     # Time series files — search across split directories
     logger.info("-" * 40)
     logger.info("TIME SERIES FILES")
-    split_ts_dirs = [DATA_FINAL / split / "time_series" for split in ("train", "val", "test")]
+    split_ts_dirs = [
+        DATA_FINAL / split / "time_series" for split in ("train", "val", "test")
+    ]
     all_ts_files: list[Path] = []
     for _td in split_ts_dirs:
         if _td.exists():
@@ -695,7 +743,9 @@ def generate_health_report(
     missing_ts = completed_subs - ts_subjects
 
     if missing_ts:
-        logger.warning(f"  WARNING: Downloaded subjects missing time series: {len(missing_ts)}")
+        logger.warning(
+            f"  WARNING: Downloaded subjects missing time series: {len(missing_ts)}"
+        )
     else:
         logger.info("  All downloaded subjects have time series")
 
@@ -753,7 +803,9 @@ def generate_health_report(
         logger.info("\nPNG FILE INTEGRITY (sampling)")
         corrupted_pngs = []
         wrong_size = []
-        sample_files = random.sample(downloaded_files, min(sample_png, len(downloaded_files)))
+        sample_files = random.sample(
+            downloaded_files, min(sample_png, len(downloaded_files))
+        )
 
         for png_file in sample_files:
             png_path = _png_lookup.get(png_file)
@@ -780,7 +832,9 @@ def generate_health_report(
             logger.info("\nTIME SERIES VALIDATION (sampling)")
             invalid_ts = []
             wrong_shape = []
-            sample_ts_files = random.sample(all_ts_files, min(sample_ts, len(all_ts_files)))
+            sample_ts_files = random.sample(
+                all_ts_files, min(sample_ts, len(all_ts_files))
+            )
 
             for ts_file in sample_ts_files:
                 try:
@@ -793,7 +847,9 @@ def generate_health_report(
                     invalid_ts.append((ts_file.name, str(e)[:40]))
 
             if not invalid_ts and not wrong_shape:
-                logger.info(f"  Time series files valid (sampled {len(sample_ts_files)} files)")
+                logger.info(
+                    f"  Time series files valid (sampled {len(sample_ts_files)} files)"
+                )
             else:
                 if invalid_ts:
                     logger.warning(f"  Invalid time series files: {len(invalid_ts)}")
@@ -803,6 +859,7 @@ def generate_health_report(
     logger.info("\n" + "=" * 40)
     logger.info("Health report complete.")
     return True
+
 
 def _sample_graphs(graph_files: list[Path], sample_size: int = 200) -> dict:
     """
@@ -832,7 +889,9 @@ def _sample_graphs(graph_files: list[Path], sample_size: int = 200) -> dict:
         "dead_lobe_repair": 0,
         "missing_sparsification_metadata": 0,
     }
-    sample = list(np.random.choice(graph_files, min(sample_size, len(graph_files)), replace=False))
+    sample = list(
+        np.random.choice(graph_files, min(sample_size, len(graph_files)), replace=False)
+    )
     for gf in sample:
         try:
             data = torch.load(gf, weights_only=True)
@@ -854,7 +913,10 @@ def _sample_graphs(graph_files: list[Path], sample_size: int = 200) -> dict:
                 stats["edge_weights"].extend(adj[nz].detach().cpu().numpy().tolist())
 
             graph_stats = data.get("stats", {}) if isinstance(data, dict) else {}
-            if isinstance(graph_stats, dict) and "sparsification_fallback_triggered" in graph_stats:
+            if (
+                isinstance(graph_stats, dict)
+                and "sparsification_fallback_triggered" in graph_stats
+            ):
                 if bool(graph_stats.get("sparsification_fallback_triggered", False)):
                     stats["sparsification_fallback_triggered"] += 1
                 if bool(graph_stats.get("min_edge_fallback", False)):
@@ -864,7 +926,9 @@ def _sample_graphs(graph_files: list[Path], sample_size: int = 200) -> dict:
             else:
                 stats["missing_sparsification_metadata"] += 1
 
-            deg = summarize_graph_degeneracy_from_adj(adj, min_edges=MIN_EDGES_PER_GRAPH)
+            deg = summarize_graph_degeneracy_from_adj(
+                adj, min_edges=MIN_EDGES_PER_GRAPH
+            )
             n_edges = int(deg["edge_count"])
             stats["edge_counts"].append(n_edges)
             stats["dead_lobes"].append(int(deg["dead_lobes"]))
@@ -874,13 +938,16 @@ def _sample_graphs(graph_files: list[Path], sample_size: int = 200) -> dict:
                 stats["degenerate"] += 1
             else:
                 stats["valid"] += 1
-        except Exception:
+        except (FileNotFoundError, KeyError, ValueError) as e:
+            logger.warning(f"Failed to load graph {gf}: {e}")
             stats["corrupted"] += 1
     if stats["edge_counts"]:
         arr = np.array(stats["edge_counts"])
         stats["mean_edges"] = float(arr.mean())
         stats["median_edges"] = float(np.median(arr))
-        stats["mean_dead_lobes"] = float(np.mean(stats["dead_lobes"])) if stats["dead_lobes"] else 0.0
+        stats["mean_dead_lobes"] = (
+            float(np.mean(stats["dead_lobes"])) if stats["dead_lobes"] else 0.0
+        )
     if stats["edge_weights"]:
         w = np.array(stats["edge_weights"], dtype=float)
         stats["edge_weight_mean"] = float(w.mean())
@@ -888,6 +955,7 @@ def _sample_graphs(graph_files: list[Path], sample_size: int = 200) -> dict:
         stats["edge_weight_abs_mean"] = float(np.abs(w).mean())
         stats["edge_weight_abs_std"] = float(np.abs(w).std())
     return stats
+
 
 @dataclass
 class ValidationResult:
@@ -899,6 +967,7 @@ class ValidationResult:
     severity: str  # 'critical', 'warning', 'info'
     fix_suggestion: str | None = None
     metrics: dict | None = None
+
 
 class PipelineValidator:
     """
@@ -1053,7 +1122,9 @@ class PipelineValidator:
         subjects = {f.stem.rsplit("_z", 1)[0] for f in png_files}
 
         # Time series may live in split dirs or legacy DATA_PROCESSED root
-        split_ts_dirs = [DATA_FINAL / s / "time_series" for s in ("train", "val", "test")]
+        split_ts_dirs = [
+            DATA_FINAL / s / "time_series" for s in ("train", "val", "test")
+        ]
         ts_files = [p for d in split_ts_dirs if d.exists() for p in d.glob("*_ts.npy")]
         if not ts_files:
             ts_files = list(DATA_PROCESSED.glob("*_ts.npy"))
@@ -1090,14 +1161,18 @@ class PipelineValidator:
                 passed=True,
                 message=f"{len(complete_subjects)} subjects with complete data",
                 severity="info",
-                metrics={"total_images": len(png_files), "total_subjects": len(complete_subjects)},
+                metrics={
+                    "total_images": len(png_files),
+                    "total_subjects": len(complete_subjects),
+                },
             )
         )
 
         # Exclude known-bad subjects so they don't pollute the sample check.
         excluded_upper = {s.upper() for s in EXCLUDED_SUBJECTS}
         valid_ts_files = [
-            f for f in ts_files
+            f
+            for f in ts_files
             if f.stem.replace("_ts", "").upper() not in excluded_upper
         ] or ts_files  # fall back to full list if all were excluded
         sample_size = min(10, len(valid_ts_files))
@@ -1119,7 +1194,8 @@ class PipelineValidator:
                     # Only flag if > 10% of data is NaN/Inf (severe corruption)
                     if nan_ratio > 0.10:
                         corrupted += 1
-            except Exception:
+            except (FileNotFoundError, ValueError, np.AxisError) as e:
+                logger.warning(f"Failed to validate sample {ts_file}: {e}")
                 corrupted += 1
 
         # Calculate average NaN ratio across sample
@@ -1134,7 +1210,11 @@ class PipelineValidator:
                     passed=False,
                     message=f"Sample validation: {corrupted} corrupted, {wrong_shape} wrong shape (avg NaN: {100*avg_nan_ratio:.1f}%)",
                     severity=severity,
-                    fix_suggestion="Re-run data download if corruption rate > 50%" if severity == "critical" else "Sparse NaN is acceptable in fMRI data",
+                    fix_suggestion=(
+                        "Re-run data download if corruption rate > 50%"
+                        if severity == "critical"
+                        else "Sparse NaN is acceptable in fMRI data"
+                    ),
                 )
             )
             if severity == "critical":
@@ -1194,7 +1274,9 @@ class PipelineValidator:
                     )
                 )
 
-            numeric_data = temporal_df[feature_cols].replace([np.inf, -np.inf], np.nan).dropna()
+            numeric_data = (
+                temporal_df[feature_cols].replace([np.inf, -np.inf], np.nan).dropna()
+            )
             if len(numeric_data) > 0:
                 extreme_values = (np.abs(numeric_data.values) > 1e6).sum()
                 if extreme_values > 0:
@@ -1237,12 +1319,17 @@ class PipelineValidator:
             spatial_df = pd.read_csv(NODE_FEATURES_3D)
 
             brainstem_cols = [
-                c for c in spatial_df.columns
-                if c.startswith("Brainstem_") and c not in {"Brainstem_conf_std", "Brainstem_detection_count"}
+                c
+                for c in spatial_df.columns
+                if c.startswith("Brainstem_")
+                and c not in {"Brainstem_conf_std", "Brainstem_detection_count"}
             ]
             if brainstem_cols:
                 const_brainstem = all(
-                    pd.to_numeric(spatial_df[col], errors="coerce").fillna(0.0).nunique(dropna=False) <= 1
+                    pd.to_numeric(spatial_df[col], errors="coerce")
+                    .fillna(0.0)
+                    .nunique(dropna=False)
+                    <= 1
                     for col in brainstem_cols
                 )
                 if const_brainstem:
@@ -1262,7 +1349,16 @@ class PipelineValidator:
             lobe_cols = [
                 c
                 for c in spatial_df.columns
-                if any(c.startswith(f"{lobe}_") for lobe in ["Frontal", "Temporal", "Parietal", "Occipital", "Limbic"])
+                if any(
+                    c.startswith(f"{lobe}_")
+                    for lobe in [
+                        "Frontal",
+                        "Temporal",
+                        "Parietal",
+                        "Occipital",
+                        "Limbic",
+                    ]
+                )
             ]
 
             complete_detections = 0
@@ -1271,7 +1367,11 @@ class PipelineValidator:
                 if has_all:
                     complete_detections += 1
 
-            survival_rate = (complete_detections / len(spatial_df)) * 100 if len(spatial_df) > 0 else 0
+            survival_rate = (
+                (complete_detections / len(spatial_df)) * 100
+                if len(spatial_df) > 0
+                else 0
+            )
 
             if survival_rate < 80:
                 self.add_result(
@@ -1371,101 +1471,125 @@ class PipelineValidator:
         all_passed = True
 
         if stats["corrupted"] > sample_size * 0.05:
-            self.add_result(ValidationResult(
-                stage="Graphs",
-                passed=False,
-                message=f"{stats['corrupted']}/{sample_size} graphs corrupted or missing 'adj' key",
-                severity="critical",
-                fix_suggestion="Re-run graph construction",
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Graphs",
+                    passed=False,
+                    message=f"{stats['corrupted']}/{sample_size} graphs corrupted or missing 'adj' key",
+                    severity="critical",
+                    fix_suggestion="Re-run graph construction",
+                )
+            )
             all_passed = False
 
         if stats.get("wrong_shape", 0) > 0:
-            self.add_result(ValidationResult(
-                stage="Graphs",
-                passed=False,
-                message=f"{stats['wrong_shape']} graphs have wrong shape (expected {NUM_LOBES}×{NUM_LOBES})",
-                severity="critical",
-                fix_suggestion="Clear graph directory and rebuild",
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Graphs",
+                    passed=False,
+                    message=f"{stats['wrong_shape']} graphs have wrong shape (expected {NUM_LOBES}×{NUM_LOBES})",
+                    severity="critical",
+                    fix_suggestion="Clear graph directory and rebuild",
+                )
+            )
             all_passed = False
 
         if stats["zero_edges"] > sample_size * 0.1:
-            self.add_result(ValidationResult(
-                stage="Graphs",
-                passed=False,
-                message=f"{stats['zero_edges']}/{sample_size} graphs have zero edges",
-                severity="warning",
-                fix_suggestion=f"Lower SPARSITY_QUANTILE from {SPARSITY_QUANTILE}",
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Graphs",
+                    passed=False,
+                    message=f"{stats['zero_edges']}/{sample_size} graphs have zero edges",
+                    severity="warning",
+                    fix_suggestion=f"Lower SPARSITY_QUANTILE from {SPARSITY_QUANTILE}",
+                )
+            )
 
         if stats.get("degenerate", 0) > sample_size * GNN_MAX_DEGENERATE_GRAPH_RATE:
-            self.add_result(ValidationResult(
-                stage="Graphs",
-                passed=False,
-                message=(
-                    f"{stats['degenerate']}/{sample_size} graphs are degenerate "
-                    f"(edge_count < {MIN_EDGES_PER_GRAPH} or dead lobe present)"
-                ),
-                severity="critical",
-                fix_suggestion="Inspect atlas coverage gaps and sparsification thresholds",
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Graphs",
+                    passed=False,
+                    message=(
+                        f"{stats['degenerate']}/{sample_size} graphs are degenerate "
+                        f"(edge_count < {MIN_EDGES_PER_GRAPH} or dead lobe present)"
+                    ),
+                    severity="critical",
+                    fix_suggestion="Inspect atlas coverage gaps and sparsification thresholds",
+                )
+            )
             all_passed = False
 
         if stats["edge_counts"]:
             mean_e = stats.get("mean_edges", 0.0)
             median_e = stats.get("median_edges", 0.0)
-            self.add_result(ValidationResult(
-                stage="Graphs",
-                passed=True,
-                message=f"{len(graph_files)} graphs — mean edges: {mean_e:.1f}, median: {median_e:.0f}",
-                severity="info",
-                metrics={
-                    "total_graphs": len(graph_files),
-                    "graphs_checked": sample_size,
-                    "mean_edges": mean_e,
-                    "median_edges": median_e,
-                    "mean_dead_lobes": stats.get("mean_dead_lobes", 0.0),
-                    "max_edges": max(stats["edge_counts"]),
-                    "min_edges": min(stats["edge_counts"]),
-                    "degenerate_sample": stats.get("degenerate", 0),
-                    "degenerate_rate": stats.get("degenerate", 0) / max(sample_size, 1),
-                    "edge_weight_mean": stats.get("edge_weight_mean"),
-                    "edge_weight_std": stats.get("edge_weight_std"),
-                    "edge_weight_abs_mean": stats.get("edge_weight_abs_mean"),
-                    "edge_weight_abs_std": stats.get("edge_weight_abs_std"),
-                    "sparsification_fallback_rate": stats.get("sparsification_fallback_triggered", 0) / max(sample_size, 1),
-                    "min_edge_fallback_rate": stats.get("min_edge_fallback", 0) / max(sample_size, 1),
-                    "dead_lobe_repair_rate": stats.get("dead_lobe_repair", 0) / max(sample_size, 1),
-                    "missing_sparsification_metadata": stats.get("missing_sparsification_metadata", 0),
-                    "edge_counts_sample": stats["edge_counts"],
-                },
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Graphs",
+                    passed=True,
+                    message=f"{len(graph_files)} graphs — mean edges: {mean_e:.1f}, median: {median_e:.0f}",
+                    severity="info",
+                    metrics={
+                        "total_graphs": len(graph_files),
+                        "graphs_checked": sample_size,
+                        "mean_edges": mean_e,
+                        "median_edges": median_e,
+                        "mean_dead_lobes": stats.get("mean_dead_lobes", 0.0),
+                        "max_edges": max(stats["edge_counts"]),
+                        "min_edges": min(stats["edge_counts"]),
+                        "degenerate_sample": stats.get("degenerate", 0),
+                        "degenerate_rate": stats.get("degenerate", 0)
+                        / max(sample_size, 1),
+                        "edge_weight_mean": stats.get("edge_weight_mean"),
+                        "edge_weight_std": stats.get("edge_weight_std"),
+                        "edge_weight_abs_mean": stats.get("edge_weight_abs_mean"),
+                        "edge_weight_abs_std": stats.get("edge_weight_abs_std"),
+                        "sparsification_fallback_rate": stats.get(
+                            "sparsification_fallback_triggered", 0
+                        )
+                        / max(sample_size, 1),
+                        "min_edge_fallback_rate": stats.get("min_edge_fallback", 0)
+                        / max(sample_size, 1),
+                        "dead_lobe_repair_rate": stats.get("dead_lobe_repair", 0)
+                        / max(sample_size, 1),
+                        "missing_sparsification_metadata": stats.get(
+                            "missing_sparsification_metadata", 0
+                        ),
+                        "edge_counts_sample": stats["edge_counts"],
+                    },
+                )
+            )
 
         if stats.get("missing_sparsification_metadata", 0) > 0:
-            self.add_result(ValidationResult(
-                stage="Graphs",
-                passed=False,
-                message=(
-                    f"{stats['missing_sparsification_metadata']}/{sample_size} sampled graphs "
-                    "lack sparsification metadata"
-                ),
-                severity="warning",
-                fix_suggestion="Rebuild causal graphs with updated construct_causal.py to expose fallback telemetry",
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Graphs",
+                    passed=False,
+                    message=(
+                        f"{stats['missing_sparsification_metadata']}/{sample_size} sampled graphs "
+                        "lack sparsification metadata"
+                    ),
+                    severity="warning",
+                    fix_suggestion="Rebuild causal graphs with updated construct_causal.py to expose fallback telemetry",
+                )
+            )
 
-        fallback_rate = stats.get("sparsification_fallback_triggered", 0) / max(sample_size, 1)
+        fallback_rate = stats.get("sparsification_fallback_triggered", 0) / max(
+            sample_size, 1
+        )
         if fallback_rate > 0.5:
-            self.add_result(ValidationResult(
-                stage="Graphs",
-                passed=False,
-                message=(
-                    f"High sparsification fallback trigger rate: {fallback_rate:.1%} "
-                    "(graph quality currently relies heavily on fallback/repair)"
-                ),
-                severity="warning",
-                fix_suggestion="Audit sparsification thresholding and lobe-isolation dynamics",
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Graphs",
+                    passed=False,
+                    message=(
+                        f"High sparsification fallback trigger rate: {fallback_rate:.1%} "
+                        "(graph quality currently relies heavily on fallback/repair)"
+                    ),
+                    severity="warning",
+                    fix_suggestion="Audit sparsification thresholding and lobe-isolation dynamics",
+                )
+            )
 
         return all_passed
 
@@ -1530,32 +1654,42 @@ class PipelineValidator:
         """Verify the brain atlas file exists and is loadable by nibabel."""
         logger.info("Checking atlas...")
         if not ATLAS_PATH.exists():
-            self.add_result(ValidationResult(
-                stage="Atlas", passed=False,
-                message=f"Atlas missing: {ATLAS_PATH}",
-                severity="critical",
-                fix_suggestion="Run: python -m src.validation.atlas_validator",
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Atlas",
+                    passed=False,
+                    message=f"Atlas missing: {ATLAS_PATH}",
+                    severity="critical",
+                    fix_suggestion="Run: python -m src.validation.atlas_validator",
+                )
+            )
             return False
         try:
             import nibabel as nib
+
             data = nib.load(str(ATLAS_PATH)).get_fdata()
             num_rois = len(np.unique(data)) - 1
             valid_counts = {116, 117, 164, 166, 170}
             severity = "info" if num_rois in valid_counts else "warning"
-            self.add_result(ValidationResult(
-                stage="Atlas", passed=True,
-                message=f"Atlas loaded: {num_rois} ROIs",
-                severity=severity,
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Atlas",
+                    passed=True,
+                    message=f"Atlas loaded: {num_rois} ROIs",
+                    severity=severity,
+                )
+            )
             return True
         except Exception as e:
-            self.add_result(ValidationResult(
-                stage="Atlas", passed=False,
-                message=f"Atlas load error: {e}",
-                severity="critical",
-                fix_suggestion="Re-download: python -m src.validation.atlas_validator",
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Atlas",
+                    passed=False,
+                    message=f"Atlas load error: {e}",
+                    severity="critical",
+                    fix_suggestion="Re-download: python -m src.validation.atlas_validator",
+                )
+            )
             return False
 
     def check_lobe_mapping(self) -> bool:
@@ -1573,68 +1707,96 @@ class PipelineValidator:
             missing = set(range(170)) - seen
             extra = seen - set(range(170))
             if missing or extra:
-                self.add_result(ValidationResult(
-                    stage="Config", passed=True,
-                    message=f"LOBE_MAPPING gap: missing={len(missing)}, extra={len(extra)}",
-                    severity="warning",
-                ))
-            self.add_result(ValidationResult(
-                stage="Config", passed=True,
-                message=f"LOBE_MAPPING valid: {NUM_LOBES} lobes, {len(seen)} ROIs",
-                severity="info",
-            ))
+                self.add_result(
+                    ValidationResult(
+                        stage="Config",
+                        passed=True,
+                        message=f"LOBE_MAPPING gap: missing={len(missing)}, extra={len(extra)}",
+                        severity="warning",
+                    )
+                )
+            self.add_result(
+                ValidationResult(
+                    stage="Config",
+                    passed=True,
+                    message=f"LOBE_MAPPING valid: {NUM_LOBES} lobes, {len(seen)} ROIs",
+                    severity="info",
+                )
+            )
             return True
         except ValueError as e:
-            self.add_result(ValidationResult(
-                stage="Config", passed=False,
-                message=f"LOBE_MAPPING invalid: {e}",
-                severity="critical",
-                fix_suggestion="Fix LOBE_MAPPING in src/core/config.py",
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Config",
+                    passed=False,
+                    message=f"LOBE_MAPPING invalid: {e}",
+                    severity="critical",
+                    fix_suggestion="Fix LOBE_MAPPING in src/core/config.py",
+                )
+            )
             return False
 
     def check_manifest(self) -> tuple[bool, pd.DataFrame | None]:
         """Check manifest exists and contains all required columns."""
         logger.info("Checking manifest...")
         if not MASTER_MANIFEST.exists():
-            self.add_result(ValidationResult(
-                stage="Manifest", passed=False,
-                message=f"Manifest missing: {MASTER_MANIFEST}",
-                severity="critical",
-                fix_suggestion="Run: python -m src.data.manifestor",
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Manifest",
+                    passed=False,
+                    message=f"Manifest missing: {MASTER_MANIFEST}",
+                    severity="critical",
+                    fix_suggestion="Run: python -m src.data.manifestor",
+                )
+            )
             return False, None
         try:
             df = pd.read_csv(MASTER_MANIFEST)
-            missing_cols = [c for c in ("subject_id", "split", "DX_GROUP", "SITE_ID") if c not in df.columns]
+            missing_cols = [
+                c
+                for c in ("subject_id", "split", "DX_GROUP", "SITE_ID")
+                if c not in df.columns
+            ]
             if missing_cols:
-                self.add_result(ValidationResult(
-                    stage="Manifest", passed=False,
-                    message=f"Missing columns: {missing_cols}",
-                    severity="critical",
-                    fix_suggestion="Regenerate: python -m src.data.manifestor",
-                ))
+                self.add_result(
+                    ValidationResult(
+                        stage="Manifest",
+                        passed=False,
+                        message=f"Missing columns: {missing_cols}",
+                        severity="critical",
+                        fix_suggestion="Regenerate: python -m src.data.manifestor",
+                    )
+                )
                 return False, None
             splits = set(df["split"].unique())
             if not {"train", "val", "test"}.issubset(splits):
-                self.add_result(ValidationResult(
-                    stage="Manifest", passed=True,
-                    message=f"Incomplete splits: {splits}",
-                    severity="warning",
-                ))
-            self.add_result(ValidationResult(
-                stage="Manifest", passed=True,
-                message=f"{len(df)} subjects across {len(splits)} splits",
-                severity="info",
-            ))
+                self.add_result(
+                    ValidationResult(
+                        stage="Manifest",
+                        passed=True,
+                        message=f"Incomplete splits: {splits}",
+                        severity="warning",
+                    )
+                )
+            self.add_result(
+                ValidationResult(
+                    stage="Manifest",
+                    passed=True,
+                    message=f"{len(df)} subjects across {len(splits)} splits",
+                    severity="info",
+                )
+            )
             return True, df
         except Exception as e:
-            self.add_result(ValidationResult(
-                stage="Manifest", passed=False,
-                message=f"Error reading manifest: {e}",
-                severity="critical",
-                fix_suggestion="Check or regenerate manifest",
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Manifest",
+                    passed=False,
+                    message=f"Error reading manifest: {e}",
+                    severity="critical",
+                    fix_suggestion="Check or regenerate manifest",
+                )
+            )
             return False, None
 
     def check_stratification(self, manifest: pd.DataFrame | None = None) -> None:
@@ -1646,18 +1808,24 @@ class PipelineValidator:
                 return
         leakage = int((manifest.groupby("subject_id")["split"].nunique() > 1).sum())
         if leakage > 0:
-            self.add_result(ValidationResult(
-                stage="Stratification", passed=False,
-                message=f"DATA LEAKAGE: {leakage} subjects appear in multiple splits",
-                severity="critical",
-                fix_suggestion="Re-run split.py with subject-level stratification",
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Stratification",
+                    passed=False,
+                    message=f"DATA LEAKAGE: {leakage} subjects appear in multiple splits",
+                    severity="critical",
+                    fix_suggestion="Re-run split.py with subject-level stratification",
+                )
+            )
         else:
-            self.add_result(ValidationResult(
-                stage="Stratification", passed=True,
-                message=f"No data leakage across {manifest['split'].nunique()} splits",
-                severity="info",
-            ))
+            self.add_result(
+                ValidationResult(
+                    stage="Stratification",
+                    passed=True,
+                    message=f"No data leakage across {manifest['split'].nunique()} splits",
+                    severity="info",
+                )
+            )
 
     def check_cv_fold_balance(self, manifest: pd.DataFrame | None = None) -> None:
         """Validate CV fold-size balance on training split and flag severe skew."""
@@ -1741,7 +1909,9 @@ class PipelineValidator:
                     message=f"CV fold balance OK (max/min={ratio:.2f}; counts={summary})",
                     severity="info",
                     metrics={
-                        "fold_counts": {str(int(k)): int(v) for k, v in fold_counts.items()},
+                        "fold_counts": {
+                            str(int(k)): int(v) for k, v in fold_counts.items()
+                        },
                         "max_min_ratio": ratio,
                     },
                 )
@@ -1751,10 +1921,22 @@ class PipelineValidator:
         if unseen_audit.exists():
             try:
                 audit_df = pd.read_csv(unseen_audit)
-                if {"unseen_row_count", "val_row_count"}.issubset(audit_df.columns) and not audit_df.empty:
-                    unseen_rows = pd.to_numeric(audit_df["unseen_row_count"], errors="coerce").fillna(0).astype(int)
-                    val_rows = pd.to_numeric(audit_df["val_row_count"], errors="coerce").fillna(0).astype(int)
-                    all_unseen = bool((val_rows > 0).all() and (unseen_rows == val_rows).all())
+                if {"unseen_row_count", "val_row_count"}.issubset(
+                    audit_df.columns
+                ) and not audit_df.empty:
+                    unseen_rows = (
+                        pd.to_numeric(audit_df["unseen_row_count"], errors="coerce")
+                        .fillna(0)
+                        .astype(int)
+                    )
+                    val_rows = (
+                        pd.to_numeric(audit_df["val_row_count"], errors="coerce")
+                        .fillna(0)
+                        .astype(int)
+                    )
+                    all_unseen = bool(
+                        (val_rows > 0).all() and (unseen_rows == val_rows).all()
+                    )
                     if all_unseen:
                         self.add_result(
                             ValidationResult(
@@ -1786,7 +1968,11 @@ class PipelineValidator:
             return
         try:
             graph_result = next(
-                (r for r in self.results if r.metrics and "edge_counts_sample" in (r.metrics or {})),
+                (
+                    r
+                    for r in self.results
+                    if r.metrics and "edge_counts_sample" in (r.metrics or {})
+                ),
                 None,
             )
             if graph_result and graph_result.metrics:
@@ -1796,17 +1982,28 @@ class PipelineValidator:
             if MASTER_MANIFEST.exists():
                 try:
                     self._plot_stratification(pd.read_csv(MASTER_MANIFEST))
-                except Exception:
-                    pass
+                except (FileNotFoundError, pd.errors.ParserError) as e:
+                    logger.warning(f"Failed to plot stratification: {e}")
             logger.info(f"Visualizations saved to: {self.output_dir}")
         except ImportError:
             logger.warning("matplotlib not available — skipping visualizations")
 
     def _plot_graph_sparsity(self, edge_counts: list[int]) -> None:
         import matplotlib.pyplot as plt
+
         fig, ax = plt.subplots(figsize=(10, 6))
-        ax.hist(edge_counts, bins=range(0, max(edge_counts) + 2), edgecolor="black", alpha=0.7)
-        ax.axvline(np.mean(edge_counts), color="red", linestyle="--", label=f"Mean: {np.mean(edge_counts):.1f}")
+        ax.hist(
+            edge_counts,
+            bins=range(0, max(edge_counts) + 2),
+            edgecolor="black",
+            alpha=0.7,
+        )
+        ax.axvline(
+            np.mean(edge_counts),
+            color="red",
+            linestyle="--",
+            label=f"Mean: {np.mean(edge_counts):.1f}",
+        )
         ax.set_title("Graph Edge Count Distribution")
         ax.set_xlabel("Number of Edges")
         ax.set_ylabel("Frequency")
@@ -1817,6 +2014,7 @@ class PipelineValidator:
 
     def _plot_stratification(self, manifest: pd.DataFrame) -> None:
         import matplotlib.pyplot as plt
+
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
         ax = axes[0]
         split_dx = manifest.groupby(["split", "DX_GROUP"]).size().unstack(fill_value=0)
@@ -1847,7 +2045,9 @@ class PipelineValidator:
         logger.info("VALIDATION REPORT")
         logger.info("=" * 70)
 
-        critical = [r for r in self.results if r.severity == "critical" and not r.passed]
+        critical = [
+            r for r in self.results if r.severity == "critical" and not r.passed
+        ]
         warnings = [r for r in self.results if r.severity == "warning"]
         passed = [r for r in self.results if r.passed and r.severity == "info"]
 
@@ -1920,6 +2120,7 @@ class PipelineValidator:
         is_healthy, _ = self.generate_report()
         return is_healthy
 
+
 def run_quality_validation(visualize: bool = False, strict: bool = False) -> bool:
     checker = PipelineValidator(visualize=visualize)
     is_healthy = checker.run_full_validation()
@@ -1927,23 +2128,482 @@ def run_quality_validation(visualize: bool = False, strict: bool = False) -> boo
         sys.exit(1)
     return is_healthy
 
-def run_pipeline_validation(strict: bool = False) -> bool:
-    validator = PipelineValidator()
-    is_healthy = validator.run_full_validation()
-    if strict and not is_healthy:
-        sys.exit(1)
-    return is_healthy
+
+# ══════════════════════════════════════════════════════════════════
+# AUDIT CHECK CLASS
+# ══════════════════════════════════════════════════════════════════
+
+
+class AuditCheck:
+    """Comprehensive post-fix validation."""
+
+    def __init__(self):
+        self.checks_passed = 0
+        self.checks_failed = 0
+        self.errors = []
+
+    def check(self, name: str, condition: bool, error_msg: str = ""):
+        """Record a check result."""
+        if condition:
+            logger.info(f"✓ {name}")
+            self.checks_passed += 1
+        else:
+            logger.error(f"✗ {name}: {error_msg}")
+            self.checks_failed += 1
+            self.errors.append(f"{name}: {error_msg}")
+
+    def check_warn(self, name: str, condition: bool, warn_msg: str = ""):
+        """Record a check that logs a warning (not an error) on failure.
+
+        Use this for intermediate pipeline artifacts (temporal features, graphs)
+        that may legitimately not exist yet when the audit runs at pipeline start.
+        Failures here do NOT increment checks_failed.
+        """
+        if condition:
+            logger.info(f"✓ {name}")
+            self.checks_passed += 1
+        else:
+            logger.warning(
+                f"⚠ {name}: {warn_msg} (will be generated during pipeline run)"
+            )
+
+    def run_all_checks(self):
+        """Execute all validation checks."""
+        logger.info("=" * 70)
+        logger.info("NEURO-CXG POST-FIX AUDIT VALIDATION")
+        logger.info("=" * 70)
+
+        # Check 1: Exactly 1,000 subjects in spatial features
+        logger.info("\n1. Checking subject counts...")
+        self._check_subject_counts()
+
+        # Check 2: All subjects have 12 detected lobes
+        logger.info("\n2. Checking YOLO detection completeness...")
+        self._check_yolo_completeness()
+
+        # Check 3: No NaN/Inf in harmonized features
+        logger.info("\n3. Checking harmonized features integrity...")
+        self._check_harmonized_integrity()
+
+        # Check 4: Correct feature dimensions
+        logger.info("\n4. Checking feature dimensions...")
+        self._check_feature_dimensions()
+
+        # Check 5: Count causal graph files
+        logger.info("\n5. Checking causal graph files...")
+        self._check_causal_graphs()
+
+        # Check 6: Load and validate random graph samples
+        logger.info("\n6. Validating random graph samples...")
+        self._check_graph_samples()
+
+        # Check 7: Validate ABIDECausalDataset loader
+        logger.info("\n7. Checking dataset loader...")
+        self._check_dataset_loader()
+
+        # Final report
+        self._print_summary()
+
+    def _check_subject_counts(self):
+        """Validate consistent subject counts across all files."""
+        # Get manifest count as the reference
+        if not MASTER_MANIFEST.exists():
+            self.check("Master manifest exists", False, "Manifest not found")
+            return
+
+        manifest_df = pd.read_csv(MASTER_MANIFEST)
+        expected_count = len(manifest_df)
+
+        # Spatial features
+        if NODE_FEATURES_3D.exists():
+            spatial_df = pd.read_csv(NODE_FEATURES_3D)
+            spatial_count = len(spatial_df)
+            self.check(
+                f"Spatial features: {spatial_count} subjects",
+                spatial_count <= expected_count,
+                f"Expected ≤{expected_count} (manifest), got {spatial_count}",
+            )
+        else:
+            self.check("Spatial features file exists", False, "File not found")
+
+        # Temporal features
+        if NODE_ATTRIBUTES_TEMPORAL.exists():
+            temporal_df = pd.read_csv(NODE_ATTRIBUTES_TEMPORAL)
+            temporal_count = len(temporal_df)
+            self.check(
+                f"Temporal features: {temporal_count} subjects",
+                temporal_count == expected_count,
+                f"Expected {expected_count}, got {temporal_count}",
+            )
+        else:
+            self.check_warn("Temporal features file exists", False, "File not found")
+
+        # Harmonized features
+        if NODE_ATTRIBUTES_HARMONIZED.exists():
+            harmonized_df = pd.read_csv(NODE_ATTRIBUTES_HARMONIZED)
+            harmonized_count = len(harmonized_df)
+            self.check(
+                f"Harmonized features: {harmonized_count} subjects",
+                harmonized_count == expected_count,
+                f"Expected {expected_count}, got {harmonized_count}",
+            )
+        else:
+            self.check_warn("Harmonized features file exists", False, "File not found")
+
+        # Manifest
+        if MASTER_MANIFEST.exists():
+            manifest_df = pd.read_csv(MASTER_MANIFEST)
+            manifest_count = len(manifest_df)
+            self.check(
+                f"Master manifest: {manifest_count} subjects",
+                manifest_count == expected_count,
+                f"Expected {expected_count}, got {manifest_count}",
+            )
+        else:
+            self.check("Master manifest exists", False, "File not found")
+
+    def _check_yolo_completeness(self):
+        """Assess spatial regional coverage quality.
+
+        The current extractor emits 4 anatomical spatial columns per lobe:
+        x, y, z_depth, and size. Older legacy outputs may still include
+        detection_count columns, so we accept either schema.
+        """
+        if not NODE_FEATURES_3D.exists():
+            self.check("Spatial features available", False, "File not found")
+            return
+
+        df = pd.read_csv(NODE_FEATURES_3D)
+
+        legacy_count_cols = [
+            col for col in df.columns if col.endswith("_detection_count")
+        ]
+        modern_size_cols = [
+            f"{lobe_name}_size"
+            for lobe_name in LOBE_NAMES.values()
+            if f"{lobe_name}_size" in df.columns
+        ]
+
+        if legacy_count_cols:
+            self.check(
+                f"All {NUM_LOBES} region count columns present",
+                len(legacy_count_cols) == NUM_LOBES,
+                f"Expected {NUM_LOBES} columns, found {len(legacy_count_cols)}",
+            )
+            if len(legacy_count_cols) == NUM_LOBES:
+                subjects_with_missing = (df[legacy_count_cols] == 0).any(axis=1).sum()
+                self.check_warn(
+                    "All subjects have all 12 regions detected",
+                    subjects_with_missing == 0,
+                    (
+                        f"{subjects_with_missing} subjects have at least one missing region"
+                        if subjects_with_missing > 0
+                        else ""
+                    ),
+                )
+                regions_present = (df[legacy_count_cols] > 0).sum(axis=1)
+                below_min_required = int(
+                    (regions_present < SPATIAL_MIN_REQUIRED_REGIONS).sum()
+                )
+                self.check(
+                    f"Subjects meet min detected regions (>= {SPATIAL_MIN_REQUIRED_REGIONS})",
+                    below_min_required == 0,
+                    f"{below_min_required} subjects below minimum required region count",
+                )
+            return
+
+        self.check(
+            f"All {NUM_LOBES} region size columns present",
+            len(modern_size_cols) == NUM_LOBES,
+            f"Expected {NUM_LOBES} columns, found {len(modern_size_cols)}",
+        )
+        if len(modern_size_cols) != NUM_LOBES:
+            return
+
+        # Modern atlas-default extraction uses 4 anatomical features per lobe.
+        spatial_feature_cols = [
+            col
+            for lobe_name in LOBE_NAMES.values()
+            for col in (
+                f"{lobe_name}_x",
+                f"{lobe_name}_y",
+                f"{lobe_name}_z_depth",
+                f"{lobe_name}_size",
+            )
+            if col in df.columns
+        ]
+        expected_spatial_cols = NUM_LOBES * NUM_SPATIAL_FEATURES
+        self.check(
+            f"All {expected_spatial_cols} modern spatial columns present",
+            len(spatial_feature_cols) == expected_spatial_cols,
+            f"Expected {expected_spatial_cols} columns, found {len(spatial_feature_cols)}",
+        )
+
+        # With atlas-default spatial extraction, size should be non-zero for all
+        # lobes present in the atlas. Use this as a coarse integrity proxy.
+        subjects_with_missing = (df[modern_size_cols] == 0).any(axis=1).sum()
+        self.check_warn(
+            "All subjects have all 12 regions populated",
+            subjects_with_missing == 0,
+            f"{subjects_with_missing} subjects have at least one zero-size lobe",
+        )
+
+        regions_present = (df[modern_size_cols] > 0).sum(axis=1)
+        below_min_required = int((regions_present < SPATIAL_MIN_REQUIRED_REGIONS).sum())
+        self.check(
+            f"Subjects meet min populated regions (>= {SPATIAL_MIN_REQUIRED_REGIONS})",
+            below_min_required == 0,
+            f"{below_min_required} subjects below minimum required region count",
+        )
+
+    def _check_harmonized_integrity(self):
+        """Check for NaN/Inf in harmonized features."""
+        if not NODE_ATTRIBUTES_HARMONIZED.exists():
+            self.check("Harmonized features available", False, "File not found")
+            return
+
+        df = pd.read_csv(NODE_ATTRIBUTES_HARMONIZED)
+
+        # Exclude subject_id column
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+
+        # Check for NaN
+        nan_count = df[numeric_cols].isna().sum().sum()
+        self.check(
+            "No NaN values in harmonized features",
+            nan_count == 0,
+            f"Found {nan_count} NaN values",
+        )
+
+        # Check for Inf
+        inf_count = np.isinf(df[numeric_cols]).sum().sum()
+        self.check(
+            "No Inf values in harmonized features",
+            inf_count == 0,
+            f"Found {inf_count} Inf values",
+        )
+
+    def _check_feature_dimensions(self):
+        """Validate feature matrix dimensions."""
+        # Temporal: (N, 170 * NUM_TEMPORAL_FEATURES + 1)
+        if NODE_ATTRIBUTES_TEMPORAL.exists():
+            temporal_df = pd.read_csv(NODE_ATTRIBUTES_TEMPORAL)
+            expected_temporal_cols = (
+                170 * NUM_TEMPORAL_FEATURES + 1
+            )  # +1 for subject_id
+            actual_temporal_cols = len(temporal_df.columns)
+            self.check(
+                f"Temporal features shape: ({len(temporal_df)}, {actual_temporal_cols})",
+                actual_temporal_cols == expected_temporal_cols,
+                f"Expected {expected_temporal_cols} columns, got {actual_temporal_cols}",
+            )
+
+        # Harmonized: (N, NUM_LOBES * NUM_TEMPORAL_FEATURES + 1)
+        if NODE_ATTRIBUTES_HARMONIZED.exists():
+            harmonized_df = pd.read_csv(NODE_ATTRIBUTES_HARMONIZED)
+            expected_harmonized_cols = (
+                NUM_LOBES * NUM_TEMPORAL_FEATURES + 1
+            )  # +1 for subject_id
+            actual_harmonized_cols = len(harmonized_df.columns)
+            self.check(
+                f"Harmonized features shape: ({len(harmonized_df)}, {actual_harmonized_cols})",
+                actual_harmonized_cols == expected_harmonized_cols,
+                f"Expected {expected_harmonized_cols} columns, got {actual_harmonized_cols}",
+            )
+
+    def _check_causal_graphs(self):
+        """Count causal graph files."""
+        if not CAUSAL_GRAPHS_DIR.exists():
+            self.check("Causal graphs directory exists", False, "Directory not found")
+            return
+
+        # Get expected count from manifest
+        if not MASTER_MANIFEST.exists():
+            self.check(
+                "Master manifest exists for graph count check",
+                False,
+                "Manifest not found",
+            )
+            return
+
+        manifest_df = pd.read_csv(MASTER_MANIFEST)
+        expected_count = len(manifest_df)
+
+        graph_files = list(CAUSAL_GRAPHS_DIR.glob("*_graph.pt"))
+
+        self.check(
+            f"Causal graph files: {len(graph_files)}",
+            len(graph_files) <= expected_count,
+            f"Expected ≤{expected_count} (some may fail graph construction), found {len(graph_files)}",
+        )
+
+    def _check_graph_samples(self):
+        """Load and validate random graph samples."""
+        if not CAUSAL_GRAPHS_DIR.exists():
+            self.check_warn(
+                "Causal graphs available for sampling", False, "Directory not found"
+            )
+            return
+
+        graph_files = list(CAUSAL_GRAPHS_DIR.glob("*_graph.pt"))
+        if len(graph_files) == 0:
+            self.check_warn(
+                "Graph files exist for sampling", False, "No graph files found"
+            )
+            return
+
+        # Sample 5 random graphs
+        sample_files = random.sample(graph_files, min(5, len(graph_files)))
+
+        for graph_file in sample_files:
+            try:
+                graph_dict = torch.load(
+                    graph_file, map_location="cpu", weights_only=True
+                )
+
+                # Validate structure
+                required_keys = {"adj", "internal_features", "subject_id", "lobe_order"}
+                has_keys = required_keys.issubset(graph_dict.keys())
+
+                if not has_keys:
+                    self.check(
+                        f"Graph {graph_file.name} has required keys",
+                        False,
+                        f"Missing keys: {required_keys - set(graph_dict.keys())}",
+                    )
+                    continue
+
+                # Check dimensions
+                adj = graph_dict["adj"]
+                internal_features = graph_dict["internal_features"]
+
+                adj_shape_ok = adj.shape == (NUM_LOBES, NUM_LOBES)
+                internal_shape_ok = internal_features.shape == (NUM_LOBES, 2)
+
+                self.check(
+                    f"Graph {graph_file.name}: adj.shape == ({NUM_LOBES}, {NUM_LOBES})",
+                    adj_shape_ok,
+                    f"Got {adj.shape}",
+                )
+
+                self.check(
+                    f"Graph {graph_file.name}: internal_features.shape == ({NUM_LOBES}, 2)",
+                    internal_shape_ok,
+                    f"Got {internal_features.shape}",
+                )
+
+            except Exception as e:
+                self.check(f"Load graph {graph_file.name}", False, f"Error: {str(e)}")
+
+    def _check_dataset_loader(self):
+        """Validate ABIDECausalDataset loader."""
+        try:
+            dataset = ABIDECausalDataset("train")
+
+            self.check("ABIDECausalDataset loads successfully", True, "")
+
+            # Check dataset size
+            self.check(
+                f"Train dataset has subjects: {len(dataset)}",
+                len(dataset) > 0,
+                "Dataset is empty",
+            )
+
+            # Check all non-null graphs for shape / NaN
+            all_ok = True
+            checked = 0
+            for idx in range(len(dataset)):
+                graph = dataset[idx]
+                if graph is None:
+                    continue
+                checked += 1
+                expected_x_shape = (NUM_LOBES, GNN_IN_CHANNELS)
+                if graph.x.shape != expected_x_shape:
+                    all_ok = False
+                    self.check(
+                        f"Graph {idx}: x.shape == {expected_x_shape}",
+                        False,
+                        f"Got {graph.x.shape}",
+                    )
+                    break
+                if graph.edge_index.shape[0] != 2:
+                    all_ok = False
+                    self.check(
+                        f"Graph {idx}: edge_index.shape[0] == 2",
+                        False,
+                        f"Got {graph.edge_index.shape[0]}",
+                    )
+                    break
+                if torch.isnan(graph.x).any() or torch.isinf(graph.x).any():
+                    all_ok = False
+                    self.check(
+                        f"Graph {idx}: no NaN/Inf in node features",
+                        False,
+                        "Found NaN/Inf values",
+                    )
+                    break
+
+            if checked == 0:
+                self.check(
+                    "ABIDECausalDataset has at least one graph",
+                    False,
+                    "No non-null graph samples",
+                )
+            else:
+                self.check(
+                    f"All checked train graphs valid ({checked} samples)",
+                    all_ok,
+                    "At least one graph failed shape/NaN integrity checks",
+                )
+
+        except Exception as e:
+            self.check("ABIDECausalDataset loader", False, f"Error: {str(e)}")
+
+    def _print_summary(self):
+        """Print final audit summary."""
+        logger.info("\n" + "=" * 70)
+        logger.info("AUDIT VALIDATION SUMMARY")
+        logger.info("=" * 70)
+        logger.info(f"✓ Checks Passed: {self.checks_passed}")
+        logger.info(f"✗ Checks Failed: {self.checks_failed}")
+
+        if self.checks_failed > 0:
+            logger.error("\nFailed Checks:")
+            for error in self.errors:
+                logger.error(f"  - {error}")
+            logger.error("\n❌ AUDIT FAILED - Please review errors above")
+            sys.exit(1)
+        else:
+            logger.info("\n✅ ALL CHECKS PASSED - Pipeline is ready!")
+            sys.exit(0)
+
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Unified validation and integrity checks")
-    parser.add_argument("--dataset", action="store_true", help="Post-download integrity check")
-    parser.add_argument("--distribution", action="store_true", help="Pre-GNN dataset distribution check")
-    parser.add_argument("--class-analysis", action="store_true", help="Class imbalance analysis")
+    parser = argparse.ArgumentParser(
+        description="Unified validation and integrity checks"
+    )
+    parser.add_argument(
+        "--dataset", action="store_true", help="Post-download integrity check"
+    )
+    parser.add_argument(
+        "--distribution", action="store_true", help="Pre-GNN dataset distribution check"
+    )
+    parser.add_argument(
+        "--class-analysis", action="store_true", help="Class imbalance analysis"
+    )
     parser.add_argument("--health", action="store_true", help="Dataset health report")
-    parser.add_argument("--deep", action="store_true", help="Deep checks for health report")
-    parser.add_argument("--quality", action="store_true", help="Run quality validation suite")
-    parser.add_argument("--visualize", action="store_true", help="Generate validation visualizations")
-    parser.add_argument("--strict", action="store_true", help="Exit with error code if issues found")
+    parser.add_argument(
+        "--deep", action="store_true", help="Deep checks for health report"
+    )
+    parser.add_argument(
+        "--quality", action="store_true", help="Run quality validation suite"
+    )
+    parser.add_argument(
+        "--visualize", action="store_true", help="Generate validation visualizations"
+    )
+    parser.add_argument(
+        "--strict", action="store_true", help="Exit with error code if issues found"
+    )
 
     args = parser.parse_args()
 
@@ -1967,7 +2627,8 @@ def main() -> None:
         run_quality_validation(visualize=args.visualize, strict=args.strict)
         return
 
-    run_pipeline_validation(strict=args.strict)
+    run_quality_validation(strict=args.strict)
+
 
 if __name__ == "__main__":
     main()

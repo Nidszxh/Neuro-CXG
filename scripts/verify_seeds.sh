@@ -68,8 +68,7 @@ for seed in "${SEEDS[@]}"; do
         --skip-download --skip-split --skip-yolo \
         --skip-visualizations --skip-graph-visualization \
         --skip-explainability --skip-result-analysis \
-        --skip-subject-analysis --skip-ablations \
-        --skip-paper-figures --skip-data-quality --skip-audit-check
+        --skip-subject-analysis
 
     # Extract final test AUC from evaluation results
     EVAL_FILE="results/evaluation/comprehensive_results.json"
@@ -79,6 +78,8 @@ for seed in "${SEEDS[@]}"; do
         if [[ "$AUC" != "N/A" ]]; then
             AUC_VALUES+=("$AUC")
         fi
+        # Backup results before next seed overwrites them
+        cp "$EVAL_FILE" "results/evaluation/comprehensive_results_seed${seed}.json"
     else
         RESULTS+=("seed=$seed: completed")
     fi

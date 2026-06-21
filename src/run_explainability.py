@@ -64,8 +64,8 @@ from torch_geometric.loader import DataLoader
 # ── project imports ────────────────────────────────────────────────────────────
 from src.core.config import (
     ALL_FEATURE_NAMES,
-    LOBE_NAMES,
     NUM_LOBES,
+    REGION_LABELS,
     RESULTS_DIR,
     get_active_checkpoint_dir,
 )
@@ -79,17 +79,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-REGION_LABELS: list[str] = [LOBE_NAMES[i] for i in range(NUM_LOBES)]
-
 # ── helpers ────────────────────────────────────────────────────────────────────
+
 
 def _build_test_loader(batch_size: int = 16) -> DataLoader:
     """Build a DataLoader for the held-out test split."""
     dataset = ABIDECausalDataset(split="test")
-    graphs  = [g for g in dataset if g is not None]
-    loader  = make_loader(graphs, batch_size=batch_size, shuffle=False)
+    graphs = [g for g in dataset if g is not None]
+    loader = make_loader(graphs, batch_size=batch_size, shuffle=False)
     logger.info("Test loader: %d graphs, batch_size=%d", len(graphs), batch_size)
     return loader
+
 
 def _best_fold(num_folds: int = 5) -> int:
     """Select the fold with the highest saved validation AUC from training JSONs."""
@@ -110,16 +110,19 @@ def _best_fold(num_folds: int = 5) -> int:
     logger.info("Auto-selected fold %d (val AUC=%.4f)", best_fold_id, best_auc)
     return best_fold_id
 
+
 # ── phase runners ──────────────────────────────────────────────────────────────
+
 
 def run_phase_node(model, test_loader, device, output_dir: Path) -> dict:
     """Phase 8.1 — Node Importance Analysis."""
     from src.analysis.node_importance import NodeImportanceAnalyzer
+
     logger.info("=" * 55)
     logger.info("PHASE 8.1  NODE IMPORTANCE ANALYSIS")
     logger.info("=" * 55)
     analyzer = NodeImportanceAnalyzer(model, test_loader, device)
-    results  = analyzer.run(output_dir / "node")
+    results = analyzer.run(output_dir / "node")
 
     # Task 3: persist anatomical network embeddings used by hierarchical pooling.
     network_embeddings = None
@@ -140,6 +143,7 @@ def run_phase_node(model, test_loader, device, output_dir: Path) -> dict:
     logger.info("Phase 8.1 complete — figures saved to %s/node/", output_dir)
     return results
 
+
 def run_phase_edge(
     model,
     test_loader,
@@ -149,16 +153,20 @@ def run_phase_edge(
 ) -> dict:
     """Phase 8.2 — Edge Importance Analysis."""
     from src.analysis.edge_importance import EdgeImportanceAnalyzer
+
     logger.info("=" * 55)
     logger.info("PHASE 8.2  EDGE IMPORTANCE ANALYSIS")
     logger.info("=" * 55)
     analyzer = EdgeImportanceAnalyzer(
-        model, test_loader, device,
+        model,
+        test_loader,
+        device,
         masking_max_graphs=40 if run_masking else 0,
     )
     results = analyzer.run(output_dir / "edge")
     logger.info("Phase 8.2 complete — figures saved to %s/edge/", output_dir)
     return results
+
 
 def run_phase_features(model, test_loader, device, output_dir: Path) -> dict | None:
     """Phase 8.3 — Feature Attribution (saliency maps)."""
@@ -167,6 +175,7 @@ def run_phase_features(model, test_loader, device, output_dir: Path) -> dict | N
     logger.info("=" * 55)
     try:
         from src.analysis.feature_attribution import FeatureAttributionAnalyzer
+
         feat_dir = output_dir / "features"
         feat_dir.mkdir(parents=True, exist_ok=True)
         feature_names = ALL_FEATURE_NAMES
@@ -182,20 +191,24 @@ def run_phase_features(model, test_loader, device, output_dir: Path) -> dict | N
         )
         analyzer.visualize_per_class(feat_dir / "feature_importance_per_class.png")
         analyzer.compare_temporal_vs_spatial(
-            attributions, output_path=feat_dir / "feature_importance_temporal_vs_spatial.png"
+            attributions,
+            output_path=feat_dir / "feature_importance_temporal_vs_spatial.png",
         )
         logger.info("Phase 8.3 complete — figures saved to %s/features/", output_dir)
 
         # Return per-region importance scores for literature validation
         if isinstance(attributions, torch.Tensor):
-            attr_np = attributions.detach().cpu().numpy()   # (N, 12, 28)
+            attr_np = attributions.detach().cpu().numpy()  # (N, 12, 28)
         else:
             attr_np = np.array(attributions)
-        region_scores = np.abs(attr_np).mean(axis=(0, 2))   # (12,) mean over subjects+features
+        region_scores = np.abs(attr_np).mean(
+            axis=(0, 2)
+        )  # (12,) mean over subjects+features
         return {"region_scores": region_scores}
     except Exception as exc:
         logger.error("Phase 8.3 failed: %s", exc, exc_info=True)
         return None
+
 
 def run_phase_literature(
     gradcam_scores: np.ndarray | None,
@@ -205,6 +218,7 @@ def run_phase_literature(
 ) -> dict:
     """Phase 8.4 — Literature / Clinical Validation."""
     from src.analysis.literature_validation import run_literature_validation
+
     logger.info("=" * 55)
     logger.info("PHASE 8.4  CLINICAL / LITERATURE VALIDATION")
     logger.info("=" * 55)
@@ -217,7 +231,9 @@ def run_phase_literature(
     logger.info("Phase 8.4 complete — report saved to %s/literature/", output_dir)
     return results
 
+
 # ── main pipeline ──────────────────────────────────────────────────────────────
+
 
 def run_explainability_pipeline(
     fold_id: int,
@@ -243,10 +259,10 @@ def run_explainability_pipeline(
         "phases_run": phases,
     }
 
-    node_results    = {}
-    edge_results    = {}
+    node_results = {}
+    edge_results = {}
     feature_results = None
-    lit_results     = {}
+    lit_results = {}
 
     # ── 8.1 Node importance ────────────────────────────────────────────────────
     if "node" in phases:
@@ -258,7 +274,9 @@ def run_explainability_pipeline(
     # ── 8.2 Edge importance ────────────────────────────────────────────────────
     if "edge" in phases:
         try:
-            edge_results = run_phase_edge(model, test_loader, device, output_dir, run_masking)
+            edge_results = run_phase_edge(
+                model, test_loader, device, output_dir, run_masking
+            )
         except Exception as exc:
             logger.error("Phase 8.2 error: %s", exc, exc_info=True)
 
@@ -284,19 +302,25 @@ def run_explainability_pipeline(
             lit_results = run_phase_literature(
                 gradcam_scores, feat_region_scores, output_dir
             )
-            summary["top_regions"]     = [r["name"]     for r in lit_results.get("top_regions", [])]
-            summary["top_networks"]    = [k for k, v in lit_results.get("network_coverage", {}).items() if v["hit"]]
-            summary["overlap_scores"]  = lit_results.get("overlap_scores", {})
+            summary["top_regions"] = [
+                r["name"] for r in lit_results.get("top_regions", [])
+            ]
+            summary["top_networks"] = [
+                k
+                for k, v in lit_results.get("network_coverage", {}).items()
+                if v["hit"]
+            ]
+            summary["overlap_scores"] = lit_results.get("overlap_scores", {})
         except Exception as exc:
             logger.error("Phase 8.4 error: %s", exc, exc_info=True)
 
     # ── GradCAM top-5 log ──────────────────────────────────────────────────────
     if node_results and "gradcam" in node_results:
         g = node_results["gradcam"]
-        asd   = g.get("asd_mean",     np.zeros(NUM_LOBES))
-        ctrl  = g.get("control_mean", np.zeros(NUM_LOBES))
-        diff  = g.get("diff",         asd - ctrl)
-        top5  = np.argsort(np.abs(diff))[::-1][:5]
+        asd = g.get("asd_mean", np.zeros(NUM_LOBES))
+        ctrl = g.get("control_mean", np.zeros(NUM_LOBES))
+        diff = g.get("diff", asd - ctrl)
+        top5 = np.argsort(np.abs(diff))[::-1][:5]
         summary["gradcam_top5_differential"] = [
             {"region": REGION_LABELS[i], "delta": float(diff[i])} for i in top5
         ]
@@ -307,17 +331,20 @@ def run_explainability_pipeline(
     # ── Edge top-5 log ─────────────────────────────────────────────────────────
     if edge_results and "gradient" in edge_results:
         diff_mat = (
-            edge_results["gradient"]["asd_matrix"] - edge_results["gradient"]["control_matrix"]
+            edge_results["gradient"]["asd_matrix"]
+            - edge_results["gradient"]["control_matrix"]
         )
         flat_top = np.argsort(np.abs(diff_mat), axis=None)[::-1][:5]
         top_edges = []
         for flat_i in flat_top:
             row, col = np.unravel_index(flat_i, diff_mat.shape)
-            top_edges.append({
-                "source": REGION_LABELS[row],
-                "target": REGION_LABELS[col],
-                "delta":  float(diff_mat[row, col]),
-            })
+            top_edges.append(
+                {
+                    "source": REGION_LABELS[row],
+                    "target": REGION_LABELS[col],
+                    "delta": float(diff_mat[row, col]),
+                }
+            )
         summary["top5_differential_edges"] = top_edges
 
     # ── Save summary ───────────────────────────────────────────────────────────
@@ -339,14 +366,21 @@ def run_explainability_pipeline(
     if "top5_differential_edges" in summary:
         logger.info("\nTop-5 Differentially-Important Edges (gradient, ASD−Control):")
         for rank, e in enumerate(summary["top5_differential_edges"], start=1):
-            logger.info("  %d. %-22s → %-22s Δ=%.4f", rank, e["source"], e["target"], e["delta"])
+            logger.info(
+                "  %d. %-22s → %-22s Δ=%.4f", rank, e["source"], e["target"], e["delta"]
+            )
     if "top_regions" in summary:
-        logger.info("\nTop regions (literature validation): %s", ", ".join(summary["top_regions"]))
+        logger.info(
+            "\nTop regions (literature validation): %s",
+            ", ".join(summary["top_regions"]),
+        )
     if "top_networks" in summary:
         logger.info("Matching ASD networks  : %s", ", ".join(summary["top_networks"]))
     logger.info("=" * 65)
 
+
 # ── CLI ────────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -398,6 +432,7 @@ def main() -> None:
         run_masking=not args.no_masking,
         batch_size=args.batch_size,
     )
+
 
 if __name__ == "__main__":
     main()
