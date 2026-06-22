@@ -216,7 +216,6 @@ GNN_NUM_LAYERS = 3         # Best: 2→3
 GNN_DROPOUT = 0.33         # Best: 0.35→0.33
 GNN_ONECYCLE_WARMUP_FRACTION = 0.20  # Increased from 0.05
 GNN_GRL_ALPHA = 0.10       # Fixed, no grid search
-GNN_AUTO_GRL_GRID_SEARCH = False
 CAUSALITY_METHOD = "ridge_granger_hybrid"
 ```
 

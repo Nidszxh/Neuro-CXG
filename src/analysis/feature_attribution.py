@@ -223,7 +223,7 @@ class FeatureAttributionAnalyzer:
                 "This may indicate that the model forward pass is failing."
             )
 
-        attributions = np.concatenate(all_attributions, axis=0)
+        attributions: np.ndarray = np.concatenate(all_attributions, axis=0)
         labels = np.concatenate(all_labels, axis=0)
         predictions = np.concatenate(all_predictions, axis=0)
 

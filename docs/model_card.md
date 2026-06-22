@@ -69,14 +69,13 @@ Provenance: Config hash 6b6ca55b
 
 ### Configuration Comparison
 
-| Parameter | Canonical | Best (Jun 2026) |
+| Parameter | Canonical | Best (May 2026) |
 |-----------|-----------|------------------|
 | GNN_HIDDEN_CHANNELS | 32 | **48** |
 | GNN_NUM_HEADS | 2 | **4** |
 | GNN_NUM_LAYERS | 2 | **3** |
 | GNN_DROPOUT | 0.35 | **0.33** |
 | GNN_ONECYCLE_WARMUP_FRACTION | 0.05 | **0.20** |
-| GNN_AUTO_GRL_GRID_SEARCH | True | **False** |
 | GNN_GRL_ALPHA | 0.10 (grid) | **0.10 (fixed)** |
 
 ### Ablation Studies
@@ -125,7 +124,7 @@ All evaluable subgroups significant after Bonferroni correction (α=0.0056).
 
 ## Hyperparameters
 
-### Best Model (Jun 2026): 48ch/4hd/3L/0.33
+### Best Model (May 2026): 48ch/4hd/3L/0.33
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|

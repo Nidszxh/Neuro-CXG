@@ -9,7 +9,7 @@ This guide covers installation, CLI usage, end-to-end workflow, and ABIDE data a
 
 ```bash
 # Step 1: Activate environment (or create one with Python 3.10+)
-source /home/nidszxh/.venvs/ichigo/bin/activate
+source ~/.zangestu/bin/activate
 
 # Step 2: Verify environment (5 seconds)
 python -c "from src.core.config import validate_environment; validate_environment()"
@@ -205,37 +205,33 @@ python src/run_result_analysis.py
 
 | Stage | Output Path | Format | Description |
 |-------|-------------|--------|-------------|
-| 0 preflight | — | — | Pre-flight validation log |
 | 1 download | `data/metadata/download_log.csv` | CSV | Download status per subject |
 | 2 split | `data/final/{train,val,test}/` | dir | Split time series and images |
 | 3 manifest | `data/metadata/master_manifest.csv` | CSV | Subject metadata with cv_fold |
-| 4 atlas_validation | `data/metadata/atlas_metadata.json` | JSON | Atlas validation report |
-| 5 pipeline_validation | `data/metadata/pipeline_ready.flag` | flag | Pipeline readiness |
-| 6 post_download_integrity | `data/metadata/download_integrity.json` | JSON | Download integrity |
+| 4 site_stratified_cv | `data/metadata/master_manifest.csv` | CSV | Site-stratified fold assignment |
+| 5 atlas_validation | `data/metadata/atlas_metadata.json` | JSON | Atlas validation report |
+| 6 post_download_integrity | — | log | Download integrity check |
 | 7 annotate | `data/processed/final_train/labels/` | txt | YOLO labels |
-| 8 yolo | `models/yolo/best.pt` | .pt | Trained YOLO weights |
+| 8 yolo | `results/experiments/detection/ROI_Detection_v29/weights/best.pt` | .pt | Trained YOLO weights |
 | 9 spatial_features | `data/metadata/node_features_3d.csv` | CSV | 3D coordinates per lobe |
-| 11 temporal_features | `data/metadata/node_attributes_temporal.csv` | CSV | Temporal features per ROI |
-| 12 harmonization | `data/metadata/node_attributes_harmonized.csv` | CSV | ComBat-harmonized features |
-| 13 pre_gnn_integrity | `data/metadata/pre_gnn_ready.flag` | flag | Pre-GNN validation |
-| 14 causal_graphs | `data/processed/causal_graphs/*.pt` | .pt | Per-subject directed graphs |
-| 15 multiview_graphs | `data/processed/causal_graphs_multiview/` | dir | Optional multiview graphs |
-| 16 diagnostics | `data/metadata/diagnostics.json` | JSON | Pipeline diagnostics |
-| 17 quality_validation | `data/metadata/quality_gates_pass.json` | JSON | Quality gates pass |
-| 18 gnn_training | `models/checkpoints/best_model_fold*.pt` | .pt | 5-fold model checkpoints |
-| 19 visualizations | `results/visualizations/` | dir | Training/feature plots |
-| 20 graph_visualization | `results/visualizations/causal_graph_comparison.png` | PNG | Causal graph comparison |
-| 21 evaluation | `results/evaluation/comprehensive_results.json` | JSON | Test metrics, bootstrap CI |
-| 22 explainability | `results/explainability/summary.json` | JSON | Node/edge importance |
-| 23 result_analysis | `results/analysis/result_analysis_summary.json` | JSON | Per-subject predictions |
-| 24 subject_analysis | `results/subject_analysis/` | CSV/txt | Per-subject diagnostics |
-| 25 post_fix_audit | `results/experiments/audit/` | JSON | Artifact validation |
-| 26 dev_code_audit | — | log | Code audit report |
-| 27 data_quality | `results/experiments/data_quality/` | CSV | Cross-site, bottleneck |
-| 28 ablations | `results/experiments/ablations/` | CSV/json | Ablation results |
-| 29 paper_figures | `results/paper_figures/` | PNG/SVG | Paper-ready figures |
+| 10 temporal_features | `data/metadata/node_attributes_temporal.csv` | CSV | Temporal features per ROI |
+| 11 harmonization | `data/metadata/node_attributes_harmonized.csv` | CSV | ComBat-harmonized features |
+| 12 pre_gnn_integrity | — | log | Pre-GNN validation |
+| 13 causal_graphs | `data/processed/causal_graphs/*.pt` | .pt | Per-subject directed graphs |
+| 14 multiview_graphs | `data/processed/causal_graphs_multiview/` | dir | Optional multiview graphs |
+| 15 diagnostics | — | log | Pipeline health report |
+| 16 quality_validation | — | log | Quality gates check |
+| 17 gnn_training | `models/checkpoints/best_model_fold*.pt` | .pt | 5-fold model checkpoints |
+| 18 visualizations | `results/visualizations/` | dir | Training/feature plots |
+| 19 graph_visualization | `results/visualizations/causal_graph_comparison.png` | PNG | Causal graph comparison |
+| 20 circular_connectome | `results/paper_figures/circular_connectome_ASD.png` | PNG | Connectome ring visualization |
+| 21 brain_3d_visualization | `results/paper_figures/brain_3d/` | dir | Nilearn 3D brain rendering |
+| 22 evaluation | `results/evaluation/comprehensive_results.json` | JSON | Test metrics, bootstrap CI |
+| 23 explainability | `results/explainability/summary.json` | JSON | Node/edge importance |
+| 24 result_analysis | `results/analysis/result_analysis_summary.json` | JSON | Per-subject predictions |
+| 25 subject_analysis | `results/subject_analysis/` | CSV/txt | Per-subject diagnostics |
 
-**Provenance**: Config hash `6b6ca55b`, run log `12lobes.txt` lines 1483-1968. See `docs/dataflow.md` for full data flow.
+See `docs/architecture.md` for full data flow.
 
 ### Typical Workflow Patterns
 

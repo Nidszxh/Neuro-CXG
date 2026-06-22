@@ -149,9 +149,9 @@ Before considering an extension complete:
 
 2. Rebuild only affected stages
 
-3. **Validate inputs for graph build or training:**
+3. **Validate inputs for training:**
    ```bash
-   python -c "from src.core.config import validate_graph_construction_inputs, validate_gnn_training_inputs; validate_graph_construction_inputs(); validate_gnn_training_inputs()"
+   python -c "from src.core.config import validate_gnn_training_inputs; validate_gnn_training_inputs()"
    ```
 
 4. **Run targeted tests:**

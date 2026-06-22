@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Directed GNN for Autism Classification from fMRI"
 readme = "README.md"
 license = {text = "Apache-2.0"}
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.11,<3.13"
 authors = [
     {name = "Neuro-CXG Team", email = "neuro.cxg@example.com"}
 ]
@@ -19,7 +19,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
     "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
@@ -32,10 +31,11 @@ dependencies = [
     "nibabel==5.3.3",
     "nilearn==0.12.1",
     "neuroHarmonize==2.4.5",
+    "neuroCombat>=0.2.12",
     "captum==0.8.0",
     "boto3==1.42.17",
     "ultralytics==8.4.5",
-    "scikit-learn==1.8.0",
+    "scikit-learn>=1.7.2,<2.0",
     "numpy==1.26.4",
     "pandas==2.3.3",
     "scipy==1.15.3",
@@ -72,30 +72,9 @@ neuro-explain = "src.run_explainability:main"
 where = ["."]
 include = ["src*"]
 
-[tool.pytest.ini_options]
-minversion = "9.0"
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = [
-    "-v",
-    "--tb=short",
-    "--strict-markers",
-]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: marks tests as integration tests",
-    "gpu: marks tests that require GPU",
-]
-filterwarnings = [
-    "ignore::DeprecationWarning",
-    "ignore::FutureWarning",
-]
-
 [tool.black]
 line-length = 88
-target-version = ["py310", "py311", "py312"]
+target-version = ["py311", "py312"]
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -113,7 +92,7 @@ extend-exclude = '''
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = [
@@ -141,7 +120,7 @@ exclude = [
 ]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

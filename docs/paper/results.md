@@ -184,8 +184,8 @@ The lower CV is actually a **feature, not a bug** — it indicates the pipeline 
 ### Graph Topology Contribution
 
 - FlatMLP baseline (A): 0.7245 AUC (no graph structure)
-- Full GNN (Main): 0.8102 AUC (with causal graph)
-- **Graph topology provides +8.6% AUC improvement** over node-feature-only baseline
+- Full GNN (Main): 0.8173 AUC (with causal graph)
+- **Graph topology provides +9.3% AUC improvement** over node-feature-only baseline
 
 > **Key Finding**: Graph structure matters significantly. While specific edge weighting strategies (causal vs random vs identity) show similar performance, the presence of any graph topology provides substantial signal (+8-12% AUC).
 

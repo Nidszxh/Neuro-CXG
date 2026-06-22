@@ -62,6 +62,7 @@ models/**/weights/*.weights
 results/experiments/runs/**
 results/experiments/training/**
 results/experiments/detection/**
+results/experiments/data_quality/**
 # Analysis outputs (ignore all, keep summary)
 results/analysis/**
 !results/analysis/result_analysis_summary.json
@@ -87,7 +88,6 @@ results/explainability/**
 # (can be regenerated with: bash scripts/figures/generate_all.sh)
 
 # SECTION 6: Experiment Scripts (Reference Only - IGNORE)
-paper/experiments/**
 
 # SECTION 7: Large Binary Files (DO NOT COMMIT)
 *.nii
@@ -115,10 +115,9 @@ temp/**/*
 patch_*.py
 *.backup
 *.log
+run.txt
 # Documentation drafts (already moved to archive_docs/)
 docs/archive/**
-
-archive_docs/**
 
 # SECTION 9: OS & IDE Files
 .DS_Store
@@ -132,6 +131,7 @@ Thumbs.db
 
 # SECTION 10: Testing & Coverage
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 .tox/

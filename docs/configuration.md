@@ -89,7 +89,7 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 **12-Lobe is approved for publication** (April 28, 2026):
 
 - YOLO v29 never detects Brainstem → constant synthetic features act as implicit regularization
-- Test AUC: 0.8648 (ridge_granger_hybrid method)
+- Test AUC: 0.8657 (ridge_granger_hybrid method)
 - See `docs/decisions.md` (DD-018) for full analysis
 - **Method**: ridge_granger_hybrid (70% Ridge Granger + 30% Lagged Pearson) — best Granger-based performance
 
@@ -127,7 +127,7 @@ This hierarchy is used when `GNN_POOLING = "anatomical"`.
 | `GNN_BATCH_SIZE` | 32 | 32 | Batch size |
 | `GNN_EPOCHS` | 100 | 100 | Max epochs |
 | `K_FOLDS` | 5 | 5 | CV folds |
-| `GNN_SEED` | 42 | 42 | Global seed (everywhere) |
+| `GNN_SEED` | 42 | 42 | Global seed (GNN training only) |
 
 **Best Config Provenance**: May 31, 2026 run, AUC=0.8819 [0.8277, 0.9322]
 
@@ -200,7 +200,6 @@ YOLO augmentation controls are intentionally conservative to preserve anatomical
 | Function | Purpose |
 |----------|---------|
 | `validate_environment()` | Core paths and lobe mapping invariants |
-| `validate_graph_construction_inputs()` | Feature/graph prerequisites |
 | `validate_gnn_training_inputs()` | Training prerequisites (harmonized files, etc.) |
 | `get_active_checkpoint_dir()` | Checkpoint resolution |
 

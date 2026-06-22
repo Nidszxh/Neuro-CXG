@@ -10,8 +10,8 @@ The canonical orchestration flow is defined in `src/pipeline/registry.py` and ex
 flowchart TD
     subgraph Ingestion
         A1[ABIDE Download] --> A2[Split + Manifest]
-        A2 --> A3[Atlas Validation]
-        A2 --> A4[Pipeline Validation]
+        A2 --> A3[Site-Stratified CV]
+        A2 --> A4[Atlas Validation]
         A2 --> A5[Post-Download Integrity]
     end
     subgraph Detection
@@ -27,26 +27,21 @@ flowchart TD
         D2 --> D3[Multi-View Graphs Optional]
     end
     subgraph Training
-        E1[Quality Validation] --> E2[GNN Training 5-Fold CV]
+        E1[Diagnostics] --> E2[Quality Validation]
+        E2 --> E3[GNN Training 5-Fold CV]
     end
     subgraph PostTraining
-        F1[Generate Visualizations]
+        F1[Visualizations]
         F2[Causal Graph Visualization]
-        F3[Comprehensive Evaluation]
-        F4[Explainability]
-        F5[Result Interpretation]
-        F6[Subject-Level Analysis]
-    end
-    subgraph Extended
-        G1[Post-Fix Audit Check]
-        G2[Developer Code Audit]
-        G3[Data Quality Experiments]
-        G4[Ablation Studies]
-        G5[Generate Paper Figures]
+        F3[Circular Connectome]
+        F4[3D Brain Visualization]
+        F5[Comprehensive Evaluation]
+        F6[Explainability]
+        F7[Result Analysis]
+        F8[Subject Analysis]
     end
     C2 --> D1
-    E2 --> F1 & F2 & F3 & F4 & F5 & F6
-    F3 --> G1 & G2 & G3 & G4 & G5
+    E3 --> F1 & F2 & F3 & F4 & F5 & F6 & F7 & F8
 ```
 
 ## Design Principles
@@ -60,42 +55,43 @@ flowchart TD
 
 ## Stage Registry Map
 
-Core stage keys (in execution order):
+Full stage list in execution order (25 stages). The source of truth is the
+`STAGES` list in `src/pipeline/registry.py`; stage numbers = 1-based position
+in that order (same as `python src/run_pipeline.py --dry-run`).
 
-| Stage Key | Module Path | One-Line Responsibility | Output Sentinel |
-|-----------|-------------|------------------------|-----------------|
-| download | src.data.abide_download | Pull ABIDE artifacts | data/final/ |
-| split | src.data.split | 70/15/15 stratified split + cv_folds | data/metadata/split_manifest.csv |
-| manifest | src.data.manifestor | Build master manifest with site/subsample | data/metadata/master_manifest.csv |
-| atlas_validation | src.validation.atlas_validator | Verify 170 ROI overlap | data/metadata/atlas_metadata.json |
-| pipeline_validation | src.validation.pipeline_checks | Check pipeline readiness | data/metadata/pipeline_ready.flag |
-| post_download_integrity | src.validation.pipeline_checks | Validate downloaded assets | data/metadata/download_integrity.json |
-| annotate | src.detection.generate_labels | ROI to lobe mapping | data/final/train/labels |
-| yolo | src.detection.roi_detection | Train YOLO for lobe detection | results/experiments/detection/ROI_Detection_v29/weights/best.pt |
-| spatial_features | src.features.extract_spatial | Lobe geometric features | data/metadata/node_attributes_spatial.csv |
-| temporal_features | src.features.extract_temporal | Lobe temporal/frequency features | data/metadata/node_attributes_temporal.csv |
-| harmonization | src.features.fold_safe_harmonization | ComBat harmonization (fold-safe) | data/metadata/harmonized_folds_cv/ |
-| pre_gnn_integrity | src.validation.pipeline_checks | Pre-training validation | data/metadata/pre_gnn_ready.flag |
-| causal_graphs | src.features.construct_causal | Directed adjacency matrices | data/processed/causal_graphs/ |
-| diagnostics | src.validation.pipeline_checks | Runtime diagnostics | data/metadata/diagnostics.json |
-| quality_validation | src.validation.pipeline_checks | Quality gates pass | data/metadata/quality_gates_pass.json |
-| gnn_training | src.models.gnn_model | 5-fold CV training | results/checkpoints/ |
-| visualizations | src.analysis.visualizations | Plot generation | results/visualizations/ |
-| graph_visualization | src.analysis.visualize_causal_graph | Graph plots | results/visualizations/causal_graph_comparison.png |
-| evaluation | src.run_evaluation | Metrics computation | results/evaluation/ |
-| explainability | src.run_explainability | Interpretability | results/explainability/ |
-| result_analysis | src.run_result_analysis | Result summary | results/analysis/ |
-| subject_analysis | src.analysis.subject_analysis | Per-subject breakdown | results/subject_analysis/ |
+| # | Stage Key | Module Path | One-Line Responsibility | Output Sentinel |
+|---|-----------|-------------|-------------------------|-----------------|
+| 1 | download | src.data.abide_download | Pull ABIDE artifacts | data/metadata/download_log.csv |
+| 2 | split | src.data.split | 70/15/15 stratified split + cv_folds | data/metadata/split_manifest.csv |
+| 3 | manifest | src.data.manifestor | Build master manifest with site/subsample | data/metadata/master_manifest.csv |
+| 4 | site_stratified_cv | src.data.split | Site-stratified GroupKFold fold assignment (opt-in) | data/metadata/master_manifest.csv |
+| 5 | atlas_validation | src.validation.atlas_validator | Verify 170 ROI overlap | data/metadata/atlas_metadata.json |
+| 6 | post_download_integrity | src.validation.pipeline_checks | Validate downloaded assets | (sentinel none) |
+| 7 | annotate | src.detection.generate_labels | ROI to lobe mapping | data/final/train/labels |
+| 8 | yolo | src.detection.roi_detection | Train YOLO for lobe detection | results/experiments/detection/ROI_Detection_v29/weights/best.pt |
+| 9 | spatial_features | src.features.extract_spatial | Lobe geometric features | data/metadata/node_attributes_spatial.csv |
+| 10 | temporal_features | src.features.extract_temporal | Lobe temporal/frequency features | data/metadata/node_attributes_temporal.csv |
+| 11 | harmonization | src.features.fold_safe_harmonization | ComBat harmonization (fold-safe) | data/metadata/harmonized_folds_cv/ |
+| 12 | pre_gnn_integrity | src.validation.pipeline_checks | Pre-training validation | (sentinel none) |
+| 13 | causal_graphs | src.features.construct_causal | Directed adjacency matrices | data/processed/causal_graphs/ |
+| 14 | multiview_graphs | src.features.construct_causal | Multi-view causal graphs (opt-in) | data/processed/causal_graphs_multiview/ |
+| 15 | diagnostics | src.validation.pipeline_checks | Runtime diagnostics | (sentinel none) |
+| 16 | quality_validation | src.validation.pipeline_checks | Quality gates pass | (sentinel none) |
+| 17 | gnn_training | src.models.gnn_model | 5-fold CV training | models/checkpoints/ |
+| 18 | visualizations | src.analysis.visualizations | Plot generation | results/visualizations/ |
+| 19 | graph_visualization | src.analysis.visualize_causal_graph | Graph plots | results/visualizations/causal_graph_comparison.png |
+| 20 | circular_connectome | src.analysis.circular_connectome | Connectome ring plot | results/paper_figures/circular_connectome_ASD.png |
+| 21 | brain_3d_visualization | src.analysis.brain_3d_visualization | 3D brain rendering | results/paper_figures/brain_3d/ |
+| 22 | evaluation | src.run_evaluation | Metrics computation | results/evaluation/ |
+| 23 | explainability | src.run_explainability | Interpretability | results/explainability/ |
+| 24 | result_analysis | src.run_result_analysis | Result summary | results/analysis/ |
+| 25 | subject_analysis | src.analysis.subject_analysis | Per-subject breakdown | results/subject_analysis/ |
 
-Optional/extended stages:
-
-| Stage Key | Purpose |
-|-----------|---------|
-| site_stratified_cv | GroupKFold over site clusters |
-| multiview_graphs | Multi-causal-method graphs |
-| dead_lobe_diagnosis | Debug dead lobe subjects |
-| audit_check | Strict artifact validation |
-| feature_diagnostics | Feature-level diagnostics |
+Opt-in behavior:
+- `--site-stratified-cv` enables stage 4.
+- `--multiview` enables stage 14.
+- Evaluation/analysis stages fall back to `models/checkpoints_baseline/` when
+  `models/checkpoints/` is empty.
 
 ## Component Responsibility Table
 
@@ -108,7 +104,7 @@ Optional/extended stages:
 | Graph Build | Causal inference, graph construction | `src/features/construct_causal.py`, `src/features/causal_inference.py` |
 | Model & Training | GNN model, factory, training utilities | `src/models/causal_gnn.py`, `src/models/factory.py`, `src/models/gnn_model.py`, `src/models/training_utils.py` |
 | Reporting | Evaluation, explainability, result analysis | `src/run_evaluation.py`, `src/run_explainability.py`, `src/run_result_analysis.py` |
-| Validation | Pre-flight checks, audit, diagnostics | `src/core/validators.py`, `src/validation/audit_check.py`, `src/validation/pipeline_checks.py` |
+| Validation | Pre-flight checks, diagnostics | `src/core/validators.py`, `src/validation/pipeline_checks.py` |
 
 ## Per-Component Documentation
 
@@ -198,14 +194,14 @@ Optional/extended stages:
 - Purpose: GATv2-based binary classifier for ASD vs Control
 - Inputs: Node features (12 lobes × 24-28 channels), directed edge adjacency
 - Architecture:
-  - GATv2Conv: 2 layers, 2-4 attention heads, 32-128 hidden channels
+  - GATv2Conv: 3 layers, 4 attention heads, 48 hidden channels
   - Activation: GELU
   - Skip connections: Residual add between layers
   - Edge gating: Weight incoming messages by edge attributes
 - Pooling modes:
-  - `attention`: Learnable node attention (default)
+  - `anatomical`: 2-level hierarchy (lobes → networks → graph) (default)
+  - `attention`: Learnable node attention
   - `mean_max_sum`: Concatenation of mean, max, sum pooled
-  - `anatomical`: 2-level hierarchy (lobes → networks → graph)
 - Domain adaptation: GRL with `GNN_GRL_ALPHA = 0.10` (NOT 1.0)
 - Outputs: Logits (batch_size, 2), optional embeddings
 
@@ -302,9 +298,9 @@ Into node tensor `x` with shape `(NUM_LOBES, GNN_IN_CHANNELS)`.
 - Edge gating: Weight incoming messages by edge attributes
 
 **Pooling Modes (configurable):**
-- `attention`: Learnable node attention (default, stable)
+- `anatomical`: 2-level hierarchy (lobes → networks → graph) (default)
+- `attention`: Learnable node attention
 - `mean_max_sum`: Concatenation of mean, max, and sum pooled embeddings
-- `anatomical`: 2-level hierarchy (lobes → networks → graph)
 
 **Domain Adaptation:**
 - Gradient Reversal Layer (GRL) for site-adversarial debiasing
@@ -327,7 +323,7 @@ Into node tensor `x` with shape `(NUM_LOBES, GNN_IN_CHANNELS)`.
 
 **CV Summary**: 0.8102 ± 0.0273 (mean ± std), mean F1=0.7475 ± 0.0331
 
-**Data flow reference**: See `docs/architecture.md` Stage Registry Map above for the complete 29-stage stage execution order.
+**Data flow reference**: See `docs/architecture.md` Stage Registry Map above for the complete 25-stage execution order.
 
 ## Loss Functions
 
@@ -384,15 +380,15 @@ for fold_id in range(5):
 
 | Parameter | Value |
 |-----------|-------|
-| max_lr | 0.002 (configurable via `GNN_ONECYCLE_MAX_LR`) |
-| pct_start | 0.2 (20% increase, 80% decrease) |
+| max_lr | 0.001 (configurable via `GNN_ONECYCLE_MAX_LR`) |
+| pct_start | 0.2 (20% increase, 80% decrease) (`GNN_ONECYCLE_PCT_START`) |
 | Rationale | High initial LR → explore loss landscape; gradual decrease → converge |
 
 ### Early Stopping
 
 | Parameter | Value |
 |-----------|-------|
-| patience | 30 epochs (`GNN_EARLY_STOPPING_PATIENCE`) |
+| patience | 50 epochs (`GNN_EARLY_STOPPING_PATIENCE`) |
 | mode | max (maximize validation AUC) |
 | Monitor | Validation AUC |
 
@@ -407,7 +403,7 @@ for fold_id in range(5):
 | Gate | What It Enforces | Where Enforced |
 |------|------------------|-----------------|
 | Missing harmonization files | Training blocked if per-fold harmonized CSV missing | `validate_gnn_training_inputs()` in `src/core/validators.py` |
-| Graph degeneracy | Excessive dead graphs (>50%) blocks training | `src/core/validators.py:validate_graph_construction_inputs()` |
+| Graph degeneracy | Excessive dead graphs (>50%) blocks training | `GNN_MAX_DEGENERATE_GRAPH_RATE` in `src/features/graph_factory.py` / `src/models/gnn_model.py` |
 | Multiview quality | Degenerate multiview branches disabled | `src/features/construct_causal.py:main_multiview()` |
 | Subject alignment | Graph factory checks shape/NaN/Inf | `src/features/graph_factory.py:ABIDECausalDataset` |
 | Pre-flight checks | Environment validation before any run | `validate_environment()` in `src/core/validators.py` |

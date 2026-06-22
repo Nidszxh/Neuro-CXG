@@ -53,6 +53,6 @@ Brainstem detection by YOLO v29 was unsuccessful across all subjects (0% detecti
 
 ## Why Graphs? Graph Topology Contribution
 
-We use directed causal graphs as anatomical scaffolds that constrain message-passing to physiologically plausible pathways. While edge weight magnitudes showed limited discriminative value (AUC difference: 3.1% vs shuffled edges), the graph topology enabled anatomical hierarchical pooling, contributing **+8.6% AUC** improvement over a FlatMLP baseline (Ablation A: 0.7245 → Main: 0.8102).
+We use directed causal graphs as anatomical scaffolds that constrain message-passing to physiologically plausible pathways. While edge weight magnitudes showed limited discriminative value (AUC difference: 3.1% vs shuffled edges), the graph topology enabled anatomical hierarchical pooling, contributing **+9.3% AUC** improvement over a FlatMLP baseline (Ablation A: 0.7245 → Main: 0.8173).
 
 This result demonstrates that the **adjacency structure itself** carries diagnostic signal, rather than specific edge weights. The directed causal graphs preserve anatomical hierarchy (cortical → subcortical → brainstem), allowing the GNN to learn physiologically meaningful communication patterns between brain regions.

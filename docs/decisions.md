@@ -198,7 +198,7 @@ This log records active architectural and modeling decisions reflected in source
 |-------|---------|
 | **Decision** | 12-lobe architecture approved for publication |
 | **Rejected alternatives** | 11-lobe (Brainstem excluded) |
-| **Rationale** | Test AUC +8.74% vs 11-lobe; Brainstem constant features act as implicit regularization; better generalization (CV < Test) |
+| **Rationale** | Test AUC +5.3% vs 11-lobe; Brainstem constant features act as implicit regularization; better generalization (CV < Test) |
 | **Trade-offs** | Brainstem uses synthetic fallback coordinates |
 | **Status** | Active — APPROVED FOR PUBLICATION |
 | **Source of truth** | `src/core/atlas_config.py` |
@@ -241,7 +241,7 @@ This log records active architectural and modeling decisions reflected in source
 | D (Lagged Pearson) | 0.8456 ± 0.0354 | +21.56% |
 | D2 (Ridge Granger) | 0.8512 ± 0.0348 | +22.12% |
 
-**Provenance**: See `docs/dataflow.md` §Ablation Studies.
+**Provenance**: See `docs/architecture.md` §Ablation Studies.
 
 ## Part B — Methods Rationale
 
@@ -344,4 +344,4 @@ The held-out test set revealed that:
 
 **Lesson:** CV does not reliably predict test performance in multi-site heterogeneous data. Test set is ground truth.
 
-*Source: docs/archive/LOB_E_COMPARISON_ANALYSIS.md*
+*Source: docs/architecture.md (Stage Registry Map)*

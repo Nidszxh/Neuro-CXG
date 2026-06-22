@@ -112,7 +112,7 @@ Each split contains:
 
 ### Stage 1: Download Validation
 
-**Producer:** `src/validation/audit_check.py`
+**Producer:** `src/validation/pipeline_checks.py` (check_dataset_integrity)
 
 **Validation checks:**
 - File exists and readable
@@ -373,7 +373,7 @@ To construct `torch_geometric.data.Data` objects with:
 
 | Gate | What It Enforces | Where Enforced |
 |------|------------------|-----------------|
-| Post-download integrity | PNG/NPY validity, shape, no NaN/Inf | `src/validation/audit_check.py` |
+| Post-download integrity | PNG/NPY validity, shape, no NaN/Inf | `src/validation/pipeline_checks.py` |
 | Atlas overlap | ≥150 of 170 ROIs detected | `src/validation/atlas_validator.py` |
 | Spatial feature completeness | ≥9 lobes with detections | `src/features/extract_spatial.py` |
 | Dead lobe detection | No entirely missing lobes | `src/features/extract_spatial.py` |
@@ -408,7 +408,7 @@ python src/run_pipeline.py --auto
 
 ### Seed Policy
 
-- Global seed is set to 42 everywhere (`GNN_SEED`, `torch.manual_seed`, `numpy.random.seed`, `random.seed`)
+- Global seed is set to 42 for GNN training (`GNN_SEED`, `torch.manual_seed`). YOLO and evaluation use independent fixed seeds.
 - Reproducibility is enforced in training, evaluation, and data split generation
 
 ### Artifact Versioning

@@ -154,7 +154,7 @@ Neuro-CXG achieves **Test AUC 0.8819** on ABIDE-I using Ridge Granger Hybrid (70
 | Site conditioning | Domain adversarial + fold-safe harmonization | +13.3% vs no conditioning |
 | Anatomical pooling | Hierarchical aggregation respects brain structure | +15.4% vs flat MLP |
 | Frequency domain | Multiple spectral bands capture oscillations | +13.1% vs time-domain only |
-| 12-lobe architecture | Brainstem regularization reduces overfitting | +8.74% vs 11-lobe |
+| 12-lobe architecture | Brainstem regularization reduces overfitting | +5.3% vs 11-lobe |
 
 ---
 
@@ -235,7 +235,7 @@ This is analogous to how CNNs use spatial priors (convolutional kernels) rather 
 
 **Neuro-CXG achieves state-of-the-art performance (Test AUC 0.8819)** on ABIDE-I, outperforming all prior published baselines by 6-29%. Key innovations include:
 
-**Provenance**: Config hash `6b6ca55b`, run log `12lobes.txt:1098`, 95% CI [0.8017, 0.9185]. See `docs/dataflow.md` §Part B for complete 29-stage pipeline.
+**Provenance**: Config hash `6b6ca55b`, run log `12lobes.txt:1098`, 95% CI [0.8017, 0.9185]. See `docs/architecture.md` for complete 25-stage pipeline.
 
 1. Directed functional connectivity edges (Ridge Granger)
 2. Domain adversarial site conditioning

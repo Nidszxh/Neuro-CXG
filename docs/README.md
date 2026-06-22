@@ -16,27 +16,17 @@
 | [methods.md](./paper/methods.md) | Methodology, preregistration, CV-Test gap explanation |
 | [figures.md](./paper/figures.md) | Figure generation guide |
 
-### `docs/dev/` — Developer Documents
+### `docs/` — Developer & Reference Documents
 
 | File | Purpose |
 |------|---------|
 | [architecture.md](./architecture.md) | System design, stage registry, data flow |
 | [configuration.md](./configuration.md) | All config parameters reference |
 | [decisions.md](./decisions.md) | Design decision log (DD-NNN series) |
-
-### `docs/` — Operational & Reference
-
-| File | Purpose |
-|------|---------|
 | [test_set_protocol.md](./test_set_protocol.md) | Test set evaluation history |
-| ~~evaluation.md~~ | ~~Legacy evaluation documentation (deprecated)~~ [REMOVED] |
 | [operations.md](./operations.md) | Pipeline operations guide |
 | [data.md](./data.md) | Data processing documentation |
 | [literature.md](./literature.md) | Prior work and citations |
-
-### `docs/archive/` — Historical Context
-
-Old documents preserved for reference but not actively maintained.
 
 ---
 

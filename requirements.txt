@@ -1,5 +1,5 @@
 # Neuro-CXG Requirements
-# Python: >=3.10, <3.12
+# Python: >=3.10, <3.13
 # CUDA: 12.1 (for torch==2.9.0)
 # ---
 # Core ML - Pinned versions for reproducibility
@@ -15,7 +15,8 @@ torch-geometric==2.7.0
 # Neuroimaging
 nibabel==5.3.3
 nilearn==0.12.1
-neuroHarmonize==2.4.5  # Batch-effect harmonization (ComBat)
+neuroHarmonize==2.4.5
+neuroCombat>=0.2.12  # Batch-effect harmonization (ComBat)
 
 # Interpretability
 captum==0.8.0
@@ -27,7 +28,7 @@ boto3==1.42.17
 ultralytics==8.4.5
 
 # ML utilities
-scikit-learn==1.8.0
+scikit-learn>=1.7.2
 numpy==1.26.4
 pandas==2.3.3
 scipy==1.15.3
